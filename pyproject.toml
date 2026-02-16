@@ -8,7 +8,16 @@ authors = [
     { name = "LoganSelner", email = "loganselner@gmail.com" }
 ]
 requires-python = ">=3.11,<3.12"
-dependencies = []
+dependencies = [
+    "langchain-community>=0.4.1",
+    "langchain-chroma>=1.1.0",
+    "langchain-text-splitters>=1.1.0",
+
+    "pypdf>=6.7.0",
+    "python-dotenv>=1.2.1",
+    "pyyaml>=6.0.3",
+    "typer>=0.23.1",
+]
 
 [dependency-groups]
 dev = [
@@ -16,14 +25,18 @@ dev = [
     "mypy",
     "pytest",
     "pre-commit",
+    "types-pyyaml>=6.0.12.20250915",
 ]
+
+[project.scripts]
+rag = "rag_experiments.cli:app"
 
 [build-system]
 requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src/rag_experiments"]
 
 [tool.ruff]
 line-length = 88
@@ -31,10 +44,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "RUF"]
-ignore = []
+ignore = ["B008"]
 
 [tool.ruff.lint.isort]
-known-first-party = []
+known-first-party = ["rag_experiments"]
 combine-as-imports = true
 force-sort-within-sections = true
 

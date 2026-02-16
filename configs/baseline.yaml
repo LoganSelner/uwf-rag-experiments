@@ -1,0 +1,13 @@
+kb_dir: "artifacts/kb"
+persist_dir: "artifacts/chroma"
+collection_name: "uwf-kb"
+
+chunk_size: 1000
+chunk_overlap: 100
+top_k: 3
+
+embedding_model: "text-embedding-3-small"
+llm_model: "gpt-4"
+
+provider: "openai"
+api_key_env: "EDENAI_API_KEY"

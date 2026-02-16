@@ -44,6 +44,7 @@ test: ## Pytest
 # ---------- Code quality (dev UX uses project env; CI uses pre-commit manual) ----------
 fmt: ## Apply fixes now (ruff imports + format)
 	$(UV) run ruff check --select I --fix src tests || true
+	$(UV) run ruff check --fix src tests || true
 	$(UV) run ruff format .
 
 fmt-check: ## Non-mutating gate (CI/local)
