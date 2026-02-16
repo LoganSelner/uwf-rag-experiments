@@ -8,17 +8,13 @@ authors = [
     { name = "LoganSelner", email = "loganselner@gmail.com" }
 ]
 requires-python = ">=3.11,<3.12"
-dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-]
+dependencies = []
 
 [dependency-groups]
 dev = [
     "ruff",
     "mypy",
     "pytest",
-    "httpx",
     "pre-commit",
 ]
 
@@ -27,10 +23,7 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/app"]
-
-[tool.hatch.build.targets.sdist]
-include = ["src/app", "README.md", "pyproject.toml", "LICENSE"]
+packages = ["src"]
 
 [tool.ruff]
 line-length = 88
@@ -41,7 +34,7 @@ select = ["E", "F", "W", "I", "UP", "B", "RUF"]
 ignore = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["app"]
+known-first-party = []
 combine-as-imports = true
 force-sort-within-sections = true
 

@@ -1,18 +1,17 @@
 ![CI](https://github.com/LoganSelner/phase0/actions/workflows/ci.yml/badge.svg)
 
-# FastAPI + uv template
+# UWF RAG Experiments
 
-A minimal, modern FastAPI starter that uses **[uv](https://github.com/astral-sh/uv)** for dependency and virtualenv management, **pre-commit** for quality gates, and a clean `src/` layout. Ships with a small health-check route.
+A Python project using **[uv](https://github.com/astral-sh/uv)** for dependency and virtualenv management, **pre-commit** for quality gates, and a clean `src/` layout.
 
 ---
 
 ## Features
 
-* ⚡ **FastAPI** app at `src/app/main.py` with a `/health` endpoint
-* 🧪 **Tests** via `pytest` (see `tests/test_app.py`)
+* 🧪 **Tests** via `pytest`
 * 🧰 **uv** for fast, reproducible installs (`pyproject.toml` + `uv.lock`)
 * 🧹 **pre-commit** hooks: ruff (lint + format), and more
-* 🗂️ `src/` layout with `app` package (`app.main:app`)
+* 🗂️ `src/` layout
 
 ---
 
@@ -31,12 +30,6 @@ A minimal, modern FastAPI starter that uses **[uv](https://github.com/astral-sh/
 ```bash
 make bootstrap
 # → installs a compatible Python, syncs deps (incl. dev), installs git hooks
-
-make dev
-# → http://localhost:8000
-# Visit: http://localhost:8000/health
-# Docs:  http://localhost:8000/docs  (Swagger UI)
-#        http://localhost:8000/redoc
 
 make qa
 # (non-mutating) fmt-check + typecheck + pytest
@@ -70,8 +63,6 @@ Run `make help` to see everything. Common targets:
 | `make bootstrap`      | Install Python (if needed), sync deps, install git hooks |
 | `make update`         | Upgrade locked package versions (respecting constraints) |
 | `make env`            | Print tool versions                                      |
-| `make dev`            | Start FastAPI with auto-reload                           |
-| `make serve`          | Start FastAPI like prod (no reload)                      |
 | `make test`           | Run pytest                                               |
 | `make fmt`            | Apply formatting fixes (ruff imports + format)           |
 | `make fmt-check`      | Non-mutating QA check for CI/local                       |
@@ -81,12 +72,7 @@ Run `make help` to see everything. Common targets:
 | `make clean`          | Remove caches                                            |
 | `make deep-clean`     | Also remove build artifacts                              |
 
-### Examples:
-```bash
-make dev PORT=9001
-```
-
-> If a target isn’t available on your machine, run `make help` to confirm the list and descriptions.
+> If a target isn't available on your machine, run `make help` to confirm the list and descriptions.
 
 ---
 
@@ -106,20 +92,13 @@ Prefer simple search/replace? Do this once and you’re done:
 
 ```
 .
-├─ src/app/
-│  ├─ __init__.py
-│  └─ main.py          # FastAPI app with /health
-├─ tests/
-│  └─ test_app.py      # smoke test
-├─ pyproject.toml      # deps, tool config, build backend
-├─ uv.lock             # lockfile (commit this)
-├─ Makefile            # dev workflow
+├─ src/                 # source code
+├─ tests/               # tests
+├─ pyproject.toml       # deps, tool config, build backend
+├─ uv.lock              # lockfile (commit this)
+├─ Makefile             # dev workflow
 └─ README.md
-
 ```
-
-* **App entrypoint**: `app.main:app`
-* **Health check**: `GET /health` → `{ "ok": true }`
 
 ---
 
@@ -146,9 +125,6 @@ This repo is configured to run a suite of checks (ruff lint, ruff format, etc.).
 * **No files to check**
 
   * Only tracked files are checked. git add -A, or run make fmt.
-* **Port already in use**
-
-  * Change `--port` or stop the other process.
 * **Python version mismatch**
 
   * This project targets **Python 3.11**. If you’re on another version, use pyenv or update your interpreter.

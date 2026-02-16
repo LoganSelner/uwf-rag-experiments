@@ -5,12 +5,9 @@ SHELL := /bin/bash
 
 # --- Vars ---
 UV      ?= uv
-HOST    ?= 0.0.0.0
-PORT    ?= 8000
-APP     ?= app.main:app
 
 # --- Phony ---
-.PHONY: help bootstrap update env dev serve test fmt fmt-check lint typecheck qa \
+.PHONY: help bootstrap update env test fmt fmt-check lint typecheck qa \
 	clean deep-clean
 
 help: ## Show available targets
@@ -40,13 +37,6 @@ env: ## Print tool versions
 	@echo "Ruff:    $$($(UV) run ruff --version || true)"
 	@echo "Mypy:    $$($(UV) run mypy --version || true)"
 	@echo "pytest:  $$($(UV) run pytest --version | head -n1 || true)"
-
-# ---------- App ----------
-dev: ## FastAPI with auto-reload
-	$(UV) run uvicorn $(APP) --reload --host $(HOST) --port $(PORT)
-
-serve: ## FastAPI like prod (no reload)
-	$(UV) run uvicorn $(APP) --host $(HOST) --port $(PORT)
 
 test: ## Pytest
 	$(UV) run pytest
