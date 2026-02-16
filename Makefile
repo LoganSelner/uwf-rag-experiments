@@ -8,16 +8,10 @@ UV      ?= uv
 HOST    ?= 0.0.0.0
 PORT    ?= 8000
 APP     ?= app.main:app
-IMAGE   ?= phase0-app
-TAG     ?= local
-FULL_IMAGE := $(IMAGE):$(TAG)
-CONTAINER_NAME ?= phase0
-DOCKER  ?= docker
 
 # --- Phony ---
 .PHONY: help bootstrap update env dev serve test fmt fmt-check lint typecheck qa \
-	clean deep-clean \
-	docker-build docker-rebuild docker-run docker-run-d docker-stop docker-logs docker-shell
+	clean deep-clean
 
 help: ## Show available targets
 	@awk '\
@@ -73,28 +67,6 @@ typecheck: ## Mypy
 	$(UV) run mypy
 
 qa: fmt-check typecheck lint test ## Full quality gate
-
-# ---------- Docker (uv multi-stage Dockerfile) ----------
-docker-build: ## Build image (cached)
-	DOCKER_BUILDKIT=1 $(DOCKER) build -t $(FULL_IMAGE) .
-
-docker-rebuild: ## Build image (no cache)
-	DOCKER_BUILDKIT=1 $(DOCKER) build --no-cache -t $(FULL_IMAGE) .
-
-docker-run: ## Run foreground
-	$(DOCKER) run --rm --init -p $(PORT):$(PORT) $(FULL_IMAGE)
-
-docker-run-d: ## Run detached
-	$(DOCKER) run -d --rm --init -p $(PORT):$(PORT) --name $(CONTAINER_NAME) $(FULL_IMAGE)
-
-docker-stop: ## Stop detached
-	-$(DOCKER) stop $(CONTAINER_NAME)
-
-docker-logs: ## Follow logs
-	$(DOCKER) logs -f $(CONTAINER_NAME)
-
-docker-shell: ## Shell in image
-	$(DOCKER) run --rm -it --entrypoint /bin/bash $(FULL_IMAGE)
 
 # ---------- Housekeeping ----------
 clean: ## Remove caches

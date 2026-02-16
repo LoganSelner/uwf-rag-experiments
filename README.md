@@ -2,7 +2,7 @@
 
 # FastAPI + uv template
 
-A minimal, modern FastAPI starter that uses **[uv](https://github.com/astral-sh/uv)** for dependency and virtualenv management, **pre-commit** for quality gates, and a clean `src/` layout. Ships with a Dockerfile and a small health-check route.
+A minimal, modern FastAPI starter that uses **[uv](https://github.com/astral-sh/uv)** for dependency and virtualenv management, **pre-commit** for quality gates, and a clean `src/` layout. Ships with a small health-check route.
 
 ---
 
@@ -12,7 +12,6 @@ A minimal, modern FastAPI starter that uses **[uv](https://github.com/astral-sh/
 * 🧪 **Tests** via `pytest` (see `tests/test_app.py`)
 * 🧰 **uv** for fast, reproducible installs (`pyproject.toml` + `uv.lock`)
 * 🧹 **pre-commit** hooks: ruff (lint + format), and more
-* 🐳 **Dockerfile** for production-like images (multi-stage, small runtime)
 * 🗂️ `src/` layout with `app` package (`app.main:app`)
 
 ---
@@ -79,21 +78,12 @@ Run `make help` to see everything. Common targets:
 | `make lint`           | Ruff lint                                                |
 | `make typecheck`      | Mypy                                                     |
 | `make qa`             | Full quality gate (lint+format+types+tests)              |
-| `make docker-build`   | Build Docker image (cached)                              |
-| `make docker-rebuild` | Build without cache                                      |
-| `make docker-run`     | Run in foreground (maps port 8000)                       |
-| `make docker-run-d`   | Run detached                                             |
-| `make docker-stop`    | Stop detached container                                  |
-| `make docker-logs`    | Follow logs                                              |
-| `make docker-shell`   | Shell into the image                                     |
 | `make clean`          | Remove caches                                            |
 | `make deep-clean`     | Also remove build artifacts                              |
 
 ### Examples:
 ```bash
 make dev PORT=9001
-make docker-build TAG=pr-42
-make docker-run-d CONTAINER_NAME=phase0
 ```
 
 > If a target isn’t available on your machine, run `make help` to confirm the list and descriptions.
@@ -112,27 +102,6 @@ Prefer simple search/replace? Do this once and you’re done:
 
 ---
 
-## Docker
-
-Build a compact image with a prebuilt virtualenv and run it:
-
-```bash
-# Build
-make docker-build
-
-# Run
-make docker-run
-# App will listen on 0.0.0.0:8000 → http://localhost:8000
-```
-
-The image’s default command is:
-
-```
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
----
-
 ## Project layout
 
 ```
@@ -145,7 +114,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ├─ pyproject.toml      # deps, tool config, build backend
 ├─ uv.lock             # lockfile (commit this)
 ├─ Makefile            # dev workflow
-├─ Dockerfile          # multi-stage build (non-root runtime)
 └─ README.md
 
 ```
