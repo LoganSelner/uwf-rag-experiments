@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: { version: latest }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            ~/.cache/pre-commit
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}-pc-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: ${{ runner.os }}-
+      - run: uv python install
+      - run: uv sync --locked
+      - run: uv run pre-commit run --all-files --show-diff-on-failure
+      - run: uv run mypy
+      - run: uv run pytest
