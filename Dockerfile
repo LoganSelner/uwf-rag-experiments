@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ---------- Builder ----------
-FROM python:3.13-slim AS builder
+FROM python:3.11-slim AS builder
 
 # Install uv (copy the static binary from Astral's image)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable
 
 # ---------- Runtime ----------
-FROM python:3.13-slim AS runtime
+FROM python:3.11-slim AS runtime
 
 # Use the built virtualenv from the builder stage
 COPY --from=builder /app/.venv /app/.venv

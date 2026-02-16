@@ -19,7 +19,7 @@ A minimal, modern FastAPI starter that uses **[uv](https://github.com/astral-sh/
 
 ## Prerequisites
 
-* **Python 3.13** (a `.python-version` file is included if you use pyenv)
+* **Python 3.11** (a `.python-version` file is included if you use pyenv)
 * **uv** (once per machine). Install options:
 
   * macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
@@ -183,7 +183,7 @@ This repo is configured to run a suite of checks (ruff lint, ruff format, etc.).
   * Change `--port` or stop the other process.
 * **Python version mismatch**
 
-  * This project targets **Python 3.13**. If you’re on another version, use pyenv or update your interpreter.
+  * This project targets **Python 3.11**. If you’re on another version, use pyenv or update your interpreter.
 * **Fresh env**
 
   ```bash

@@ -1,13 +1,13 @@
 [project]
-name = "phase0"
+name = "uwf-rag-experiments"
 version = "0.1.0"
-description = "Phase 0 scaffolding"
+description = "Reproducible RAG experiments for the UWF advising chatbot: baseline single-agent pipeline + RAGAS evaluation + retrieval ablations."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
     { name = "LoganSelner", email = "loganselner@gmail.com" }
 ]
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
@@ -34,7 +34,7 @@ include = ["src/app", "README.md", "pyproject.toml", "LICENSE"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py313"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "RUF"]
@@ -46,7 +46,7 @@ combine-as-imports = true
 force-sort-within-sections = true
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.11"
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unreachable = true

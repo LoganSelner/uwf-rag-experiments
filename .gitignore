@@ -15,3 +15,24 @@ coverage.xml
 .env
 .env.*
 !.env.example
+
+# --- RAG experiment artifacts ---
+artifacts/
+runs/
+outputs/
+cache/
+*.sqlite
+*.db
+*.duckdb
+*.parquet
+
+# --- Data / KB (never commit) ---
+Data/
+data/
+datasets/
+kb/
+knowledge_base/
+*.jsonl
+*.pdf
+*.xlsx
+*.csv
