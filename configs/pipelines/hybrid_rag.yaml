@@ -1,0 +1,30 @@
+# Pipeline: hybrid_rag
+# Hybrid retrieval (dense + BM25 with RRF fusion), no reranking, stuff generator.
+#
+# Run name suffix: hybrid_none_stuff
+# Status: retriever_type "hybrid" not yet implemented — add HybridRetriever to
+#         components/retrievers.py and register it in _RETRIEVERS in pipeline.py.
+# Usage: copy this file to configs/eval.yaml to make it active.
+qa_path: data/queries/testKB_dataset.csv
+runs_dir: runs
+
+retriever_type: hybrid
+reranker_type: none
+generator_type: stuff
+
+retrieval_k: 20
+top_k: 5
+
+reranker_model: ""
+# Blend weight for hybrid retrieval: 0.0 = BM25 only, 1.0 = dense only.
+hybrid_alpha: 0.5
+mmr_lambda: 0.5
+prompt_template: ""
+
+metrics:
+  - faithfulness
+  - answer_relevancy
+  - answer_correctness
+  - context_precision
+  - context_recall
+  - context_entity_recall

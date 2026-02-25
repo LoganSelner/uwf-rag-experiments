@@ -18,6 +18,7 @@ coverage.xml
 
 # --- RAG experiment artifacts ---
 artifacts/
+indexes/
 runs/
 outputs/
 cache/
