@@ -8,7 +8,7 @@ UV      ?= uv
 
 # --- Phony ---
 .PHONY: help bootstrap update env test fmt fmt-check lint typecheck qa \
-	check precommit index run eval compare clean deep-clean purge-artifacts
+	precommit index run eval compare clean deep-clean purge-artifacts
 
 help: ## Show available targets
 	@awk '\
