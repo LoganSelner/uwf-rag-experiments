@@ -8,7 +8,7 @@ UV      ?= uv
 
 # --- Phony ---
 .PHONY: help bootstrap update env test fmt fmt-check lint typecheck qa \
-	clean deep-clean
+	precommit index run eval compare clean deep-clean purge-artifacts
 
 help: ## Show available targets
 	@awk '\
@@ -41,9 +41,23 @@ env: ## Print tool versions
 test: ## Pytest
 	$(UV) run pytest
 
+# ---------- RAG workflow ----------
+index: ## Build/update Chroma index from data/raw PDFs
+	$(UV) run rag-test-index
+
+run: ## Generate predictions for the active pipeline config
+	$(UV) run rag-test-run
+
+eval: ## Evaluate the latest run for the active pipeline config
+	$(UV) run rag-test-eval
+
+compare: ## Compare scored runs in a Rich table
+	$(UV) run rag-test-compare
+
 # ---------- Code quality (dev UX uses project env; CI uses pre-commit manual) ----------
 fmt: ## Apply fixes now (ruff imports + format)
 	$(UV) run ruff check --select I --fix src tests || true
+	$(UV) run ruff check --fix src tests || true
 	$(UV) run ruff format .
 
 fmt-check: ## Non-mutating gate (CI/local)
@@ -58,6 +72,9 @@ typecheck: ## Mypy
 
 qa: fmt-check typecheck lint test ## Full quality gate
 
+precommit: ## Run all pre-commit hooks on tracked files
+	$(UV) run pre-commit run --all-files
+
 # ---------- Housekeeping ----------
 clean: ## Remove caches
 	-rm -rf __pycache__ .pytest_cache .mypy_cache .ruff_cache .coverage
@@ -65,5 +82,12 @@ clean: ## Remove caches
 	-find . -type d -name ".pytest_cache" -prune -exec rm -rf {} +
 	-find . -type d -name ".mypy_cache" -prune -exec rm -rf {} +
 
-deep-clean: clean ## Also remove build artifacts
-	-rm -rf build dist *.egg-info
+deep-clean: clean ## Also remove env, coverage, and build artifacts
+	-rm -rf .venv htmlcov coverage.xml .dist build dist *.egg-info
+
+purge-artifacts: ## Delete generated RAG artifacts (runs/indexes). Use CONFIRM=1
+	@if [ "$(CONFIRM)" != "1" ]; then \
+		echo "Refusing to delete runs/ and indexes/. Re-run with CONFIRM=1"; \
+		exit 1; \
+	fi
+	-rm -rf runs indexes artifacts outputs cache
