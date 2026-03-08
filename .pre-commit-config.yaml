@@ -3,13 +3,13 @@ default_language_version:
 
 repos:
 - repo: https://github.com/astral-sh/uv-pre-commit
-  rev: 0.10.2
+  rev: 0.10.9
   hooks:
     - id: uv-lock
       files: ^pyproject\\.toml$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.15.1
+  rev: v0.15.5
   hooks:
     - id: ruff
       args: ["--fix", "--exit-non-zero-on-fix"]
