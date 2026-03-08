@@ -65,7 +65,7 @@ def evaluate_run(
     run_dir: Path, metric_names: list[str], settings: Settings
 ) -> dict[str, float]:
     """Evaluate one run directory and write per-sample and aggregate scores."""
-    from ragas import EvaluationDataset, evaluate
+    from ragas import EvaluationDataset, RunConfig, evaluate
     from ragas.dataset_schema import EvaluationResult, MultiTurnSample, SingleTurnSample
     from ragas.embeddings.base import LangchainEmbeddingsWrapper
     from ragas.llms.base import LangchainLLMWrapper
@@ -97,6 +97,7 @@ def evaluate_run(
         metrics=metrics,
         llm=llm,
         embeddings=embeddings,
+        run_config=RunConfig(timeout=settings.eval.ragas_timeout),
     )
 
     if not isinstance(result, EvaluationResult):  # pragma: no cover

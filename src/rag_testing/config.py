@@ -58,6 +58,7 @@ class EvalSettings:
     mmr_lambda: float  # 0.0 = max diversity, 1.0 = max relevance
     metrics: list[str]
     top_k: int  # final context count passed to LLM (after reranking)
+    ragas_timeout: int  # per-metric timeout in seconds for ragas evaluate()
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,7 @@ def load_settings(
         mmr_lambda=float(eval_raw.get("mmr_lambda", 0.5)),
         metrics=[str(m) for m in eval_raw.get("metrics", [])],
         top_k=int(eval_raw.get("top_k", 3)),
+        ragas_timeout=int(eval_raw.get("ragas_timeout", 300)),
     )
 
     return Settings(models=models, index=index, eval=eval_settings)
