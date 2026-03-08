@@ -8,16 +8,15 @@ authors = [
 ]
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "langchain-community>=0.4.1",
-    "langchain-chroma>=1.1.0",
-    "langchain-openai>=1.0.3",
-    "langchain-text-splitters>=1.1.0",
+    "langchain-community>=0.4.1,<0.5",
+    "langchain-chroma>=1.1.0,<2",
+    "langchain-openai>=1.0.3,<2",
+    "langchain-text-splitters>=1.1.0,<2",
 
-    "datasets>=4.0.0",
     "pypdf>=6.7.0",
     "python-dotenv>=1.2.1",
     "pyyaml>=6.0.3",
-    "ragas>=0.3.0",
+    "ragas>=0.4.3,<0.5",
     "pandas>=2.0.0",
     "rich>=13.0.0",
 ]
