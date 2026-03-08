@@ -5,7 +5,7 @@ Structure
 base.py        — Chunker, Retriever, Reranker, Generator Protocols (interfaces)
 chunkers.py    — RecursiveChunker  (add SentenceChunker, TokenChunker, etc. here)
 retrievers.py  — SimpleRetriever   (add HybridRetriever, MMRRetriever, etc. here)
-rerankers.py   — NoReranker        (add CrossEncoderReranker, CohereReranker, etc. here)
+rerankers.py   — NoReranker, CrossEncoderReranker  (add CohereReranker, etc. here)
 generators.py  — StuffGenerator    (add MapReduceGenerator, RefineGenerator, etc. here)
 
 All public names are re-exported here so callers can import from the package root:
@@ -18,11 +18,12 @@ All public names are re-exported here so callers can import from the package roo
 from .base import Chunker, Generator, Reranker, Retriever
 from .chunkers import RecursiveChunker
 from .generators import StuffGenerator
-from .rerankers import NoReranker
+from .rerankers import CrossEncoderReranker, NoReranker
 from .retrievers import SimpleRetriever
 
 __all__ = [
     "Chunker",
+    "CrossEncoderReranker",
     "Generator",
     "NoReranker",
     "RecursiveChunker",

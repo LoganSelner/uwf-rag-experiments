@@ -3,8 +3,6 @@
 # Fetch a larger candidate set (retrieval_k=20), rerank, then pass top_k=3 to LLM.
 #
 # Run name suffix: dense_cross_encoder_stuff
-# Status: reranker_type "cross_encoder" not yet implemented — add CrossEncoderReranker
-#         to components/rerankers.py and register it in _RERANKERS in pipeline.py.
 # Usage: copy this file to configs/eval.yaml to make it active.
 qa_path: data/queries/testKB_dataset.csv
 runs_dir: runs

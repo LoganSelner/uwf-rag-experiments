@@ -8,6 +8,7 @@ from langchain_core.documents import Document
 import pytest
 
 from rag_testing.components import (
+    CrossEncoderReranker,
     Generator,
     NoReranker,
     RecursiveChunker,
@@ -99,6 +100,42 @@ def test_no_reranker_empty_list() -> None:
 def test_no_reranker_is_frozen() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         NoReranker().x = 1  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# CrossEncoderReranker
+# ---------------------------------------------------------------------------
+
+
+def test_cross_encoder_reranker_reorders_by_score() -> None:
+    docs = [
+        Document(page_content="low"),
+        Document(page_content="high"),
+        Document(page_content="mid"),
+    ]
+    mock_model = MagicMock()
+    mock_model.predict.return_value = [0.1, 0.9, 0.5]
+
+    result = CrossEncoderReranker(model=mock_model).rerank("Q?", docs)
+
+    mock_model.predict.assert_called_once_with(
+        [("Q?", "low"), ("Q?", "high"), ("Q?", "mid")]
+    )
+    assert [d.page_content for d in result] == ["high", "mid", "low"]
+
+
+def test_cross_encoder_reranker_empty_list() -> None:
+    mock_model = MagicMock()
+    result = CrossEncoderReranker(model=mock_model).rerank("Q?", [])
+    assert result == []
+    mock_model.predict.assert_not_called()
+
+
+def test_cross_encoder_reranker_is_frozen() -> None:
+    mock_model = MagicMock()
+    r = CrossEncoderReranker(model=mock_model)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.model = MagicMock()  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +283,34 @@ def test_stuff_generator_from_settings_uses_custom_prompt(settings: Settings) ->
     mock_llm = MagicMock()
     g = StuffGenerator.from_settings(new_settings, mock_llm)
     assert g.prompt_template == custom
+
+
+def test_cross_encoder_reranker_from_settings(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_ce = MagicMock()
+    monkeypatch.setattr("rag_testing.components.rerankers.CrossEncoder", mock_ce)
+    s = dataclasses.replace(
+        settings,
+        eval=dataclasses.replace(
+            settings.eval,
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        ),
+    )
+    r = CrossEncoderReranker.from_settings(s)
+    assert isinstance(r, CrossEncoderReranker)
+    mock_ce.assert_called_once_with("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+
+def test_cross_encoder_reranker_from_settings_empty_model_raises(
+    settings: Settings,
+) -> None:
+    s = dataclasses.replace(
+        settings,
+        eval=dataclasses.replace(settings.eval, reranker_model=""),
+    )
+    with pytest.raises(ValueError, match="reranker_model must be set"):
+        CrossEncoderReranker.from_settings(s)
 
 
 def test_recursive_chunker_from_settings_uses_index_params(settings: Settings) -> None:
