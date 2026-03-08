@@ -46,6 +46,10 @@ prompt_template: ""
 #   context_recall        — does retrieved context cover the reference answer?
 #   context_entity_recall — are named entities from the reference present in context?
 #                           (valuable for entity-dense content: course codes, deadlines)
+# Per-metric timeout (seconds) for RAGAS evaluate().
+# Composite metrics like answer_correctness need more time than the default 180s.
+ragas_timeout: 300
+
 metrics:
   - faithfulness
   - answer_relevancy

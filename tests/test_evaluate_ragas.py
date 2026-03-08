@@ -192,6 +192,33 @@ def test_evaluate_run_all_nan_metric_omitted(
     assert "faithfulness" not in scores
 
 
+def test_evaluate_run_passes_run_config_timeout(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RunConfig with the configured timeout is forwarded to ragas.evaluate."""
+    from ragas import RunConfig
+
+    from rag_testing import evaluate_ragas
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "predictions.jsonl").write_text(
+        '{"question":"Q?","answer":"A","contexts":[],"ground_truth":"G"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(evaluate_ragas, "build_llm", lambda _: MagicMock())
+    monkeypatch.setattr(evaluate_ragas, "build_embeddings", lambda _: MagicMock())
+    mock_evaluate = _patch_ragas(monkeypatch, [{"faithfulness": 0.9}])
+
+    evaluate_ragas.evaluate_run(run_dir, ["faithfulness"], settings)
+
+    _, call_kwargs = mock_evaluate.call_args
+    rc = call_kwargs["run_config"]
+    assert isinstance(rc, RunConfig)
+    assert rc.timeout == settings.eval.ragas_timeout
+
+
 def test_evaluate_run_unknown_metrics_silently_dropped(
     settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
