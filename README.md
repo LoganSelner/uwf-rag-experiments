@@ -19,13 +19,13 @@ This repository is intended for private internal collaboration by authorized tea
 Implemented in runtime code today:
 
 - `chunker_type`: `recursive`
-- `retriever_type`: `dense`
+- `retriever_type`: `dense`, `mmr`
 - `reranker_type`: `none`, `cross_encoder`
 - `generator_type`: `stuff`
 
 Configured as planned but not yet registered in runtime:
 
-- `retriever_type`: `hybrid`, `mmr`
+- `retriever_type`: `hybrid`
 - `generator_type`: `map_reduce`, `refine`
 
 If a non-implemented type is selected in `configs/eval.yaml`, the pipeline raises a clear `ValueError` listing available options.

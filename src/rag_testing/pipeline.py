@@ -32,6 +32,7 @@ from langchain_core.language_models import BaseChatModel
 from .components import (
     CrossEncoderReranker,
     Generator,
+    MMRRetriever,
     NoReranker,
     Reranker,
     Retriever,
@@ -52,6 +53,7 @@ class PipelineResult:
 
 _RETRIEVERS: dict[str, Callable[[Settings, Chroma], Retriever]] = {
     "dense": SimpleRetriever.from_settings,
+    "mmr": MMRRetriever.from_settings,
 }
 
 _RERANKERS: dict[str, Callable[[Settings], Reranker]] = {
