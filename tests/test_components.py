@@ -297,7 +297,7 @@ def test_mmr_retriever_from_settings(settings: Settings) -> None:
     assert r.store is mock_store
     assert r.top_k == settings.eval.retrieval_k
     assert r.lambda_mult == settings.eval.mmr_lambda
-    assert r.fetch_k == max(20, 4 * settings.eval.retrieval_k)
+    assert r.fetch_k == settings.eval.mmr_fetch_k
 
 
 def test_no_reranker_from_settings_returns_instance(settings: Settings) -> None:

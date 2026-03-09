@@ -29,6 +29,11 @@ hybrid_alpha: 0.5
 # 0.0 = maximise diversity, 1.0 = maximise relevance.
 mmr_lambda: 0.5
 
+# MMR candidate pool size — only used when retriever_type == "mmr".
+# Should be > retrieval_k. Larger values give MMR more candidates to diversify
+# from but cost more compute. LangChain default: 20.
+mmr_fetch_k: 20
+
 # Custom prompt template for the generator.
 # Must contain {context} and {question} placeholders.
 # Leave empty to use the component's built-in default.

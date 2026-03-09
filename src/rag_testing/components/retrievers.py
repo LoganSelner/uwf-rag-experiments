@@ -47,8 +47,8 @@ class MMRRetriever:
     Balances relevance to the query with diversity among returned documents.
     ``lambda_mult`` controls the tradeoff: ``1.0`` = pure relevance (equivalent
     to dense), ``0.0`` = maximum diversity.  ``fetch_k`` is the initial candidate
-    pool size that MMR selects from; it is computed automatically by
-    ``from_settings`` as ``max(20, 4 * retrieval_k)``.
+    pool size that MMR selects from; configurable via ``mmr_fetch_k`` in
+    eval settings (default: 20, matching LangChain's default).
     """
 
     store: Chroma
@@ -66,10 +66,9 @@ class MMRRetriever:
 
     @classmethod
     def from_settings(cls, settings: Settings, store: Chroma) -> MMRRetriever:
-        k = settings.eval.retrieval_k
         return cls(
             store=store,
-            top_k=k,
-            fetch_k=max(20, 4 * k),
+            top_k=settings.eval.retrieval_k,
+            fetch_k=settings.eval.mmr_fetch_k,
             lambda_mult=settings.eval.mmr_lambda,
         )

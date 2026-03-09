@@ -11,8 +11,7 @@ reranker_type: none
 generator_type: stuff
 
 # No reranker — retrieval_k == top_k (fetch exactly what the LLM will see).
-# MMR internally fetches a larger pool (fetch_k = max(20, 4 * retrieval_k))
-# and selects retrieval_k diverse results from it.
+# MMR internally fetches a larger pool and selects retrieval_k diverse results.
 retrieval_k: 3
 top_k: 3
 
@@ -20,6 +19,8 @@ reranker_model: ""
 hybrid_alpha: 0.5
 # MMR diversity parameter: 0.0 = maximise diversity, 1.0 = maximise relevance.
 mmr_lambda: 0.5
+# MMR candidate pool size (should be > retrieval_k). LangChain default: 20.
+mmr_fetch_k: 20
 prompt_template: ""
 
 metrics:
