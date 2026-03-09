@@ -165,7 +165,7 @@ Defines:
 - evaluation dataset path (`qa_path`)
 - runs output directory (`runs_dir`)
 - active pipeline component types
-- retrieval sizing (`retrieval_k`, `top_k`)
+- retrieval sizing (`retrieval_k`, `top_k`, `mmr_fetch_k`)
 - prompt override (`prompt_template`)
 - metric list for RAGAS
 
