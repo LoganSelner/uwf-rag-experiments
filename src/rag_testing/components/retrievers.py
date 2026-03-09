@@ -30,14 +30,14 @@ class SimpleRetriever:
     """Dense semantic similarity search against a Chroma vector store."""
 
     store: Chroma
-    top_k: int
+    k: int
 
     def retrieve(self, question: str) -> list[Document]:
-        return self.store.similarity_search(question, k=self.top_k)
+        return self.store.similarity_search(question, k=self.k)
 
     @classmethod
     def from_settings(cls, settings: Settings, store: Chroma) -> SimpleRetriever:
-        return cls(store=store, top_k=settings.eval.retrieval_k)
+        return cls(store=store, k=settings.eval.retrieval_k)
 
 
 @dataclass(frozen=True, eq=False)  # eq=False: Chroma is not hashable
@@ -52,14 +52,14 @@ class MMRRetriever:
     """
 
     store: Chroma
-    top_k: int
+    k: int
     fetch_k: int
     lambda_mult: float
 
     def retrieve(self, question: str) -> list[Document]:
         return self.store.max_marginal_relevance_search(
             question,
-            k=self.top_k,
+            k=self.k,
             fetch_k=self.fetch_k,
             lambda_mult=self.lambda_mult,
         )
@@ -68,7 +68,7 @@ class MMRRetriever:
     def from_settings(cls, settings: Settings, store: Chroma) -> MMRRetriever:
         return cls(
             store=store,
-            top_k=settings.eval.retrieval_k,
+            k=settings.eval.retrieval_k,
             fetch_k=settings.eval.mmr_fetch_k,
             lambda_mult=settings.eval.mmr_lambda,
         )
