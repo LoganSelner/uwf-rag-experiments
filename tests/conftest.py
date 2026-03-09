@@ -63,6 +63,7 @@ retrieval_k: 20
 reranker_model: ""
 hybrid_alpha: 0.5
 mmr_lambda: 0.5
+mmr_fetch_k: 20
 top_k: 3
 metrics:
   - faithfulness

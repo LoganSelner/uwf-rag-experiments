@@ -19,13 +19,13 @@ This repository is intended for private internal collaboration by authorized tea
 Implemented in runtime code today:
 
 - `chunker_type`: `recursive`
-- `retriever_type`: `dense`
+- `retriever_type`: `dense`, `mmr`
 - `reranker_type`: `none`, `cross_encoder`
 - `generator_type`: `stuff`
 
 Configured as planned but not yet registered in runtime:
 
-- `retriever_type`: `hybrid`, `mmr`
+- `retriever_type`: `hybrid`
 - `generator_type`: `map_reduce`, `refine`
 
 If a non-implemented type is selected in `configs/eval.yaml`, the pipeline raises a clear `ValueError` listing available options.
@@ -165,7 +165,7 @@ Defines:
 - evaluation dataset path (`qa_path`)
 - runs output directory (`runs_dir`)
 - active pipeline component types
-- retrieval sizing (`retrieval_k`, `top_k`)
+- retrieval sizing (`retrieval_k`, `top_k`, `mmr_fetch_k`)
 - prompt override (`prompt_template`)
 - metric list for RAGAS
 

@@ -56,6 +56,7 @@ class EvalSettings:
     reranker_model: str  # "" = use component default
     hybrid_alpha: float  # 0.0 = BM25 only, 1.0 = dense only
     mmr_lambda: float  # 0.0 = max diversity, 1.0 = max relevance
+    mmr_fetch_k: int  # MMR candidate pool size (should be > retrieval_k)
     metrics: list[str]
     top_k: int  # final context count passed to LLM (after reranking)
     ragas_timeout: int  # per-metric timeout in seconds for ragas evaluate()
@@ -132,6 +133,7 @@ def load_settings(
         reranker_model=str(eval_raw.get("reranker_model", "")),
         hybrid_alpha=float(eval_raw.get("hybrid_alpha", 0.5)),
         mmr_lambda=float(eval_raw.get("mmr_lambda", 0.5)),
+        mmr_fetch_k=int(eval_raw.get("mmr_fetch_k", 20)),
         metrics=[str(m) for m in eval_raw.get("metrics", [])],
         top_k=int(eval_raw.get("top_k", 3)),
         ragas_timeout=int(eval_raw.get("ragas_timeout", 300)),

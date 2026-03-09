@@ -19,6 +19,7 @@ top_k: 3
 reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
 hybrid_alpha: 0.5
 mmr_lambda: 0.5
+mmr_fetch_k: 20
 prompt_template: ""
 
 metrics:

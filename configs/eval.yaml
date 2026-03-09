@@ -6,7 +6,7 @@ runs_dir: runs
 
 # Component selection — all three fields together define the run-directory name
 # (e.g. "dense_none_stuff").
-retriever_type: dense     # currently implemented: dense
+retriever_type: dense     # currently implemented: dense, mmr
 reranker_type: none       # currently implemented: none, cross_encoder
 generator_type: stuff     # currently implemented: stuff
 
@@ -25,9 +25,14 @@ reranker_model: ""
 # 0.0 = BM25 only, 1.0 = dense only.
 hybrid_alpha: 0.5
 
-# MMR diversity parameter — only used when retriever_type == "mmr" (future).
+# MMR diversity parameter — only used when retriever_type == "mmr".
 # 0.0 = maximise diversity, 1.0 = maximise relevance.
 mmr_lambda: 0.5
+
+# MMR candidate pool size — only used when retriever_type == "mmr".
+# Should be > retrieval_k. Larger values give MMR more candidates to diversify
+# from but cost more compute. LangChain default: 20.
+mmr_fetch_k: 20
 
 # Custom prompt template for the generator.
 # Must contain {context} and {question} placeholders.

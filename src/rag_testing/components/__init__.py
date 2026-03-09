@@ -4,7 +4,7 @@ Structure
 ---------
 base.py        — Chunker, Retriever, Reranker, Generator Protocols (interfaces)
 chunkers.py    — RecursiveChunker  (add SentenceChunker, TokenChunker, etc. here)
-retrievers.py  — SimpleRetriever   (add HybridRetriever, MMRRetriever, etc. here)
+retrievers.py  — SimpleRetriever, MMRRetriever  (add HybridRetriever, etc. here)
 rerankers.py   — NoReranker, CrossEncoderReranker  (add CohereReranker, etc. here)
 generators.py  — StuffGenerator    (add MapReduceGenerator, RefineGenerator, etc. here)
 
@@ -19,12 +19,13 @@ from .base import Chunker, Generator, Reranker, Retriever
 from .chunkers import RecursiveChunker
 from .generators import StuffGenerator
 from .rerankers import CrossEncoderReranker, NoReranker
-from .retrievers import SimpleRetriever
+from .retrievers import MMRRetriever, SimpleRetriever
 
 __all__ = [
     "Chunker",
     "CrossEncoderReranker",
     "Generator",
+    "MMRRetriever",
     "NoReranker",
     "RecursiveChunker",
     "Reranker",

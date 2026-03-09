@@ -54,6 +54,7 @@ def test_values_loaded_correctly(settings: Settings) -> None:
     assert settings.eval.reranker_model == ""
     assert settings.eval.hybrid_alpha == 0.5
     assert settings.eval.mmr_lambda == 0.5
+    assert settings.eval.mmr_fetch_k == 20
     assert settings.index.chunker_type == "recursive"
     assert "faithfulness" in settings.eval.metrics
     assert "answer_relevancy" in settings.eval.metrics
@@ -160,6 +161,7 @@ metrics:
     assert s.eval.reranker_model == ""
     assert s.eval.hybrid_alpha == 0.5
     assert s.eval.mmr_lambda == 0.5
+    assert s.eval.mmr_fetch_k == 20
     assert s.eval.top_k == 3
 
 

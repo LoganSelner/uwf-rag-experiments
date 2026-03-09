@@ -1,23 +1,25 @@
-# Pipeline: naive_rag
-# Dense semantic retrieval, no reranking, stuff generator.
-# Baseline configuration — all other pipelines should be compared against this.
+# Pipeline: mmr_rag
+# MMR retrieval (relevance + diversity), no reranking, stuff generator.
 #
-# Run name suffix: dense_none_stuff
+# Run name suffix: mmr_none_stuff
 # Usage: copy this file to configs/eval.yaml to make it active.
 qa_path: data/queries/testKB_dataset.csv
 runs_dir: runs
 
-retriever_type: dense
+retriever_type: mmr
 reranker_type: none
 generator_type: stuff
 
 # No reranker — retrieval_k == top_k (fetch exactly what the LLM will see).
+# MMR internally fetches a larger pool and selects retrieval_k diverse results.
 retrieval_k: 3
 top_k: 3
 
 reranker_model: ""
 hybrid_alpha: 0.5
+# MMR diversity parameter: 0.0 = maximise diversity, 1.0 = maximise relevance.
 mmr_lambda: 0.5
+# MMR candidate pool size (should be > retrieval_k). LangChain default: 20.
 mmr_fetch_k: 20
 prompt_template: ""
 

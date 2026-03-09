@@ -10,6 +10,7 @@ import pytest
 from rag_testing.components import (
     CrossEncoderReranker,
     Generator,
+    MMRRetriever,
     NoReranker,
     RecursiveChunker,
     Reranker,
@@ -69,7 +70,7 @@ def test_simple_retriever_delegates_to_similarity_search() -> None:
     mock_store = MagicMock()
     mock_store.similarity_search.return_value = [doc]
 
-    result = SimpleRetriever(store=mock_store, top_k=5).retrieve("test question")
+    result = SimpleRetriever(store=mock_store, k=5).retrieve("test question")
 
     mock_store.similarity_search.assert_called_once_with("test question", k=5)
     assert result == [doc]
@@ -77,9 +78,36 @@ def test_simple_retriever_delegates_to_similarity_search() -> None:
 
 def test_simple_retriever_is_frozen() -> None:
     mock_store = MagicMock()
-    r = SimpleRetriever(store=mock_store, top_k=3)
+    r = SimpleRetriever(store=mock_store, k=3)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        r.top_k = 10  # type: ignore[misc]
+        r.k = 10  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# MMRRetriever
+# ---------------------------------------------------------------------------
+
+
+def test_mmr_retriever_delegates_to_mmr_search() -> None:
+    doc = Document(page_content="hello")
+    mock_store = MagicMock()
+    mock_store.max_marginal_relevance_search.return_value = [doc]
+
+    result = MMRRetriever(store=mock_store, k=5, fetch_k=20, lambda_mult=0.7).retrieve(
+        "test question"
+    )
+
+    mock_store.max_marginal_relevance_search.assert_called_once_with(
+        "test question", k=5, fetch_k=20, lambda_mult=0.7
+    )
+    assert result == [doc]
+
+
+def test_mmr_retriever_is_frozen() -> None:
+    mock_store = MagicMock()
+    r = MMRRetriever(store=mock_store, k=3, fetch_k=20, lambda_mult=0.5)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.k = 10  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +287,17 @@ def test_simple_retriever_from_settings_uses_retrieval_k(settings: Settings) -> 
     r = SimpleRetriever.from_settings(settings, mock_store)
     assert isinstance(r, SimpleRetriever)
     assert r.store is mock_store
-    assert r.top_k == settings.eval.retrieval_k
+    assert r.k == settings.eval.retrieval_k
+
+
+def test_mmr_retriever_from_settings(settings: Settings) -> None:
+    mock_store = MagicMock()
+    r = MMRRetriever.from_settings(settings, mock_store)
+    assert isinstance(r, MMRRetriever)
+    assert r.store is mock_store
+    assert r.k == settings.eval.retrieval_k
+    assert r.lambda_mult == settings.eval.mmr_lambda
+    assert r.fetch_k == settings.eval.mmr_fetch_k
 
 
 def test_no_reranker_from_settings_returns_instance(settings: Settings) -> None:

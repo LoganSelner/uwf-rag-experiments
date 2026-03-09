@@ -19,6 +19,7 @@ reranker_model: ""
 # Blend weight for hybrid retrieval: 0.0 = BM25 only, 1.0 = dense only.
 hybrid_alpha: 0.5
 mmr_lambda: 0.5
+mmr_fetch_k: 20
 prompt_template: ""
 
 metrics:
