@@ -20,13 +20,12 @@ Implemented in runtime code today:
 
 - `chunker_type`: `recursive`
 - `retriever_type`: `dense`
-- `reranker_type`: `none`
+- `reranker_type`: `none`, `cross_encoder`
 - `generator_type`: `stuff`
 
 Configured as planned but not yet registered in runtime:
 
 - `retriever_type`: `hybrid`, `mmr`
-- `reranker_type`: `cross_encoder`
 - `generator_type`: `map_reduce`, `refine`
 
 If a non-implemented type is selected in `configs/eval.yaml`, the pipeline raises a clear `ValueError` listing available options.

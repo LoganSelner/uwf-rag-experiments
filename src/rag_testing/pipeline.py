@@ -30,6 +30,7 @@ from langchain_chroma import Chroma
 from langchain_core.language_models import BaseChatModel
 
 from .components import (
+    CrossEncoderReranker,
     Generator,
     NoReranker,
     Reranker,
@@ -55,6 +56,7 @@ _RETRIEVERS: dict[str, Callable[[Settings, Chroma], Retriever]] = {
 
 _RERANKERS: dict[str, Callable[[Settings], Reranker]] = {
     "none": NoReranker.from_settings,
+    "cross_encoder": CrossEncoderReranker.from_settings,
 }
 
 _GENERATORS: dict[str, Callable[[Settings, BaseChatModel], Generator]] = {
