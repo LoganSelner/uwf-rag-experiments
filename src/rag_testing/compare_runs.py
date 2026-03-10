@@ -1,75 +1,165 @@
-"""Run comparison: score collection and Rich table rendering for scored RAG runs."""
+"""CLI: Rich table comparison of scored RAG runs.
+
+Thin presentation layer over ``results``.  For notebook or programmatic
+access, use ``results.collect_runs`` and ``results.runs_to_dataframe``
+directly — they have no Rich or argparse dependency.
+"""
 
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-import yaml
 
 from .config import load_settings
+from .results import collect_runs, runs_to_dataframe
 
-_META = (
+# ---------------------------------------------------------------------------
+# Display transforms
+# ---------------------------------------------------------------------------
+
+# Analysis column → CLI column (shorter names for terminal width).
+_COLUMN_RENAMES = {
+    "retriever_type": "retriever",
+    "reranker_type": "reranker",
+    "llm_model": "llm",
+    "embedding_model": "embedding",
+}
+
+# Ordered meta columns for the CLI table.
+# Only universally relevant columns are shown here.  Pipeline-variant
+# knobs (reranker_model, mmr_lambda, mmr_fetch_k) are available in
+# the analysis DataFrame via runs_to_dataframe() for notebook use.
+_META_COLUMNS = (
     "retriever",
     "reranker",
+    "retrieval_k",
+    "top_k",
     "llm",
     "embedding",
     "chunk",
-    "top_k",
     "qa_file",
     "n_samples",
 )
 
+# Columns available in the analysis DataFrame but not useful in CLI output.
+# Pipeline-variant knobs are excluded from the terminal table; they are
+# accessible via runs_to_dataframe() for notebook analysis.
+_DROP_COLUMNS = {"git_sha", "reranker_model", "mmr_lambda", "mmr_fetch_k"}
 
-def collect_scores(runs_dir: Path) -> list[dict[str, object]]:
-    """Collect scored run metadata and metric values from ``runs_dir``."""
-    rows: list[dict[str, object]] = []
-    for run_dir in sorted(runs_dir.glob("*")):
-        if not run_dir.is_dir():
-            continue
-        metrics_file = run_dir / "metrics.json"
-        if not metrics_file.exists():
-            continue
-        metrics: dict[str, object] = json.loads(
-            metrics_file.read_text(encoding="utf-8")
+
+def _drop_constant_meta(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop meta columns whose values are identical across all rows.
+
+    Metric columns are always kept.  When only one run is displayed,
+    all columns are kept (there is nothing to compare).
+    """
+    if len(df) <= 1:
+        return df
+    meta_cols = [c for c in _META_COLUMNS if c in df.columns]
+    constant = [col for col in meta_cols if df[col].nunique(dropna=False) <= 1]
+    return df.drop(columns=constant)
+
+
+def _prepare_display_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Transform an analysis DataFrame into a CLI-friendly display DataFrame.
+
+    Applies column renames, creates composite columns (``chunk``,
+    ``qa_file``), drops noise columns, and reorders for readability.
+    """
+    df = df.copy()
+
+    # Shorten column names for terminal width.
+    df = df.rename(columns=_COLUMN_RENAMES)
+
+    # Composite: chunk_size + chunk_overlap → "1000/100".
+    if "chunk_size" in df.columns and "chunk_overlap" in df.columns:
+        df["chunk"] = (
+            df["chunk_size"].fillna("").astype(str)
+            + "/"
+            + df["chunk_overlap"].fillna("").astype(str)
         )
-        row: dict[str, object] = {"run": run_dir.name}
+        df = df.drop(columns=["chunk_size", "chunk_overlap"])
 
-        config_file = run_dir / "config_used.yaml"
-        if config_file.exists():
-            cfg: dict[str, Any] = yaml.safe_load(
-                config_file.read_text(encoding="utf-8")
-            )
-            row["retriever"] = cfg.get("eval", {}).get("retriever_type", "")
-            row["reranker"] = cfg.get("eval", {}).get("reranker_type", "")
-            row["llm"] = cfg.get("models", {}).get("llm", {}).get("model", "")
-            row["embedding"] = (
-                cfg.get("models", {}).get("embeddings", {}).get("model", "")
-            )
-            idx = cfg.get("index", {})
-            row["chunk"] = f"{idx.get('chunk_size', '')}/{idx.get('chunk_overlap', '')}"
-            row["top_k"] = int(cfg.get("eval", {}).get("top_k", 0))
-            qa_path = cfg.get("eval", {}).get("qa_path", "")
-            row["qa_file"] = Path(qa_path).stem if qa_path else ""
+    # Stem the QA file path for brevity.
+    if "qa_path" in df.columns:
+        df["qa_file"] = df["qa_path"].apply(
+            lambda p: Path(str(p)).stem if pd.notna(p) else ""
+        )
+        df = df.drop(columns=["qa_path"])
 
-        predictions_file = run_dir / "predictions.jsonl"
-        if predictions_file.exists():
-            row["n_samples"] = sum(
-                1
-                for line in predictions_file.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            )
+    # Drop columns not useful in terminal output.
+    df = df.drop(columns=[c for c in _DROP_COLUMNS if c in df.columns])
 
-        row.update(metrics)
-        rows.append(row)
-    return rows
+    # Reorder: meta columns first, then metric columns alphabetically.
+    meta_cols = [c for c in _META_COLUMNS if c in df.columns]
+    metric_cols = sorted(c for c in df.columns if c not in meta_cols)
+    return df[[*meta_cols, *metric_cols]]
+
+
+# ---------------------------------------------------------------------------
+# Rich table rendering
+# ---------------------------------------------------------------------------
+
+
+def _meta_cell(val: object) -> str:
+    """Format a metadata value for terminal display."""
+    if pd.isna(val):  # type: ignore[call-overload]
+        return ""
+    try:
+        f = float(val)  # type: ignore[arg-type]
+        if f == int(f):
+            return str(int(f))
+    except (TypeError, ValueError):
+        pass
+    return str(val)
+
+
+def _metric_cell(val: object) -> Text:
+    """Format a metric value with colour-coded thresholds."""
+    if pd.isna(val):  # type: ignore[call-overload]
+        return Text("—", style="dim")
+    f = float(val)  # type: ignore[arg-type]
+    if f >= 0.8:
+        style = "bold green"
+    elif f >= 0.5:
+        style = "yellow"
+    else:
+        style = "red"
+    return Text(f"{f:.4f}", style=style)
+
+
+def _render_table(df: pd.DataFrame) -> None:
+    """Render *df* as a Rich table to the console."""
+    meta_cols = [c for c in _META_COLUMNS if c in df.columns]
+    metric_cols = sorted(c for c in df.columns if c not in meta_cols)
+
+    table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
+    table.add_column("run", style="dim", no_wrap=True)
+    for col in meta_cols:
+        table.add_column(col, no_wrap=True)
+    for col in metric_cols:
+        table.add_column(col, justify="right", no_wrap=True)
+
+    for run_name, row_data in df.iterrows():
+        cells: list[str | Text] = [str(run_name)]
+        for col in meta_cols:
+            cells.append(_meta_cell(row_data[col]))
+        for col in metric_cols:
+            cells.append(_metric_cell(row_data[col]))
+        table.add_row(*cells)
+
+    Console().print(table)
+
+
+# ---------------------------------------------------------------------------
+# CLI entrypoint
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -88,26 +178,23 @@ def main() -> None:
         "--sort-by",
         metavar="COLUMN",
         default=None,
-        help="Sort runs by this column, descending.",
+        help="Sort runs by this column (descending).",
     )
     args = parser.parse_args()
 
     settings = load_settings()
-    rows = collect_scores(settings.eval.runs_dir)
+    records = collect_runs(settings.eval.runs_dir)
 
-    if not rows:
+    if not records:
         print("No scored runs found.")
         return
 
     if args.last is not None:
-        rows = rows[-args.last :]
+        records = records[-args.last :]
 
-    df = pd.DataFrame(rows).set_index("run")
-
-    meta_cols = [c for c in _META if c in df.columns]
-    metric_cols = sorted(c for c in df.columns if c not in meta_cols)
-
-    df = df[[*meta_cols, *metric_cols]]
+    df = runs_to_dataframe(records)
+    df = _prepare_display_df(df)
+    df = _drop_constant_meta(df)
 
     if args.sort_by is not None:
         if args.sort_by not in df.columns:
@@ -115,45 +202,7 @@ def main() -> None:
             parser.error(f"Unknown column {args.sort_by!r}. Available: {available}")
         df = df.sort_values(args.sort_by, ascending=False)
 
-    def _meta_cell(val: object) -> str:
-        if pd.isna(val):  # type: ignore[call-overload]
-            return ""
-        try:
-            f = float(val)  # type: ignore[arg-type]
-            if f == int(f):
-                return str(int(f))
-        except (TypeError, ValueError):
-            pass
-        return str(val)
-
-    def _metric_cell(val: object) -> Text:
-        if pd.isna(val):  # type: ignore[call-overload]
-            return Text("—", style="dim")
-        f = float(val)  # type: ignore[arg-type]
-        if f >= 0.8:
-            style = "bold green"
-        elif f >= 0.5:
-            style = "yellow"
-        else:
-            style = "red"
-        return Text(f"{f:.4f}", style=style)
-
-    table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
-    table.add_column("run", style="dim", no_wrap=True)
-    for col in meta_cols:
-        table.add_column(col, no_wrap=True)
-    for col in metric_cols:
-        table.add_column(col, justify="right", no_wrap=True)
-
-    for run_name, row_data in df.iterrows():
-        cells: list[str | Text] = [str(run_name)]
-        for col in meta_cols:
-            cells.append(_meta_cell(row_data[col]))
-        for col in metric_cols:
-            cells.append(_metric_cell(row_data[col]))
-        table.add_row(*cells)
-
-    Console().print(table)
+    _render_table(df)
 
 
 if __name__ == "__main__":
