@@ -64,12 +64,19 @@ class TestPrepareDisplayDf:
         assert "llm_model" not in df.columns
         assert "embedding_model" not in df.columns
 
+    def test_composite_k_column(self) -> None:
+        df = _make_display_df()
+
+        assert "k" in df.columns
+        assert df.loc["run_a", "k"] == "20/3"
+        assert "retrieval_k" not in df.columns
+        assert "top_k" not in df.columns
+
     def test_composite_chunk_column(self) -> None:
         df = _make_display_df()
 
         assert "chunk" in df.columns
         assert df.loc["run_a", "chunk"] == "1000/100"
-        # Raw columns should be removed.
         assert "chunk_size" not in df.columns
         assert "chunk_overlap" not in df.columns
 
@@ -89,18 +96,18 @@ class TestPrepareDisplayDf:
         df = _make_display_df()
         cols = list(df.columns)
         retriever_idx = cols.index("retriever")
-        faithfulness_idx = cols.index("faithfulness")
-        assert retriever_idx < faithfulness_idx
+        faith_idx = cols.index("faith")
+        assert retriever_idx < faith_idx
 
     def test_empty_config_still_shows_metrics(self) -> None:
         df = _make_display_df(config={}, n_samples=None)
 
-        assert "faithfulness" in df.columns
-        assert df.loc["run_a", "faithfulness"] == 0.8
+        assert "faith" in df.columns
+        assert df.loc["run_a", "faith"] == 0.8
 
     def test_preserves_metric_values(self) -> None:
         df = _make_display_df()
-        assert df.loc["run_a", "faithfulness"] == 0.8
+        assert df.loc["run_a", "faith"] == 0.8
 
 
 # ---------------------------------------------------------------------------

@@ -25,10 +25,20 @@ from .results import collect_runs, runs_to_dataframe
 
 # Analysis column → CLI column (shorter names for terminal width).
 _COLUMN_RENAMES = {
+    # Meta columns
     "retriever_type": "retriever",
     "reranker_type": "reranker",
     "llm_model": "llm",
     "embedding_model": "embedding",
+    # Metric columns
+    "answer_correctness": "correct",
+    "answer_relevancy": "relevancy",
+    "answer_similarity": "similarity",
+    "context_entity_recall": "ctx_entity",
+    "context_precision": "ctx_prec",
+    "context_recall": "ctx_recall",
+    "factual_correctness": "factual",
+    "faithfulness": "faith",
 }
 
 # Ordered meta columns for the CLI table.
@@ -38,8 +48,7 @@ _COLUMN_RENAMES = {
 _META_COLUMNS = (
     "retriever",
     "reranker",
-    "retrieval_k",
-    "top_k",
+    "k",
     "llm",
     "embedding",
     "chunk",
@@ -77,12 +86,21 @@ def _prepare_display_df(df: pd.DataFrame) -> pd.DataFrame:
     # Shorten column names for terminal width.
     df = df.rename(columns=_COLUMN_RENAMES)
 
+    # Composite: retrieval_k + top_k → "20/3" (fetched/kept).
+    if "retrieval_k" in df.columns and "top_k" in df.columns:
+        df["k"] = (
+            df["retrieval_k"].astype("Int64").astype(str).replace("<NA>", "")
+            + "/"
+            + df["top_k"].astype("Int64").astype(str).replace("<NA>", "")
+        )
+        df = df.drop(columns=["retrieval_k", "top_k"])
+
     # Composite: chunk_size + chunk_overlap → "1000/100".
     if "chunk_size" in df.columns and "chunk_overlap" in df.columns:
         df["chunk"] = (
-            df["chunk_size"].fillna("").astype(str)
+            df["chunk_size"].astype("Int64").astype(str).replace("<NA>", "")
             + "/"
-            + df["chunk_overlap"].fillna("").astype(str)
+            + df["chunk_overlap"].astype("Int64").astype(str).replace("<NA>", "")
         )
         df = df.drop(columns=["chunk_size", "chunk_overlap"])
 
@@ -178,7 +196,27 @@ def main() -> None:
         "--sort-by",
         metavar="COLUMN",
         default=None,
-        help="Sort runs by this column (descending).",
+        help="Sort runs by this column (descending by default).",
+    )
+    parser.add_argument(
+        "--asc",
+        action="store_true",
+        default=False,
+        help="Sort ascending instead of descending (use with --sort-by).",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        default=False,
+        dest="show_all",
+        help="Show all meta columns, even when identical across runs.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("table", "json", "csv"),
+        default="table",
+        dest="output_format",
+        help="Output format: rich table (default), JSON, or CSV.",
     )
     args = parser.parse_args()
 
@@ -186,7 +224,7 @@ def main() -> None:
     records = collect_runs(settings.eval.runs_dir)
 
     if not records:
-        print("No scored runs found.")
+        print(f"No scored runs found in {settings.eval.runs_dir}")
         return
 
     if args.last is not None:
@@ -194,15 +232,22 @@ def main() -> None:
 
     df = runs_to_dataframe(records)
     df = _prepare_display_df(df)
-    df = _drop_constant_meta(df)
+
+    if not args.show_all:
+        df = _drop_constant_meta(df)
 
     if args.sort_by is not None:
         if args.sort_by not in df.columns:
             available = ", ".join(sorted(df.columns.tolist()))
             parser.error(f"Unknown column {args.sort_by!r}. Available: {available}")
-        df = df.sort_values(args.sort_by, ascending=False)
+        df = df.sort_values(args.sort_by, ascending=args.asc)
 
-    _render_table(df)
+    if args.output_format == "json":
+        print(df.to_json(orient="index", indent=2))
+    elif args.output_format == "csv":
+        print(df.to_csv())
+    else:
+        _render_table(df)
 
 
 if __name__ == "__main__":
