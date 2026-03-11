@@ -6,10 +6,12 @@ from unittest.mock import MagicMock
 
 from langchain_core.documents import Document
 import pytest
+from rank_bm25 import BM25Okapi
 
 from rag_testing.components import (
     CrossEncoderReranker,
     Generator,
+    HybridRetriever,
     MMRRetriever,
     NoReranker,
     RecursiveChunker,
@@ -19,6 +21,7 @@ from rag_testing.components import (
     StuffGenerator,
 )
 from rag_testing.components.generators import STUFF_PROMPT
+from rag_testing.components.retrievers import _reciprocal_rank_fusion, _tokenize
 from rag_testing.config import Settings
 
 # ---------------------------------------------------------------------------
@@ -108,6 +111,107 @@ def test_mmr_retriever_is_frozen() -> None:
     r = MMRRetriever(store=mock_store, k=3, fetch_k=20, lambda_mult=0.5)
     with pytest.raises(dataclasses.FrozenInstanceError):
         r.k = 10  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# HybridRetriever
+# ---------------------------------------------------------------------------
+
+_CORPUS = (
+    Document(page_content="alpha bravo charlie"),
+    Document(page_content="delta echo foxtrot"),
+    Document(page_content="golf hotel india"),
+)
+_TOKENIZED = [_tokenize(d.page_content) for d in _CORPUS]
+
+
+def _make_hybrid(
+    mock_store: MagicMock, *, k: int = 2, alpha: float = 0.5
+) -> HybridRetriever:
+    bm25 = BM25Okapi(_TOKENIZED)
+    return HybridRetriever(
+        store=mock_store, bm25=bm25, corpus_docs=_CORPUS, k=k, alpha=alpha
+    )
+
+
+def test_hybrid_retriever_fuses_dense_and_bm25() -> None:
+    mock_store = MagicMock()
+    # Dense returns first two docs (alpha bravo, delta echo).
+    mock_store.similarity_search.return_value = [_CORPUS[0], _CORPUS[1]]
+
+    result = _make_hybrid(mock_store, k=2, alpha=0.5).retrieve("alpha")
+
+    mock_store.similarity_search.assert_called_once_with("alpha", k=2)
+    assert len(result) <= 2
+    # "alpha bravo charlie" should rank highest: it appears in dense results
+    # AND BM25 ranks it first for the query "alpha".
+    assert result[0].page_content == "alpha bravo charlie"
+
+
+def test_hybrid_retriever_alpha_1_favors_dense() -> None:
+    mock_store = MagicMock()
+    # Dense returns delta, alpha (this order).
+    mock_store.similarity_search.return_value = [_CORPUS[1], _CORPUS[0]]
+
+    result = _make_hybrid(mock_store, k=2, alpha=1.0).retrieve("alpha")
+
+    # alpha=1.0 zeroes BM25 weight, so dense order is preserved.
+    assert result[0].page_content == "delta echo foxtrot"
+    assert result[1].page_content == "alpha bravo charlie"
+
+
+def test_hybrid_retriever_alpha_0_favors_bm25() -> None:
+    mock_store = MagicMock()
+    mock_store.similarity_search.return_value = [_CORPUS[1], _CORPUS[0]]
+
+    result = _make_hybrid(mock_store, k=2, alpha=0.0).retrieve("alpha")
+
+    # alpha=0.0 zeroes dense weight; BM25 ranks "alpha bravo charlie" first.
+    assert result[0].page_content == "alpha bravo charlie"
+
+
+def test_hybrid_retriever_deduplicates() -> None:
+    mock_store = MagicMock()
+    # Dense returns the same doc that BM25 will also rank first.
+    mock_store.similarity_search.return_value = [_CORPUS[0]]
+
+    result = _make_hybrid(mock_store, k=3, alpha=0.5).retrieve("alpha")
+
+    contents = [d.page_content for d in result]
+    assert len(contents) == len(set(contents)), "duplicate documents in results"
+
+
+def test_hybrid_retriever_is_frozen() -> None:
+    mock_store = MagicMock()
+    r = _make_hybrid(mock_store)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.k = 10  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# RRF helper
+# ---------------------------------------------------------------------------
+
+
+def test_rrf_shared_doc_ranks_highest() -> None:
+    shared = Document(page_content="shared")
+    dense_only = Document(page_content="dense_only")
+    bm25_only = Document(page_content="bm25_only")
+
+    result = _reciprocal_rank_fusion(
+        dense_docs=[shared, dense_only],
+        bm25_docs=[shared, bm25_only],
+        alpha=0.5,
+        k=3,
+    )
+    assert result[0].page_content == "shared"
+    assert len(result) == 3
+
+
+def test_rrf_returns_at_most_k() -> None:
+    docs = [Document(page_content=f"doc{i}") for i in range(5)]
+    result = _reciprocal_rank_fusion(dense_docs=docs, bm25_docs=docs, alpha=0.5, k=2)
+    assert len(result) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +436,28 @@ def test_mmr_retriever_from_settings(settings: Settings) -> None:
     assert r.k == settings.eval.retrieval_k
     assert r.lambda_mult == settings.eval.mmr_lambda
     assert r.fetch_k == settings.eval.mmr_fetch_k
+
+
+def test_hybrid_retriever_from_settings(settings: Settings) -> None:
+    mock_store = MagicMock()
+    mock_store.get.return_value = {
+        "documents": ["chunk one", "chunk two"],
+        "metadatas": [{"source": "a.pdf"}, {"source": "b.pdf"}],
+        "ids": ["id1", "id2"],
+    }
+    s = dataclasses.replace(
+        settings,
+        eval=dataclasses.replace(
+            settings.eval, retriever_type="hybrid", hybrid_alpha=0.7
+        ),
+    )
+    r = HybridRetriever.from_settings(s, mock_store)
+    assert isinstance(r, HybridRetriever)
+    assert r.store is mock_store
+    assert r.k == s.eval.retrieval_k
+    assert r.alpha == 0.7
+    assert len(r.corpus_docs) == 2
+    mock_store.get.assert_called_once()
 
 
 def test_no_reranker_from_settings_returns_instance(settings: Settings) -> None:

@@ -6,7 +6,7 @@ runs_dir: runs
 
 # Component selection — all three fields together define the run-directory name
 # (e.g. "dense_none_stuff").
-retriever_type: dense     # currently implemented: dense, mmr
+retriever_type: dense     # currently implemented: dense, mmr, hybrid
 reranker_type: none       # currently implemented: none, cross_encoder
 generator_type: stuff     # currently implemented: stuff
 
