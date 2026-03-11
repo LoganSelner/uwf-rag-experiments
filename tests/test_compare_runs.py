@@ -9,6 +9,7 @@ from rag_testing.compare_runs import (
     _meta_cell,
     _metric_cell,
     _prepare_display_df,
+    _resolve_column,
 )
 from rag_testing.results import RunResult, runs_to_dataframe
 
@@ -88,6 +89,19 @@ class TestPrepareDisplayDf:
         assert df.loc["run_a", "chunk"] == "1000/100"
         assert "chunk_size" not in df.columns
         assert "chunk_overlap" not in df.columns
+
+    def test_composite_columns_with_missing_config(self) -> None:
+        records = [
+            RunResult("full", _SAMPLE_CONFIG, {"f": 0.8}, 5),
+            RunResult("empty", {}, {"f": 0.7}, None),
+        ]
+        df = _prepare_display_df(runs_to_dataframe(records))
+
+        assert df.loc["full", "k"] == "20/3"
+        assert df.loc["full", "chunk"] == "1000/100"
+        # Missing config → empty string, not "/".
+        assert df.loc["empty", "k"] == ""
+        assert df.loc["empty", "chunk"] == ""
 
     def test_qa_file_stems_path(self) -> None:
         df = _make_display_df()
@@ -216,3 +230,22 @@ class TestMetricCell:
         result = _metric_cell(float("nan"))
         assert str(result) == "—"
         assert result.style == "dim"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_column
+# ---------------------------------------------------------------------------
+
+
+class TestResolveColumn:
+    def test_display_name_resolves(self) -> None:
+        df = _make_display_df()
+        assert _resolve_column("faith", df) == "faith"
+
+    def test_canonical_name_resolves(self) -> None:
+        df = _make_display_df()
+        assert _resolve_column("faithfulness", df) == "faith"
+
+    def test_unknown_name_returns_none(self) -> None:
+        df = _make_display_df()
+        assert _resolve_column("nonexistent", df) is None

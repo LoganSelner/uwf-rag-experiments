@@ -83,6 +83,30 @@ def _drop_constant_meta(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=constant)
 
 
+def _composite_column(
+    df: pd.DataFrame,
+    col_a: str,
+    col_b: str,
+) -> pd.Series:
+    """Join two nullable integer columns as ``"a/b"``.
+
+    Returns ``""`` when both values are missing, and omits the slash
+    when only one side is present (e.g. ``"20"`` instead of ``"20/"``).
+    """
+
+    def _join(a: object, b: object) -> str:
+        sa = "" if pd.isna(a) else str(int(a))  # type: ignore[call-overload]
+        sb = "" if pd.isna(b) else str(int(b))  # type: ignore[call-overload]
+        if sa and sb:
+            return f"{sa}/{sb}"
+        return sa or sb
+
+    return pd.Series(
+        [_join(a, b) for a, b in zip(df[col_a], df[col_b], strict=True)],
+        index=df.index,
+    )
+
+
 def _prepare_display_df(df: pd.DataFrame) -> pd.DataFrame:
     """Transform an analysis DataFrame into a CLI-friendly display DataFrame.
 
@@ -96,20 +120,12 @@ def _prepare_display_df(df: pd.DataFrame) -> pd.DataFrame:
 
     # Composite: retrieval_k + top_k → "20/3" (fetched/kept).
     if "retrieval_k" in df.columns and "top_k" in df.columns:
-        df["k"] = (
-            df["retrieval_k"].astype("Int64").astype(str).replace("<NA>", "")
-            + "/"
-            + df["top_k"].astype("Int64").astype(str).replace("<NA>", "")
-        )
+        df["k"] = _composite_column(df, "retrieval_k", "top_k")
         df = df.drop(columns=["retrieval_k", "top_k"])
 
     # Composite: chunk_size + chunk_overlap → "1000/100".
     if "chunk_size" in df.columns and "chunk_overlap" in df.columns:
-        df["chunk"] = (
-            df["chunk_size"].astype("Int64").astype(str).replace("<NA>", "")
-            + "/"
-            + df["chunk_overlap"].astype("Int64").astype(str).replace("<NA>", "")
-        )
+        df["chunk"] = _composite_column(df, "chunk_size", "chunk_overlap")
         df = df.drop(columns=["chunk_size", "chunk_overlap"])
 
     # Stem the QA file path for brevity.
@@ -126,6 +142,22 @@ def _prepare_display_df(df: pd.DataFrame) -> pd.DataFrame:
     meta_cols = [c for c in _META_COLUMNS if c in df.columns]
     metric_cols = sorted(c for c in df.columns if c not in meta_cols)
     return df[[*meta_cols, *metric_cols]]
+
+
+def _resolve_column(name: str, df: pd.DataFrame) -> str | None:
+    """Resolve a user-supplied column name to a DataFrame column.
+
+    Accepts both display names (``faith``) and canonical analysis names
+    (``faithfulness``) so that existing scripts and README examples keep
+    working after column renames.
+    """
+    if name in df.columns:
+        return name
+    # Try canonical → display lookup.
+    display = _COLUMN_RENAMES.get(name)
+    if display is not None and display in df.columns:
+        return display
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -245,10 +277,11 @@ def main() -> None:
         df = _drop_constant_meta(df)
 
     if args.sort_by is not None:
-        if args.sort_by not in df.columns:
+        sort_col = _resolve_column(args.sort_by, df)
+        if sort_col is None:
             available = ", ".join(sorted(df.columns.tolist()))
             parser.error(f"Unknown column {args.sort_by!r}. Available: {available}")
-        df = df.sort_values(args.sort_by, ascending=args.asc)
+        df = df.sort_values(sort_col, ascending=args.asc)
 
     if args.output_format == "json":
         print(df.to_json(orient="index", indent=2))
