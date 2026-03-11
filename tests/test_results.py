@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 from rag_testing.results import RunResult, collect_runs, load_run, runs_to_dataframe
@@ -28,6 +29,8 @@ _SAMPLE_CONFIG: dict[str, object] = {
         "top_k": 3,
         "mmr_lambda": 0.5,
         "mmr_fetch_k": 20,
+        "generator_type": "stuff",
+        "hybrid_alpha": 0.5,
         "qa_path": "data/queries/test.csv",
     },
 }
@@ -195,6 +198,8 @@ class TestRunsToDataframe:
         assert df.loc["run_a", "top_k"] == 3
         assert df.loc["run_a", "mmr_lambda"] == 0.5
         assert df.loc["run_a", "mmr_fetch_k"] == 20
+        assert df.loc["run_a", "generator_type"] == "stuff"
+        assert df.loc["run_a", "hybrid_alpha"] == 0.5
         assert df.loc["run_a", "llm_model"] == "gpt-4"
         assert df.loc["run_a", "embedding_model"] == "text-embedding-3-small"
         assert df.loc["run_a", "chunk_size"] == 1000
@@ -216,6 +221,19 @@ class TestRunsToDataframe:
         assert df.loc["run_a", "faithfulness"] == 0.8
         assert df.loc["run_a", "n_samples"] is None
         assert "retriever_type" not in df.columns
+
+    def test_missing_fields_become_none(self) -> None:
+        legacy_config: dict[str, object] = {
+            "eval": {"retriever_type": "dense", "top_k": 3},
+            "models": {"llm": {"model": "gpt-4"}, "embeddings": {"model": "ada"}},
+            "index": {"chunk_size": 500, "chunk_overlap": 50},
+        }
+        record = RunResult("old_run", legacy_config, {"f": 0.7}, n_samples=3)
+
+        df = runs_to_dataframe([record])
+
+        assert pd.isna(df.loc["old_run", "generator_type"])
+        assert pd.isna(df.loc["old_run", "hybrid_alpha"])
 
     def test_multiple_runs(self) -> None:
         records = [

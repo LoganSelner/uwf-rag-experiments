@@ -28,6 +28,7 @@ _COLUMN_RENAMES = {
     # Meta columns
     "retriever_type": "retriever",
     "reranker_type": "reranker",
+    "generator_type": "generator",
     "llm_model": "llm",
     "embedding_model": "embedding",
     # Metric columns
@@ -48,6 +49,7 @@ _COLUMN_RENAMES = {
 _META_COLUMNS = (
     "retriever",
     "reranker",
+    "generator",
     "k",
     "llm",
     "embedding",
@@ -59,7 +61,13 @@ _META_COLUMNS = (
 # Columns available in the analysis DataFrame but not useful in CLI output.
 # Pipeline-variant knobs are excluded from the terminal table; they are
 # accessible via runs_to_dataframe() for notebook analysis.
-_DROP_COLUMNS = {"git_sha", "reranker_model", "mmr_lambda", "mmr_fetch_k"}
+_DROP_COLUMNS = {
+    "git_sha",
+    "reranker_model",
+    "mmr_lambda",
+    "mmr_fetch_k",
+    "hybrid_alpha",
+}
 
 
 def _drop_constant_meta(df: pd.DataFrame) -> pd.DataFrame:

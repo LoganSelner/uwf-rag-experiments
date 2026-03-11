@@ -128,6 +128,8 @@ def runs_to_dataframe(runs: list[RunResult]) -> pd.DataFrame:
             row["top_k"] = eval_cfg.get("top_k")
             row["mmr_lambda"] = eval_cfg.get("mmr_lambda")
             row["mmr_fetch_k"] = eval_cfg.get("mmr_fetch_k")
+            row["generator_type"] = eval_cfg.get("generator_type")
+            row["hybrid_alpha"] = eval_cfg.get("hybrid_alpha")
             row["llm_model"] = models_cfg.get("llm", {}).get("model")
             row["embedding_model"] = models_cfg.get("embeddings", {}).get("model")
             row["chunk_size"] = index_cfg.get("chunk_size")

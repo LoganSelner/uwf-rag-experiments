@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pandas as pd
 
-from rag_testing.compare_runs import _drop_constant_meta, _prepare_display_df
+from rag_testing.compare_runs import (
+    _drop_constant_meta,
+    _meta_cell,
+    _metric_cell,
+    _prepare_display_df,
+)
 from rag_testing.results import RunResult, runs_to_dataframe
 
 # ---------------------------------------------------------------------------
@@ -26,6 +31,8 @@ _SAMPLE_CONFIG: dict[str, object] = {
         "top_k": 3,
         "mmr_lambda": 0.5,
         "mmr_fetch_k": 20,
+        "generator_type": "stuff",
+        "hybrid_alpha": 0.5,
         "qa_path": "data/queries/test.csv",
     },
 }
@@ -56,11 +63,13 @@ class TestPrepareDisplayDf:
 
         assert "retriever" in df.columns
         assert "reranker" in df.columns
+        assert "generator" in df.columns
         assert "llm" in df.columns
         assert "embedding" in df.columns
         # Original analysis names should be gone.
         assert "retriever_type" not in df.columns
         assert "reranker_type" not in df.columns
+        assert "generator_type" not in df.columns
         assert "llm_model" not in df.columns
         assert "embedding_model" not in df.columns
 
@@ -89,7 +98,13 @@ class TestPrepareDisplayDf:
 
     def test_drops_cli_noise_columns(self) -> None:
         df = _make_display_df()
-        for col in ("git_sha", "reranker_model", "mmr_lambda", "mmr_fetch_k"):
+        for col in (
+            "git_sha",
+            "reranker_model",
+            "mmr_lambda",
+            "mmr_fetch_k",
+            "hybrid_alpha",
+        ):
             assert col not in df.columns
 
     def test_meta_columns_before_metrics(self) -> None:
@@ -160,3 +175,44 @@ class TestDropConstantMeta:
 
         # Even though metric value is constant, it's not a meta column.
         assert "f" in df.columns
+
+
+# ---------------------------------------------------------------------------
+# _meta_cell
+# ---------------------------------------------------------------------------
+
+
+class TestMetaCell:
+    def test_float_with_integer_value_renders_as_int(self) -> None:
+        assert _meta_cell(1000.0) == "1000"
+
+    def test_string_passthrough(self) -> None:
+        assert _meta_cell("dense") == "dense"
+
+    def test_nan_renders_empty(self) -> None:
+        assert _meta_cell(float("nan")) == ""
+
+
+# ---------------------------------------------------------------------------
+# _metric_cell
+# ---------------------------------------------------------------------------
+
+
+class TestMetricCell:
+    def test_green_threshold(self) -> None:
+        result = _metric_cell(0.8)
+        assert str(result) == "0.8000"
+        assert result.style == "bold green"
+
+    def test_yellow_threshold(self) -> None:
+        result = _metric_cell(0.5)
+        assert result.style == "yellow"
+
+    def test_red_threshold(self) -> None:
+        result = _metric_cell(0.49)
+        assert result.style == "red"
+
+    def test_nan_renders_dash(self) -> None:
+        result = _metric_cell(float("nan"))
+        assert str(result) == "—"
+        assert result.style == "dim"
