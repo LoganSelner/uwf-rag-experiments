@@ -17,10 +17,20 @@ To add a new generator (e.g. MapReduceGenerator, RefineGenerator):
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 from langchain_core.language_models import BaseChatModel
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ..config import Settings
+
+logger = logging.getLogger(__name__)
 
 # Default prompt template used by StuffGenerator.
 # Callers can supply a custom template via the prompt_template field.
@@ -39,6 +49,19 @@ ANSWER:
 """
 
 
+@retry(
+    retry=retry_if_exception_type((ConnectionError, TimeoutError, Exception)),
+    wait=wait_exponential(multiplier=1, min=2, max=60),
+    stop=stop_after_attempt(4),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
+def _invoke_llm_with_retry(llm: BaseChatModel, prompt: str) -> str:
+    """Invoke the LLM with automatic retry on transient failures."""
+    response = llm.invoke(prompt)
+    return str(getattr(response, "content", response))
+
+
 @dataclass(frozen=True, eq=False)  # eq=False: BaseChatModel is not hashable
 class StuffGenerator:
     """Concatenates all context chunks into a single prompt (the 'stuff' strategy).
@@ -54,8 +77,7 @@ class StuffGenerator:
     def generate(self, question: str, contexts: list[str]) -> str:
         stuffed = "\n\n---\n\n".join(contexts)
         prompt = self.prompt_template.format(context=stuffed, question=question)
-        response = self.llm.invoke(prompt)
-        return str(getattr(response, "content", response))
+        return _invoke_llm_with_retry(self.llm, prompt)
 
     @classmethod
     def from_settings(cls, settings: Settings, llm: BaseChatModel) -> StuffGenerator:

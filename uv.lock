@@ -2543,6 +2543,7 @@ dependencies = [
     { name = "ragas" },
     { name = "rich" },
     { name = "sentence-transformers" },
+    { name = "tenacity" },
 ]
 
 [package.dev-dependencies]
@@ -2568,6 +2569,7 @@ requires-dist = [
     { name = "ragas", specifier = ">=0.4.3,<0.5" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "sentence-transformers", specifier = ">=3.0.0,<4" },
+    { name = "tenacity", specifier = ">=8.0.0" },
 ]
 
 [package.metadata.requires-dev]
