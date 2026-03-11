@@ -23,7 +23,7 @@ from langchain_core.language_models import BaseChatModel
 from tenacity import (
     before_sleep_log,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -48,9 +48,29 @@ QUESTION:
 ANSWER:
 """
 
+# Exceptions that clearly indicate programming bugs — never retry these.
+_NON_RETRYABLE = (TypeError, ValueError, KeyError, AttributeError, SyntaxError)
+
+# Network / transient exceptions that should always be retried.
+_RETRYABLE = (ConnectionError, TimeoutError, OSError)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True for transient errors that are worth retrying.
+
+    Known network exceptions are always retried. Deterministic programming
+    errors (TypeError, ValueError, etc.) are never retried. Everything else
+    (including EdenAI's bare ``Exception`` for provider errors) is retried
+    as a conservative default — the run-loop safety net handles persistent
+    failures.
+    """
+    if isinstance(exc, _NON_RETRYABLE):
+        return False
+    return True
+
 
 @retry(
-    retry=retry_if_exception_type((ConnectionError, TimeoutError, Exception)),
+    retry=retry_if_exception(_is_retryable),
     wait=wait_exponential(multiplier=1, min=2, max=60),
     stop=stop_after_attempt(4),
     before_sleep=before_sleep_log(logger, logging.WARNING),

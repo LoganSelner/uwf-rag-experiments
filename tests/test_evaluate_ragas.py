@@ -292,3 +292,40 @@ def test_evaluate_run_writes_scores_jsonl(
     assert row2["question"] == "Q2?"
     assert row2["faithfulness"] is None  # NaN → null
     assert not math.isnan(row2.get("faithfulness") or 0)  # null is not NaN
+
+
+# ---------------------------------------------------------------------------
+# evaluate_run — failed row filtering
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_run_skips_rows_with_null_answer(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rows with answer=null (failed pipeline rows) are excluded from evaluation."""
+    from rag_testing import evaluate_ragas
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "predictions.jsonl").write_text(
+        '{"id":"1","question":"Q1?","answer":"A1","contexts":["c"],"ground_truth":"G1"}\n'
+        '{"id":"2","question":"Q2?","answer":null,"contexts":[],'
+        '"ground_truth":"G2","error":"ConnectionError: transient"}\n'
+        '{"id":"3","question":"Q3?","answer":"A3","contexts":["c"],"ground_truth":"G3"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(evaluate_ragas, "build_llm", lambda _: MagicMock())
+    monkeypatch.setattr(evaluate_ragas, "build_embeddings", lambda _: MagicMock())
+    mock_evaluate = _patch_ragas(
+        monkeypatch, [{"faithfulness": 0.8}, {"faithfulness": 0.9}]
+    )
+
+    scores = evaluate_ragas.evaluate_run(run_dir, ["faithfulness"], settings)
+
+    # Only 2 rows (not 3) should reach ragas.evaluate
+    _, call_kwargs = mock_evaluate.call_args
+    dataset = call_kwargs["dataset"]
+    assert len(dataset.samples) == 2
+
+    assert scores["faithfulness"] == pytest.approx(0.85)

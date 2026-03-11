@@ -89,12 +89,12 @@ def run_once(settings: Settings) -> Path:
                 result = pipeline.answer(row["question"])
                 record["answer"] = result.answer
                 record["contexts"] = result.contexts
-            except Exception:
-                logger.exception("Row %s failed after retries", row["id"])
+            except Exception as exc:
+                logger.exception("Row %s failed", row["id"])
                 failed += 1
                 record["answer"] = None
                 record["contexts"] = []
-                record["error"] = "pipeline_error"
+                record["error"] = f"{type(exc).__name__}: {exc}"
             predictions_file.write(json.dumps(record, ensure_ascii=False) + "\n")
             predictions_file.flush()
 
