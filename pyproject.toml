@@ -20,6 +20,7 @@ dependencies = [
     "pandas>=2.0.0",
     "rich>=13.0.0",
     "sentence-transformers>=3.0.0,<4",
+    "tenacity>=8.0.0",
 ]
 
 [dependency-groups]

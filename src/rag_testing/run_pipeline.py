@@ -7,6 +7,7 @@ import csv
 from dataclasses import asdict
 from datetime import UTC, datetime
 import json
+import logging
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -15,6 +16,8 @@ import yaml
 
 from .config import Settings, load_settings
 from .pipeline import RAGPipeline
+
+logger = logging.getLogger(__name__)
 
 
 def load_eval_rows(path: Path) -> list[dict[str, str]]:
@@ -73,23 +76,35 @@ def run_once(settings: Settings) -> Path:
     predictions_path = run_dir / "predictions.jsonl"
     total = len(rows)
 
+    failed = 0
     with predictions_path.open("w", encoding="utf-8") as predictions_file:
         for i, row in enumerate(rows, start=1):
-            print(f"  [{i}/{total}] {row['id']}", flush=True)
-            result = pipeline.answer(row["question"])
-            predictions_file.write(
-                json.dumps(
-                    {
-                        "id": row["id"],
-                        "question": row["question"],
-                        "ground_truth": row["ground_truth"],
-                        "answer": result.answer,
-                        "contexts": result.contexts,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
+            logger.info("[%d/%d] %s", i, total, row["id"])
+            record: dict[str, Any] = {
+                "id": row["id"],
+                "question": row["question"],
+                "ground_truth": row["ground_truth"],
+            }
+            try:
+                result = pipeline.answer(row["question"])
+                record["answer"] = result.answer
+                record["contexts"] = result.contexts
+            except Exception as exc:
+                logger.exception("Row %s failed", row["id"])
+                failed += 1
+                record["answer"] = None
+                record["contexts"] = []
+                record["error"] = f"{type(exc).__name__}: {exc}"
+            predictions_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+            predictions_file.flush()
+
+    if failed:
+        logger.warning(
+            "Run complete: %d/%d succeeded (%d failed)",
+            total - failed,
+            total,
+            failed,
+        )
 
     config_doc = {"git_sha": _get_git_sha(), **_to_yaml_safe(asdict(settings))}
     (run_dir / "config_used.yaml").write_text(
@@ -106,6 +121,10 @@ def main() -> None:
         description="Run the configured RAG pipeline over the eval CSV."
     )
     parser.parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
     settings = load_settings()
     run_dir = run_once(settings)
     print(f"Saved run artifacts to: {run_dir / 'predictions.jsonl'}")

@@ -70,7 +70,11 @@ def evaluate_run(
     from ragas.embeddings.base import LangchainEmbeddingsWrapper
     from ragas.llms.base import LangchainLLMWrapper
 
-    preds = _load_jsonl(run_dir / "predictions.jsonl")
+    all_preds = _load_jsonl(run_dir / "predictions.jsonl")
+    preds = [p for p in all_preds if p.get("answer") is not None]
+    if len(preds) < len(all_preds):
+        skipped = len(all_preds) - len(preds)
+        print(f"Skipping {skipped} failed row(s) from evaluation.")
 
     samples: list[SingleTurnSample | MultiTurnSample] = [
         SingleTurnSample(

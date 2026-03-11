@@ -239,6 +239,40 @@ def test_stuff_generator_accepts_custom_prompt_template() -> None:
     assert prompt == "CTX: ctx | Q: hi"
 
 
+def test_stuff_generator_retries_on_transient_error() -> None:
+    """Transient errors are retried; the final successful response is returned."""
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [
+        ConnectionError("transient"),
+        ConnectionError("transient again"),
+        MagicMock(content="recovered answer"),
+    ]
+
+    result = StuffGenerator(llm=mock_llm).generate("Q?", ["ctx"])
+    assert result == "recovered answer"
+    assert mock_llm.invoke.call_count == 3
+
+
+def test_stuff_generator_no_retry_on_value_error() -> None:
+    """Deterministic errors like ValueError are not retried."""
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = ValueError("bad template")
+
+    with pytest.raises(ValueError, match="bad template"):
+        StuffGenerator(llm=mock_llm).generate("Q?", ["ctx"])
+    assert mock_llm.invoke.call_count == 1
+
+
+def test_stuff_generator_reraises_after_max_retries() -> None:
+    """After exhausting retries, the original exception is reraised."""
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = ConnectionError("persistent failure")
+
+    with pytest.raises(ConnectionError, match="persistent failure"):
+        StuffGenerator(llm=mock_llm).generate("Q?", ["ctx"])
+    assert mock_llm.invoke.call_count == 4  # 1 initial + 3 retries
+
+
 def test_stuff_generator_is_frozen() -> None:
     mock_llm = MagicMock()
     gen = StuffGenerator(llm=mock_llm)
