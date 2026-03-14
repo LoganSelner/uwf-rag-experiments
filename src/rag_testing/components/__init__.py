@@ -19,12 +19,13 @@ from .base import Chunker, Generator, Reranker, Retriever
 from .chunkers import RecursiveChunker
 from .generators import StuffGenerator
 from .rerankers import CrossEncoderReranker, NoReranker
-from .retrievers import MMRRetriever, SimpleRetriever
+from .retrievers import HybridRetriever, MMRRetriever, SimpleRetriever
 
 __all__ = [
     "Chunker",
     "CrossEncoderReranker",
     "Generator",
+    "HybridRetriever",
     "MMRRetriever",
     "NoReranker",
     "RecursiveChunker",

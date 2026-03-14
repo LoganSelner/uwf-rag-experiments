@@ -2,8 +2,6 @@
 # Hybrid retrieval (dense + BM25 with RRF fusion), no reranking, stuff generator.
 #
 # Run name suffix: hybrid_none_stuff
-# Status: retriever_type "hybrid" not yet implemented — add HybridRetriever to
-#         components/retrievers.py and register it in _RETRIEVERS in pipeline.py.
 # Usage: copy this file to configs/eval.yaml to make it active.
 qa_path: data/queries/testKB_dataset.csv
 runs_dir: runs
