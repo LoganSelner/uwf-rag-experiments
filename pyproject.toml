@@ -105,3 +105,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 addopts = "-q -ra --strict-markers"
 testpaths = ["tests"]
+markers = [
+    "slow: marks tests that download models or do heavy computation (deselect with '-m \"not slow\"')",
+]
