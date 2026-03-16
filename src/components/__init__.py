@@ -9,13 +9,13 @@ from components import (  # noqa: F401
     chunkers,
     defaults,
     embedders,
+    generators,
     ingestors,
+    prompts,
     retrievers,
     vectorstores,
 )
 
-# Future implementation imports will go here:
+# Stub files (no registrations yet — implementations in future branches):
 # from components import rerankers
-# from components import generators
-# from components import prompts
 # from components import tools
