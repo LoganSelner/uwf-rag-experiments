@@ -1,0 +1,59 @@
+# Minimal base config for testing (mirrors configs/base.yaml structure)
+
+name: "baseline"
+description: "Default baseline configuration"
+pipeline_mode: "linear"
+
+indexing:
+  sources:
+    - name: "student_handbook"
+      path: "data/sources/student_handbook.pdf"
+      ingest:
+        type: "pdf"
+
+  chunking:
+    type: "recursive"
+    params:
+      chunk_size: 512
+      chunk_overlap: 50
+
+  embedding:
+    type: "huggingface"
+    params:
+      model_name: "BAAI/bge-m3"
+      normalize: true
+
+  vectorstore:
+    type: "faiss"
+    params:
+      metric: "cosine"
+
+query:
+  query_transform:
+    type: "passthrough"
+
+  retrieval:
+    type: "dense"
+    top_k_retrieve: 10
+    top_k_final: 5
+
+  reranking:
+    type: "none"
+
+  generation:
+    type: "ollama"
+
+  generation_llm:
+    provider: "ollama"
+    model_name: "qwen2.5:32b"
+    temperature: 0.0
+
+  prompt:
+    type: "chat"
+    system_template: "You are an academic advisor."
+    context_format: "numbered"
+
+evaluation:
+  dataset: "data/datasets/18q_handbook.json"
+  mode: "full"
+  num_runs: 3
