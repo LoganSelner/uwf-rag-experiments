@@ -30,6 +30,10 @@ METRIC_SHORT_NAMES = {
     "faithfulness": "Faith.",
     "context_entity_recall": "CER",
     "answer_relevancy": "Ans.Rel",
+    # Opt-in metrics (not in DEFAULT_METRICS)
+    "answer_similarity": "Ans.Sim",
+    "context_recall": "Ctx.Rec",
+    "factual_correctness": "Fact.Corr",
 }
 
 
@@ -115,13 +119,34 @@ def format_comparison_table(
     return "\n".join(lines)
 
 
-def print_comparison(
-    result_dirs: list[str | Path],
-    metrics: list[str] | None = None,
-) -> None:
-    """Load experiments and print a comparison table to stdout."""
-    rows = compare_experiments(result_dirs, metrics)
-    if not rows:
-        print("No experiment results found.")
-        return
-    print(format_comparison_table(rows, metrics))
+def resolve_metric_name(name: str, metrics: list[str]) -> str | None:
+    """Resolve a metric name from its full or short display name.
+
+    Accepts either the canonical name (``faithfulness``) or the short
+    display name (``Faith.``), and returns the canonical name if it
+    appears in *metrics*.  Returns ``None`` when unrecognised.
+    """
+    if name in metrics:
+        return name
+    reverse = {v.lower(): k for k, v in METRIC_SHORT_NAMES.items()}
+    canonical = reverse.get(name.lower())
+    if canonical and canonical in metrics:
+        return canonical
+    return None
+
+
+def sort_rows(
+    rows: list[dict[str, Any]],
+    metric: str,
+    ascending: bool = False,
+) -> list[dict[str, Any]]:
+    """Return *rows* sorted by *metric* (descending by default).
+
+    Missing or ``None`` values sort to the bottom.
+    """
+
+    def _sort_key(r: dict[str, Any]) -> float:
+        v = r.get(metric)
+        return float(v) if v is not None else float("-inf")
+
+    return sorted(rows, key=_sort_key, reverse=not ascending)
