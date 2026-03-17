@@ -693,6 +693,22 @@ class TestRAGPipeline:
         assert summary["experiment_name"] == "test_exp"
         assert summary["metrics"]["accuracy"] == 0.85
 
+        # Metadata fields
+        assert "timestamp" in summary
+        assert isinstance(summary["timestamp"], str)
+        assert "T" in summary["timestamp"]  # ISO 8601
+        assert "git_dirty" in summary
+        assert isinstance(summary["git_dirty"], bool)
+
+        # Full config.yaml saved for reproducibility
+        import yaml
+
+        config_path = tmp_path / "test_exp" / "config.yaml"
+        assert config_path.exists()
+        with open(config_path) as f:
+            saved_config = yaml.safe_load(f)
+        assert saved_config["name"] == "test_exp"
+
         # Run files are JSONL with per-sample data
         run_1 = tmp_path / "test_exp" / "run_1.jsonl"
         run_2 = tmp_path / "test_exp" / "run_2.jsonl"
@@ -923,6 +939,21 @@ class TestGitSHA:
         ):
             assert _get_git_sha() == "unknown"
 
+    def test_get_git_dirty_returns_bool(self) -> None:
+        from pipeline.rag import _get_git_dirty
+
+        result = _get_git_dirty()
+        assert isinstance(result, bool)
+
+    def test_get_git_dirty_graceful_fallback(self) -> None:
+        from pipeline.rag import _get_git_dirty
+
+        with patch(
+            "pipeline.rag.subprocess.check_output",
+            side_effect=FileNotFoundError,
+        ):
+            assert _get_git_dirty() is False
+
     def test_save_results_includes_git_sha(self, tmp_path: Path) -> None:
         from pipeline.rag import _save_results
 
@@ -1075,3 +1106,130 @@ class TestRichComparison:
         assert "answer_similarity" in METRIC_SHORT_NAMES
         assert "context_recall" in METRIC_SHORT_NAMES
         assert "factual_correctness" in METRIC_SHORT_NAMES
+
+
+# -----------------------------------------------------------------------
+# Config diff
+# -----------------------------------------------------------------------
+
+
+class TestConfigDiff:
+    def test_load_config_from_yaml(self, tmp_path: Path) -> None:
+        import yaml
+
+        from evaluation.comparison import load_config
+
+        exp_dir = tmp_path / "exp_a"
+        exp_dir.mkdir()
+        config = {"name": "exp_a", "indexing": {"chunking": {"type": "recursive"}}}
+        with open(exp_dir / "config.yaml", "w") as f:
+            yaml.safe_dump(config, f)
+
+        loaded = load_config(exp_dir)
+        assert loaded["name"] == "exp_a"
+        assert loaded["indexing"]["chunking"]["type"] == "recursive"
+
+    def test_load_config_fallback_to_snapshot(self, tmp_path: Path) -> None:
+        from evaluation.comparison import load_config
+
+        exp_dir = tmp_path / "exp_old"
+        exp_dir.mkdir()
+        summary = {
+            "experiment_name": "exp_old",
+            "metrics": {},
+            "config_snapshot": {"name": "exp_old", "pipeline_mode": "linear"},
+        }
+        with open(exp_dir / "summary.json", "w") as f:
+            json.dump(summary, f)
+
+        loaded = load_config(exp_dir)
+        assert loaded["name"] == "exp_old"
+        assert loaded["pipeline_mode"] == "linear"
+
+    def test_diff_configs_identifies_differences(self, tmp_path: Path) -> None:
+        import yaml
+
+        from evaluation.comparison import diff_configs
+
+        dir_a = tmp_path / "a"
+        dir_a.mkdir()
+        with open(dir_a / "config.yaml", "w") as f:
+            yaml.safe_dump({"name": "a", "indexing": {"chunk_size": 512}}, f)
+
+        dir_b = tmp_path / "b"
+        dir_b.mkdir()
+        with open(dir_b / "config.yaml", "w") as f:
+            yaml.safe_dump({"name": "b", "indexing": {"chunk_size": 1000}}, f)
+
+        diffs = diff_configs(dir_a, dir_b)
+        assert "name" in diffs
+        assert diffs["name"] == ("a", "b")
+        assert "indexing.chunk_size" in diffs
+        assert diffs["indexing.chunk_size"] == (512, 1000)
+
+    def test_diff_configs_identical(self, tmp_path: Path) -> None:
+        import yaml
+
+        from evaluation.comparison import diff_configs
+
+        dir_a = tmp_path / "a"
+        dir_a.mkdir()
+        dir_b = tmp_path / "b"
+        dir_b.mkdir()
+        config = {"name": "same", "value": 42}
+        for d in (dir_a, dir_b):
+            with open(d / "config.yaml", "w") as f:
+                yaml.safe_dump(config, f)
+
+        diffs = diff_configs(dir_a, dir_b)
+        assert diffs == {}
+
+
+# -----------------------------------------------------------------------
+# Per-sample comparison
+# -----------------------------------------------------------------------
+
+
+class TestPerSampleComparison:
+    def test_load_per_sample_scores(self, tmp_path: Path) -> None:
+        from evaluation.comparison import load_per_sample_scores
+
+        # Set up two experiment directories with JSONL data
+        for exp_name, score in [("exp_a", 0.8), ("exp_b", 0.9)]:
+            exp_dir = tmp_path / exp_name
+            exp_dir.mkdir()
+            summary = {"experiment_name": exp_name, "metrics": {}}
+            with open(exp_dir / "summary.json", "w") as f:
+                json.dump(summary, f)
+            sample = {
+                "id": "1",
+                "input": {"query": "Q1?", "reference": "R1"},
+                "output": {"response": "A1", "retrieved_contexts": []},
+                "scores": {"faithfulness": score},
+            }
+            with open(exp_dir / "run_1.jsonl", "w") as f:
+                f.write(json.dumps(sample) + "\n")
+
+        rows = load_per_sample_scores(
+            [tmp_path / "exp_a", tmp_path / "exp_b"],
+            metrics=["faithfulness"],
+        )
+        assert len(rows) == 2
+        assert rows[0]["experiment"] == "exp_a"
+        assert rows[0]["sample_id"] == "1"
+        assert rows[0]["faithfulness"] == 0.8
+        assert rows[1]["experiment"] == "exp_b"
+        assert rows[1]["faithfulness"] == 0.9
+
+    def test_load_per_sample_scores_missing_run(self, tmp_path: Path) -> None:
+        from evaluation.comparison import load_per_sample_scores
+
+        exp_dir = tmp_path / "exp_missing"
+        exp_dir.mkdir()
+        summary = {"experiment_name": "exp_missing", "metrics": {}}
+        with open(exp_dir / "summary.json", "w") as f:
+            json.dump(summary, f)
+        # No run_1.jsonl file
+
+        rows = load_per_sample_scores([exp_dir], metrics=["faithfulness"])
+        assert rows == []

@@ -191,6 +191,14 @@ class Evaluator:
                 "pipeline_mode": rag._config.pipeline_mode,
                 "evaluation_mode": self._config.mode,
                 "index_fingerprint": rag._config.index_fingerprint(),
+                "chunk_size": rag._config.indexing.chunking.params.get("chunk_size"),
+                "embedding_model": rag._config.indexing.embedding.params.get(
+                    "model_name", ""
+                ),
+                "retrieval_type": rag._config.query.retrieval.type,
+                "reranking_type": rag._config.query.reranking.type or "none",
+                "generation_model": rag._config.query.generation_llm.model_name,
+                "top_k_final": rag._config.query.retrieval.top_k_final,
             },
         )
 

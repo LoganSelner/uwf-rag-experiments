@@ -3,6 +3,11 @@
 Loads multiple experiment summaries and produces comparison tables
 matching the ACMSE paper format (Table 2). See ARCHITECTURE_PLAN.md
 Section 9.6.
+
+Supports three tiers of comparison (following MLflow/W&B patterns):
+1. Aggregate metrics — ``compare_experiments()``
+2. Per-sample drill-down — ``load_per_sample_scores()``
+3. Config diffs — ``diff_configs()``
 """
 
 from __future__ import annotations
@@ -11,6 +16,8 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -150,3 +157,133 @@ def sort_rows(
         return float(v) if v is not None else float("-inf")
 
     return sorted(rows, key=_sort_key, reverse=not ascending)
+
+
+# ---------------------------------------------------------------------------
+# Config loading and diffing
+# ---------------------------------------------------------------------------
+
+
+def load_config(result_dir: str | Path) -> dict[str, Any]:
+    """Load the full config from an experiment result directory.
+
+    Reads ``config.yaml`` if present (new format). Falls back to the
+    ``config_snapshot`` inside ``summary.json`` for older results that
+    predate config.yaml saving.
+    """
+    config_path = Path(result_dir) / "config.yaml"
+    if config_path.exists():
+        with open(config_path) as f:
+            return yaml.safe_load(f) or {}
+
+    # Fallback for old results without config.yaml
+    summary = load_summary(result_dir)
+    return summary.get("config_snapshot", {})
+
+
+def _flatten_dict(
+    d: dict[str, Any],
+    prefix: str = "",
+) -> dict[str, Any]:
+    """Flatten a nested dict to dotted key paths.
+
+    Example: ``{"a": {"b": 1}}`` → ``{"a.b": 1}``
+    Lists are kept as leaf values (not indexed).
+    """
+    items: dict[str, Any] = {}
+    for key, value in d.items():
+        full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
+        if isinstance(value, dict):
+            items.update(_flatten_dict(value, full_key))
+        else:
+            items[full_key] = value
+    return items
+
+
+def diff_configs(
+    dir_a: str | Path,
+    dir_b: str | Path,
+) -> dict[str, tuple[Any, Any]]:
+    """Return config keys that differ between two experiments.
+
+    Returns:
+        Dict mapping dotted key paths to ``(value_a, value_b)`` tuples.
+        Only keys where the values differ are included.
+    """
+    flat_a = _flatten_dict(load_config(dir_a))
+    flat_b = _flatten_dict(load_config(dir_b))
+
+    all_keys = sorted(set(flat_a) | set(flat_b))
+    diffs: dict[str, tuple[Any, Any]] = {}
+    sentinel = object()
+
+    for key in all_keys:
+        val_a = flat_a.get(key, sentinel)
+        val_b = flat_b.get(key, sentinel)
+        if val_a != val_b:
+            diffs[key] = (
+                val_a if val_a is not sentinel else None,
+                val_b if val_b is not sentinel else None,
+            )
+
+    return diffs
+
+
+# ---------------------------------------------------------------------------
+# Per-sample comparison
+# ---------------------------------------------------------------------------
+
+
+def load_per_sample_scores(
+    result_dirs: list[str | Path],
+    run: int = 1,
+    metrics: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Load per-sample scores from multiple experiments for a given run.
+
+    Reads ``run_N.jsonl`` from each result directory and returns a flat
+    list of dicts suitable for tabular display or DataFrame construction.
+
+    Args:
+        result_dirs: Paths to experiment result directories.
+        run: Which run number to load (default: 1).
+        metrics: Subset of metrics to include (default: all available).
+
+    Returns:
+        List of dicts with keys: experiment, sample_id, query,
+        and one key per metric score.
+    """
+    cols = metrics or DEFAULT_METRICS
+    rows: list[dict[str, Any]] = []
+
+    for result_dir in result_dirs:
+        result_dir = Path(result_dir)
+        run_path = result_dir / f"run_{run}.jsonl"
+        if not run_path.exists():
+            logger.warning("Skipping %s: no run_%d.jsonl", result_dir, run)
+            continue
+
+        # Get experiment name from summary if available
+        try:
+            summary = load_summary(result_dir)
+            exp_name = summary.get("experiment_name", result_dir.name)
+        except FileNotFoundError:
+            exp_name = result_dir.name
+
+        with open(run_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                sample = json.loads(line)
+                row: dict[str, Any] = {
+                    "experiment": exp_name,
+                    "sample_id": sample.get("id", ""),
+                    "query": sample.get("input", {}).get("query", ""),
+                }
+                scores = sample.get("scores", {})
+                for metric in cols:
+                    row[metric] = scores.get(metric)
+                rows.append(row)
+
+    return rows

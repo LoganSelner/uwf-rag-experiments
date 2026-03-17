@@ -7,11 +7,15 @@ building/caching. Provides ``run_experiment()`` as the CLI entry point.
 
 from __future__ import annotations
 
+import dataclasses
+from datetime import datetime
 import json
 import logging
 from pathlib import Path
 import subprocess
 from typing import Any
+
+import yaml
 
 # Trigger component registration
 import components  # noqa: F401
@@ -36,6 +40,22 @@ def _get_git_sha() -> str:
         ).strip()
     except Exception:
         return "unknown"
+
+
+def _get_git_dirty() -> bool:
+    """Return True if the working tree has uncommitted changes."""
+    try:
+        output = (
+            subprocess.check_output(
+                ["git", "status", "--porcelain"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+        return bool(output)
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
 
 
 class RAGPipeline:
@@ -158,7 +178,8 @@ def _save_results(
     """Save experiment results.
 
     results/<experiment_name>/
-        summary.json    — aggregated metrics + config snapshot
+        summary.json    — aggregated metrics + config snapshot + metadata
+        config.yaml     — full resolved config for reproducibility
         run_1.jsonl     — per-sample data for run 1
         run_2.jsonl
         ...
@@ -169,13 +190,20 @@ def _save_results(
     # Summary
     summary = {
         "experiment_name": result.experiment_name,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
         "metrics": result.metrics,
         "num_runs": result.num_runs,
         "config_snapshot": result.config_snapshot,
         "git_sha": _get_git_sha(),
+        "git_dirty": _get_git_dirty(),
     }
     with open(exp_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
+
+    # Full resolved config for reproducibility
+    config_dict = dataclasses.asdict(config)
+    with open(exp_dir / "config.yaml", "w") as f:
+        yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False)
 
     # Per-run results: JSONL with per-sample data
     for i, run_samples in enumerate(result.per_run_samples, 1):

@@ -30,7 +30,9 @@ from evaluation.comparison import (
     DEFAULT_METRICS,
     METRIC_SHORT_NAMES,
     compare_experiments,
+    diff_configs,
     format_comparison_table,
+    load_per_sample_scores,
     resolve_metric_name,
     sort_rows,
 )
@@ -120,6 +122,99 @@ def _output_csv(rows: list[dict[str, Any]], metrics: list[str]) -> None:
     print(buf.getvalue(), end="")
 
 
+def render_diff_table(
+    result_dirs: list[str],
+    console: Console | None = None,
+) -> Table | None:
+    """Render config differences between experiments as a Rich table."""
+    console = console or Console()
+
+    if len(result_dirs) < 2:
+        console.print("[yellow]Need at least 2 experiments to diff configs.[/yellow]")
+        return None
+
+    # Diff first two experiments
+    diffs = diff_configs(result_dirs[0], result_dirs[1])
+
+    if not diffs:
+        console.print("[green]Configs are identical.[/green]")
+        return None
+
+    exp_a = Path(result_dirs[0]).name
+    exp_b = Path(result_dirs[1]).name
+
+    table = Table(
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold",
+        title="Config Differences",
+    )
+    table.add_column("Key", style="cyan", no_wrap=True)
+    table.add_column(exp_a, justify="left")
+    table.add_column(exp_b, justify="left")
+
+    for key, (val_a, val_b) in diffs.items():
+        table.add_row(key, str(val_a), str(val_b))
+
+    console.print(table)
+    return table
+
+
+def render_per_sample_table(
+    result_dirs: list[str],
+    metrics: list[str],
+    run: int = 1,
+    console: Console | None = None,
+) -> Table | None:
+    """Render per-sample scores across experiments as a Rich table."""
+    console = console or Console()
+
+    rows = load_per_sample_scores(result_dirs, run=run, metrics=metrics)
+    if not rows:
+        console.print("[yellow]No per-sample data found.[/yellow]")
+        return None
+
+    # Group by sample_id to build columns per experiment
+    from collections import OrderedDict
+
+    samples: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    experiments: list[str] = []
+    for row in rows:
+        exp = row["experiment"]
+        if exp not in experiments:
+            experiments.append(exp)
+        sid = row["sample_id"]
+        if sid not in samples:
+            samples[sid] = {"query": row["query"]}
+        for metric in metrics:
+            samples[sid][f"{exp}_{metric}"] = row.get(metric)
+
+    # Use only the first metric for a readable table
+    display_metric = metrics[0] if metrics else DEFAULT_METRICS[0]
+    short = METRIC_SHORT_NAMES.get(display_metric, display_metric)
+
+    table = Table(
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold",
+        title=f"Per-Sample Comparison (run {run}, {short})",
+    )
+    table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("Query", max_width=50)
+    for exp in experiments:
+        table.add_column(exp, justify="right", no_wrap=True)
+
+    for sid, data in samples.items():
+        cells: list[str | Text] = [sid, data.get("query", "")[:50]]
+        for exp in experiments:
+            value = data.get(f"{exp}_{display_metric}")
+            cells.append(_metric_cell(value, None))
+        table.add_row(*cells)
+
+    console.print(table)
+    return table
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compare multiple experiment results side by side.",
@@ -162,6 +257,25 @@ def main() -> None:
         default=None,
         help="Show only the N most recent experiment directories.",
     )
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        default=False,
+        help="Show config differences between the first two experiments.",
+    )
+    parser.add_argument(
+        "--per-sample",
+        action="store_true",
+        default=False,
+        help="Show per-sample score breakdown across experiments.",
+    )
+    parser.add_argument(
+        "--run",
+        metavar="N",
+        type=int,
+        default=1,
+        help="Which run to use for --per-sample (default: 1).",
+    )
     args = parser.parse_args()
 
     result_dirs = args.results
@@ -169,6 +283,17 @@ def main() -> None:
         result_dirs = result_dirs[-args.last :]
 
     metrics = args.metrics or DEFAULT_METRICS
+
+    # Special modes: --diff and --per-sample
+    if args.diff:
+        render_diff_table(result_dirs)
+        return
+
+    if args.per_sample:
+        render_per_sample_table(result_dirs, metrics, run=args.run)
+        return
+
+    # Default: aggregate comparison table
     rows = compare_experiments(result_dirs, metrics)
 
     if not rows:
