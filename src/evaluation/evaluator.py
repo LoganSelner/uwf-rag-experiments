@@ -8,12 +8,11 @@ See ARCHITECTURE_PLAN.md Section 9 for full specification.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import statistics
 from typing import TYPE_CHECKING, Any
-
-from datasets import Dataset
 
 from core.config import EvaluationConfig
 from core.types import EvalSample, ExperimentResult
@@ -23,30 +22,69 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Map config metric names to RAGAS metric objects.
-# Lazy import to avoid import-time RAGAS initialization.
-_METRIC_REGISTRY: dict[str, str] = {
-    "answer_correctness": "answer_correctness",
-    "context_precision": "context_precision",
-    "faithfulness": "faithfulness",
-    "context_entity_recall": "context_entity_recall",
-    "answer_relevancy": "answer_relevancy",
-}
-
 
 def _load_dataset(path: str) -> list[dict[str, str]]:
-    """Load an evaluation dataset from JSON.
+    """Load an evaluation dataset from JSONL.
 
-    Expected format: list of {query, reference} dicts.
+    Expected format: one {query, reference} JSON object per line.
     """
+    data: list[dict[str, str]] = []
     with open(path) as f:
-        data: list[dict[str, str]] = json.load(f)
+        for line in f:
+            line = line.strip()
+            if line:
+                data.append(json.loads(line))
     if not data:
         raise ValueError(f"Evaluation dataset is empty: {path}")
     for i, item in enumerate(data):
         if "query" not in item or "reference" not in item:
             raise ValueError(f"Dataset item {i} missing 'query' or 'reference': {item}")
     return data
+
+
+@functools.cache
+def _build_metric_map() -> dict[str, Any]:
+    """Build RAGAS metric instances.
+
+    Imports from private submodules to avoid the deprecation warnings
+    that ``ragas.metrics`` top-level imports trigger in RAGAS 0.4.x.
+    """
+    from ragas.metrics._answer_correctness import AnswerCorrectness
+    from ragas.metrics._answer_relevance import ResponseRelevancy
+    from ragas.metrics._context_entities_recall import ContextEntityRecall
+    from ragas.metrics._context_precision import ContextPrecision
+    from ragas.metrics._faithfulness import Faithfulness
+
+    return {
+        "faithfulness": Faithfulness(),
+        "answer_relevancy": ResponseRelevancy(),
+        "answer_correctness": AnswerCorrectness(),
+        "context_precision": ContextPrecision(),
+        "context_entity_recall": ContextEntityRecall(),
+    }
+
+
+class _EmbedderAdapter:
+    """Adapts a BaseEmbedder to the LangChain Embeddings interface.
+
+    This allows reusing the pipeline's already-loaded embedding model
+    for RAGAS evaluation without extra API calls or downloads.
+    """
+
+    def __init__(self, embedder: Any) -> None:
+        self._embedder = embedder
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._embedder.embed_query(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embedder.embed_query(text)
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.embed_documents(texts)
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return self.embed_query(text)
 
 
 class Evaluator:
@@ -58,6 +96,7 @@ class Evaluator:
 
     def __init__(self, config: EvaluationConfig) -> None:
         self._config = config
+        self._embedder_adapter: Any | None = None
 
     @property
     def active_metrics(self) -> list[str]:
@@ -77,6 +116,14 @@ class Evaluator:
         """
         dataset = _load_dataset(self._config.dataset)
         num_runs = self._config.num_runs
+
+        # Reuse the pipeline's embedder for RAGAS (avoids extra API
+        # calls — the HuggingFace model is already loaded in memory).
+        from ragas.embeddings.base import LangchainEmbeddingsWrapper
+
+        self._embedder_adapter = LangchainEmbeddingsWrapper(
+            _EmbedderAdapter(rag.index_artifact.embedder)  # type: ignore[arg-type]
+        )
 
         logger.info(
             "Starting evaluation: %d questions, %d runs, mode=%s",
@@ -135,29 +182,13 @@ class Evaluator:
     def _compute_metrics(self, samples: list[EvalSample]) -> dict[str, float]:
         """Compute RAGAS metrics on a list of EvalSamples.
 
-        Steps (from ARCHITECTURE_PLAN.md §9.5):
-        1. Build metric objects from active_metrics
-        2. Construct a HuggingFace Dataset from EvalSamples
-        3. Call ragas.evaluate(dataset, metrics)
-        4. Return the scores dict
+        Uses the RAGAS 0.4.x API (EvaluationDataset + SingleTurnSample)
+        with LangchainLLMWrapper for provider compatibility.
         """
-        from ragas import evaluate
-        from ragas.metrics import (
-            answer_correctness,
-            answer_relevancy,
-            context_entity_recall,
-            context_precision,
-            faithfulness,
-        )
+        from ragas import EvaluationDataset, RunConfig, evaluate
+        from ragas.dataset_schema import SingleTurnSample
 
-        metric_map: dict[str, Any] = {
-            "answer_correctness": answer_correctness,
-            "context_precision": context_precision,
-            "faithfulness": faithfulness,
-            "context_entity_recall": context_entity_recall,
-            "answer_relevancy": answer_relevancy,
-        }
-
+        metric_map = _build_metric_map()
         active = self.active_metrics
         ragas_metrics = [metric_map[name] for name in active if name in metric_map]
 
@@ -165,59 +196,105 @@ class Evaluator:
             logger.warning("No valid RAGAS metrics to compute.")
             return {}
 
-        # Build HuggingFace Dataset in RAGAS expected format
-        hf_dataset = Dataset.from_dict(
-            {
-                "question": [s.query for s in samples],
-                "answer": [s.response for s in samples],
-                "contexts": [s.retrieved_contexts for s in samples],
-                "ground_truth": [s.reference for s in samples],
-            }
-        )
+        ragas_samples = [
+            SingleTurnSample(
+                user_input=s.query,
+                response=s.response,
+                retrieved_contexts=s.retrieved_contexts,
+                reference=s.reference,
+            )
+            for s in samples
+        ]
 
-        # Configure evaluator LLM if specified
-        eval_kwargs: dict[str, Any] = {}
+        eval_kwargs: dict[str, Any] = {
+            "run_config": RunConfig(timeout=300),
+        }
+
         if (
             self._config.evaluator_llm.provider
             and self._config.evaluator_llm.model_name
         ):
             eval_kwargs["llm"] = self._build_evaluator_llm()
 
+        if self._embedder_adapter is not None:
+            eval_kwargs["embeddings"] = self._embedder_adapter
+
         ragas_result: Any = evaluate(
-            dataset=hf_dataset,
+            dataset=EvaluationDataset(samples=ragas_samples),  # type: ignore[arg-type]
             metrics=ragas_metrics,
             **eval_kwargs,
         )
 
-        return {
-            name: float(ragas_result[name]) for name in active if name in ragas_result
-        }
+        # ragas_result.scores is a list of per-sample dicts,
+        # e.g. [{"faithfulness": 0.9, "answer_correctness": 0.8}].
+        # Compute mean per metric across samples.
+        scores_list: list[dict[str, Any]] = ragas_result.scores
+        result_dict: dict[str, float] = {}
+        for name in active:
+            values = [
+                float(s[name]) for s in scores_list if name in s and s[name] is not None
+            ]
+            if values:
+                result_dict[name] = sum(values) / len(values)
+        return result_dict
 
     def _build_evaluator_llm(self) -> Any:
-        """Build an LLM wrapper for RAGAS evaluation.
+        """Build a RAGAS-compatible LLM from config.
 
-        RAGAS expects a LangChain-compatible LLM. This method
-        constructs one from the evaluator_llm config.
+        Returns a LangchainLLMWrapper around a LangChain chat model.
         """
+        from ragas.llms.base import LangchainLLMWrapper
+
         llm_config = self._config.evaluator_llm
+
         if llm_config.provider == "ollama":
             from langchain_community.llms import Ollama
 
-            return Ollama(
-                model=llm_config.model_name,
-                temperature=llm_config.temperature,
+            return LangchainLLMWrapper(
+                Ollama(
+                    model=llm_config.model_name,
+                    temperature=llm_config.temperature,
+                )
             )
+
+        if llm_config.provider == "edenai":
+            import os
+
+            from dotenv import load_dotenv
+            from langchain_community.chat_models.edenai import (
+                ChatEdenAI,
+            )
+
+            load_dotenv()
+            api_key = os.environ.get("EDENAI_API_KEY", "")
+            if not api_key:
+                raise ValueError(
+                    "EDENAI_API_KEY environment variable is required "
+                    "for Eden AI evaluator LLM."
+                )
+
+            sub_provider = llm_config.params.get("sub_provider", "openai")
+            return LangchainLLMWrapper(
+                ChatEdenAI(
+                    provider=sub_provider,
+                    model=llm_config.model_name,
+                    temperature=llm_config.temperature,
+                    max_tokens=llm_config.max_tokens or 1024,
+                    edenai_api_key=api_key,  # type: ignore[arg-type]
+                )
+            )
+
         raise ValueError(
             f"Unsupported evaluator LLM provider: "
             f"'{llm_config.provider}'. "
-            f"Supported: 'ollama'."
+            f"Supported: 'ollama', 'edenai'."
         )
 
     @staticmethod
     def _aggregate_metrics(
         per_run: list[dict[str, float]],
     ) -> dict[str, float]:
-        """Aggregate metrics across runs as mean ± std.
+        """Aggregate metrics across runs as mean +/- std.
 
         Returns dict with keys like "answer_correctness" (mean)
         and "answer_correctness_std" (standard deviation).

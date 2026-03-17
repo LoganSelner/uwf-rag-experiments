@@ -18,8 +18,9 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "rich>=13.0.0",
 
+    "langchain-community>=0.4.1,<0.5",  # used by EdenAIGenerator + RAGAS evaluator
+
     # --- Legacy (rag_testing) — kept until migration complete ---
-    "langchain-community>=0.4.1,<0.5",
     "langchain-chroma>=1.1.0,<2",
     "langchain-openai>=1.0.3,<2",
     "langchain-text-splitters>=1.1.0,<2",
@@ -100,6 +101,18 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["ragas", "ragas.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain_community", "langchain_community.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain_core", "langchain_core.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["dotenv", "dotenv.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -65,7 +65,7 @@ query:
     citation_style: "none"
 
 evaluation:
-  dataset: "data/datasets/18q_handbook.json"
+  dataset: "data/datasets/testKB_dataset.jsonl"
   mode: "full"
   metrics:
     - "answer_correctness"

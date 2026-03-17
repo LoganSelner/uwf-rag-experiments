@@ -1,0 +1,37 @@
+# Eden AI baseline — uses OpenAI GPT-4 via Eden AI gateway.
+#
+# Inherits everything from base.yaml (chunking, embedding, retrieval)
+# and only overrides generation + evaluation to use Eden AI.
+#
+# Prerequisites:
+#   1. Set EDENAI_API_KEY in .env
+#   2. Place source PDF at data/sources/student_handbook.pdf
+#   3. Place eval dataset at data/datasets/18q_handbook.jsonl
+#
+# Usage:
+#   python scripts/run_experiment.py configs/experiments/edenai_baseline.yaml -v
+
+extends: ../base.yaml
+
+name: "edenai_baseline"
+description: "Baseline with Eden AI (OpenAI GPT-4)"
+
+query:
+  generation:
+    type: "edenai"
+    params:
+      sub_provider: "openai"
+
+  generation_llm:
+    provider: "edenai"
+    model_name: "gpt-4"
+    temperature: 0.0
+    max_tokens: 1024
+
+evaluation:
+  num_runs: 1  # start with 1 to save API costs during testing
+  evaluator_llm:
+    provider: "edenai"
+    model_name: "gpt-4"
+    params:
+      sub_provider: "openai"

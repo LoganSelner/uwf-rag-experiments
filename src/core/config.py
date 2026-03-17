@@ -98,6 +98,7 @@ class LLMConfig:
     model_name: str = ""
     temperature: float = 0.0
     max_tokens: int | None = None
+    params: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> LLMConfig:
@@ -108,6 +109,7 @@ class LLMConfig:
             model_name=data.get("model_name", ""),
             temperature=data.get("temperature", 0.0),
             max_tokens=data.get("max_tokens"),
+            params=data.get("params", {}),
         )
 
 
