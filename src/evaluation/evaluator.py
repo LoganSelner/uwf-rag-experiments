@@ -295,11 +295,14 @@ class Evaluator:
         scores_list: list[dict[str, Any]] = ragas_result.scores
 
         # Aggregate: mean per metric across samples.
+        # Filter both None and NaN — RAGAS returns NaN when the
+        # LLM judge fails to parse a response.
         result_dict: dict[str, float] = {}
         for name in active:
             values = [
                 float(s[name]) for s in scores_list if name in s and s[name] is not None
             ]
+            values = [v for v in values if not math.isnan(v)]
             if values:
                 result_dict[name] = sum(values) / len(values)
 
@@ -386,7 +389,9 @@ class Evaluator:
         aggregated: dict[str, float] = {}
 
         for key in all_keys:
-            values = [run[key] for run in per_run if key in run]
+            values = [
+                run[key] for run in per_run if key in run and not math.isnan(run[key])
+            ]
             if values:
                 aggregated[key] = statistics.mean(values)
                 if len(values) > 1:

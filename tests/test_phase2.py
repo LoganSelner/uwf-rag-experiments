@@ -583,6 +583,23 @@ class TestEvaluator:
         assert "accuracy_std" in agg
         assert agg["accuracy_std"] > 0
 
+    def test_aggregate_metrics_ignores_nan(self) -> None:
+        """NaN values from failed RAGAS evaluations must not crash stdev."""
+        from evaluation.evaluator import Evaluator
+
+        per_run = [
+            {"accuracy": 0.8, "precision": float("nan")},
+            {"accuracy": 0.9, "precision": 0.85},
+            {"accuracy": float("nan"), "precision": 0.90},
+        ]
+        agg = Evaluator._aggregate_metrics(per_run)
+        # accuracy: only 0.8 and 0.9 are valid
+        assert abs(agg["accuracy"] - 0.85) < 0.01
+        assert agg["accuracy_std"] > 0
+        # precision: only 0.85 and 0.90 are valid
+        assert abs(agg["precision"] - 0.875) < 0.01
+        assert agg["precision_std"] > 0
+
 
 # -----------------------------------------------------------------------
 # RAGPipeline dispatcher
