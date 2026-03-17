@@ -54,6 +54,6 @@ query:
     context_format: "numbered"
 
 evaluation:
-  dataset: "data/datasets/18q_handbook.jsonl"
+  dataset: "data/datasets/testHB_dataset.jsonl"
   mode: "full"
   num_runs: 3

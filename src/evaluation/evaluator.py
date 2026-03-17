@@ -51,15 +51,21 @@ def _build_metric_map() -> dict[str, Any]:
     """
     from ragas.metrics._answer_correctness import AnswerCorrectness
     from ragas.metrics._answer_relevance import ResponseRelevancy
+    from ragas.metrics._answer_similarity import AnswerSimilarity
     from ragas.metrics._context_entities_recall import ContextEntityRecall
     from ragas.metrics._context_precision import ContextPrecision
+    from ragas.metrics._context_recall import ContextRecall
+    from ragas.metrics._factual_correctness import FactualCorrectness
     from ragas.metrics._faithfulness import Faithfulness
 
     return {
         "faithfulness": Faithfulness(),
         "answer_relevancy": ResponseRelevancy(),
         "answer_correctness": AnswerCorrectness(),
+        "answer_similarity": AnswerSimilarity(),
+        "factual_correctness": FactualCorrectness(),
         "context_precision": ContextPrecision(),
+        "context_recall": ContextRecall(),
         "context_entity_recall": ContextEntityRecall(),
     }
 
@@ -137,6 +143,13 @@ class Evaluator:
         for run_idx in range(1, num_runs + 1):
             logger.info("Run %d/%d", run_idx, num_runs)
             samples = self._run_once(rag, dataset)
+            if not samples:
+                logger.error(
+                    "All queries failed in run %d — skipping metrics.",
+                    run_idx,
+                )
+                per_run_metrics.append({})
+                continue
             metrics = self._compute_metrics(samples)
             per_run_metrics.append(metrics)
             logger.info("Run %d metrics: %s", run_idx, metrics)
@@ -164,18 +177,39 @@ class Evaluator:
         rag: RAGPipeline,
         dataset: list[dict[str, str]],
     ) -> list[EvalSample]:
-        """Run the pipeline on each dataset query, producing EvalSamples."""
+        """Run the pipeline on each dataset query, producing EvalSamples.
+
+        Failed queries are logged and skipped. The run continues with
+        remaining queries so one bad response doesn't crash the evaluation.
+        """
         samples: list[EvalSample] = []
-        for item in dataset:
-            result = rag.query(item["query"])
-            contexts = [rc.chunk.content for rc in result.retrieved_chunks]
-            samples.append(
-                EvalSample(
-                    query=item["query"],
-                    response=result.answer,
-                    retrieved_contexts=contexts,
-                    reference=item["reference"],
+        failed = 0
+        total = len(dataset)
+        for i, item in enumerate(dataset, start=1):
+            try:
+                result = rag.query(item["query"])
+                contexts = [rc.chunk.content for rc in result.retrieved_chunks]
+                samples.append(
+                    EvalSample(
+                        query=item["query"],
+                        response=result.answer,
+                        retrieved_contexts=contexts,
+                        reference=item["reference"],
+                    )
                 )
+            except Exception:
+                failed += 1
+                logger.exception(
+                    "Query %d/%d failed: %s",
+                    i,
+                    total,
+                    item["query"][:80],
+                )
+        if failed:
+            logger.warning(
+                "%d/%d queries failed in this run",
+                failed,
+                total,
             )
         return samples
 

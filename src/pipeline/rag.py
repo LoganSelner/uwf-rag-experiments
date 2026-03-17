@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import subprocess
 from typing import Any
 
 # Trigger component registration
@@ -23,6 +24,18 @@ from pipeline.query import QueryPipeline
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path("results")
+
+
+def _get_git_sha() -> str:
+    """Return the short current git SHA, or ``'unknown'`` when unavailable."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
 
 
 class RAGPipeline:
@@ -159,6 +172,7 @@ def _save_results(
         "metrics": result.metrics,
         "num_runs": result.num_runs,
         "config_snapshot": result.config_snapshot,
+        "git_sha": _get_git_sha(),
     }
     with open(exp_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
