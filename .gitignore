@@ -20,6 +20,7 @@ coverage.xml
 artifacts/
 indexes/
 runs/
+legacy-runs/
 outputs/
 cache/
 *.sqlite
