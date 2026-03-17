@@ -155,12 +155,12 @@ def _save_results(
     result: Any,
     base_dir: Path,
 ) -> None:
-    """Save experiment results following the plan's output format.
+    """Save experiment results.
 
     results/<experiment_name>/
         summary.json    — aggregated metrics + config snapshot
-        run_1.json      — per-sample metrics for run 1
-        run_2.json
+        run_1.jsonl     — per-sample data for run 1
+        run_2.jsonl
         ...
     """
     exp_dir = base_dir / config.name
@@ -177,7 +177,8 @@ def _save_results(
     with open(exp_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
 
-    # Per-run results
-    for i, run_metrics in enumerate(result.per_run_metrics, 1):
-        with open(exp_dir / f"run_{i}.json", "w") as f:
-            json.dump(run_metrics, f, indent=2, default=str)
+    # Per-run results: JSONL with per-sample data
+    for i, run_samples in enumerate(result.per_run_samples, 1):
+        with open(exp_dir / f"run_{i}.jsonl", "w") as f:
+            for sample in run_samples:
+                f.write(json.dumps(sample.to_result_dict(), default=str) + "\n")

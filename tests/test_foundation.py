@@ -26,6 +26,7 @@ from core.types import (
     GenerationResult,
     IndexArtifact,
     RetrievedChunk,
+    ScoredSample,
     ToolResult,
 )
 
@@ -77,12 +78,43 @@ class TestTypes:
 
     def test_eval_sample(self) -> None:
         sample = EvalSample(
+            id="1",
             query="q",
             response="a",
             retrieved_contexts=["ctx1"],
             reference="ref",
         )
+        assert sample.id == "1"
         assert len(sample.retrieved_contexts) == 1
+
+    def test_scored_sample(self) -> None:
+        sample = ScoredSample(
+            id="1",
+            query="q",
+            response="a",
+            retrieved_contexts=["ctx1"],
+            reference="ref",
+            scores={"faithfulness": 0.9, "answer_correctness": None},
+        )
+        assert sample.scores["faithfulness"] == 0.9
+        assert sample.scores["answer_correctness"] is None
+
+    def test_scored_sample_to_result_dict(self) -> None:
+        sample = ScoredSample(
+            id="42",
+            query="What is X?",
+            response="X is Y.",
+            retrieved_contexts=["ctx"],
+            reference="ref",
+            scores={"faithfulness": 0.9},
+        )
+        d = sample.to_result_dict()
+        assert d["id"] == "42"
+        assert d["input"]["query"] == "What is X?"
+        assert d["input"]["reference"] == "ref"
+        assert d["output"]["response"] == "X is Y."
+        assert d["output"]["retrieved_contexts"] == ["ctx"]
+        assert d["scores"]["faithfulness"] == 0.9
 
     def test_experiment_result(self) -> None:
         result = ExperimentResult(
@@ -90,6 +122,7 @@ class TestTypes:
             metrics={"answer_correctness": 0.85},
         )
         assert result.num_runs == 1
+        assert result.per_run_samples == []
 
     def test_index_artifact(self) -> None:
         artifact = IndexArtifact(vectorstore=None, embedder=None)

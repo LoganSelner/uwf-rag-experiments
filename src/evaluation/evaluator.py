@@ -11,11 +11,12 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import math
 import statistics
 from typing import TYPE_CHECKING, Any
 
 from core.config import EvaluationConfig
-from core.types import EvalSample, ExperimentResult
+from core.types import EvalSample, ExperimentResult, ScoredSample
 
 if TYPE_CHECKING:
     from pipeline.rag import RAGPipeline
@@ -27,6 +28,8 @@ def _load_dataset(path: str) -> list[dict[str, str]]:
     """Load an evaluation dataset from JSONL.
 
     Expected format: one {query, reference} JSON object per line.
+    An optional ``id`` field provides a stable identifier for each
+    item.  If absent, sequential 1-based IDs are assigned.
     """
     data: list[dict[str, str]] = []
     with open(path) as f:
@@ -39,6 +42,8 @@ def _load_dataset(path: str) -> list[dict[str, str]]:
     for i, item in enumerate(data):
         if "query" not in item or "reference" not in item:
             raise ValueError(f"Dataset item {i} missing 'query' or 'reference': {item}")
+        if "id" not in item:
+            item["id"] = str(i + 1)
     return data
 
 
@@ -139,6 +144,7 @@ class Evaluator:
         )
 
         per_run_metrics: list[dict[str, float]] = []
+        per_run_samples: list[list[ScoredSample]] = []
 
         for run_idx in range(1, num_runs + 1):
             logger.info("Run %d/%d", run_idx, num_runs)
@@ -149,9 +155,24 @@ class Evaluator:
                     run_idx,
                 )
                 per_run_metrics.append({})
+                per_run_samples.append([])
                 continue
-            metrics = self._compute_metrics(samples)
+            metrics, sample_scores = self._compute_metrics(samples)
             per_run_metrics.append(metrics)
+
+            scored = [
+                ScoredSample(
+                    id=s.id,
+                    query=s.query,
+                    response=s.response,
+                    retrieved_contexts=s.retrieved_contexts,
+                    reference=s.reference,
+                    scores=scores,
+                )
+                for s, scores in zip(samples, sample_scores, strict=True)
+            ]
+            per_run_samples.append(scored)
+
             logger.info("Run %d metrics: %s", run_idx, metrics)
 
         # Aggregate across runs
@@ -162,6 +183,7 @@ class Evaluator:
             experiment_name=rag._config.name,
             metrics=aggregated,
             per_run_metrics=per_run_metrics,
+            per_run_samples=per_run_samples,
             num_runs=num_runs,
             config_snapshot={
                 "name": rag._config.name,
@@ -191,6 +213,7 @@ class Evaluator:
                 contexts = [rc.chunk.content for rc in result.retrieved_chunks]
                 samples.append(
                     EvalSample(
+                        id=item["id"],
                         query=item["query"],
                         response=result.answer,
                         retrieved_contexts=contexts,
@@ -213,11 +236,19 @@ class Evaluator:
             )
         return samples
 
-    def _compute_metrics(self, samples: list[EvalSample]) -> dict[str, float]:
+    def _compute_metrics(
+        self, samples: list[EvalSample]
+    ) -> tuple[dict[str, float], list[dict[str, float | None]]]:
         """Compute RAGAS metrics on a list of EvalSamples.
 
         Uses the RAGAS 0.4.x API (EvaluationDataset + SingleTurnSample)
         with LangchainLLMWrapper for provider compatibility.
+
+        Returns:
+            A tuple of (aggregate_metrics, per_sample_scores).
+            aggregate_metrics: mean per metric across all samples.
+            per_sample_scores: one dict per sample with individual
+            metric scores.  NaN values are converted to None.
         """
         from ragas import EvaluationDataset, RunConfig, evaluate
         from ragas.dataset_schema import SingleTurnSample
@@ -228,7 +259,7 @@ class Evaluator:
 
         if not ragas_metrics:
             logger.warning("No valid RAGAS metrics to compute.")
-            return {}
+            return {}, [{} for _ in samples]
 
         ragas_samples = [
             SingleTurnSample(
@@ -261,8 +292,9 @@ class Evaluator:
 
         # ragas_result.scores is a list of per-sample dicts,
         # e.g. [{"faithfulness": 0.9, "answer_correctness": 0.8}].
-        # Compute mean per metric across samples.
         scores_list: list[dict[str, Any]] = ragas_result.scores
+
+        # Aggregate: mean per metric across samples.
         result_dict: dict[str, float] = {}
         for name in active:
             values = [
@@ -270,7 +302,21 @@ class Evaluator:
             ]
             if values:
                 result_dict[name] = sum(values) / len(values)
-        return result_dict
+
+        # Per-sample: preserve individual scores, NaN → None.
+        per_sample: list[dict[str, float | None]] = []
+        for scores in scores_list:
+            sample_scores: dict[str, float | None] = {}
+            for name in active:
+                if name in scores:
+                    val = scores[name]
+                    if val is None or (isinstance(val, float) and math.isnan(val)):
+                        sample_scores[name] = None
+                    else:
+                        sample_scores[name] = float(val)
+            per_sample.append(sample_scores)
+
+        return result_dict, per_sample
 
     def _build_evaluator_llm(self) -> Any:
         """Build a RAGAS-compatible LLM from config.

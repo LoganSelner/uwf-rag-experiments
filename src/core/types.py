@@ -105,10 +105,42 @@ class AgentStep:
 class EvalSample:
     """One evaluation sample in the format RAGAS expects."""
 
+    id: str
     query: str
     response: str
     retrieved_contexts: list[str]
     reference: str
+
+
+@dataclass
+class ScoredSample:
+    """One evaluated sample with its per-metric scores.
+
+    This is the unit of data written to per-run JSONL result files.
+    """
+
+    id: str
+    query: str
+    response: str
+    retrieved_contexts: list[str]
+    reference: str
+    scores: dict[str, float | None]
+
+    def to_result_dict(self) -> dict[str, Any]:
+        """Serialize to nested dict for JSONL output.
+
+        Follows the input/output/scores convention used by
+        AWS Bedrock and OpenAI Evals.
+        """
+        return {
+            "id": self.id,
+            "input": {"query": self.query, "reference": self.reference},
+            "output": {
+                "response": self.response,
+                "retrieved_contexts": self.retrieved_contexts,
+            },
+            "scores": self.scores,
+        }
 
 
 @dataclass
@@ -118,6 +150,7 @@ class ExperimentResult:
     experiment_name: str
     metrics: dict[str, float]
     per_run_metrics: list[dict[str, float]] = field(default_factory=list)
+    per_run_samples: list[list[ScoredSample]] = field(default_factory=list)
     num_runs: int = 1
     config_snapshot: dict[str, Any] = field(default_factory=dict)
 
