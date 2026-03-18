@@ -29,7 +29,7 @@ query:
     max_tokens: 1024
 
 evaluation:
-  num_runs: 1  # start with 1 to save API costs during testing
+  num_runs: 3  # start with 1 to save API costs during testing
   evaluator_llm:
     provider: "edenai"
     model_name: "gpt-4"

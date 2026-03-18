@@ -120,4 +120,5 @@ addopts = "-q -ra --strict-markers"
 testpaths = ["tests"]
 markers = [
     "slow: marks tests that download models or do heavy computation (deselect with '-m \"not slow\"')",
+    "requires_api: marks tests that need external API access (Ollama, EdenAI)",
 ]
