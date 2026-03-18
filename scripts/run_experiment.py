@@ -19,8 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 # Trigger component registration at the application boundary
 import components  # noqa: F401
-from core.config import ExperimentConfig
+from core.config import ExperimentConfig, validate_config
 from core.git import get_git_dirty, get_git_sha
+from core.registry import registry
 from evaluation.evaluator import Evaluator
 from evaluation.results import save_experiment
 from pipeline.rag import RAGPipeline
@@ -62,8 +63,10 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
-    # Load config
+    # Load and validate config — catches typos and constraint
+    # violations before any heavyweight work (model loading, etc.).
     config = ExperimentConfig.from_yaml(args.config)
+    validate_config(config, registry)
     logger.info("Running experiment: %s", config.name)
 
     # Capture git state early — before a long-running experiment

@@ -9,6 +9,7 @@ import pytest
 from core.config import (
     AgentConfig,
     ComponentConfig,
+    ConfigValidationError,
     EvaluationConfig,
     ExperimentConfig,
     IndexingConfig,
@@ -17,7 +18,9 @@ from core.config import (
     RetrievalConfig,
     _deep_merge,
     load_yaml_with_inheritance,
+    validate_config,
 )
+from core.registry import registry
 
 # -----------------------------------------------------------------------
 # _deep_merge
@@ -205,3 +208,121 @@ class TestIndexFingerprint:
         raw["indexing"]["chunking"]["params"]["chunk_size"] = 9999
         cfg2 = ExperimentConfig.from_dict(raw)
         assert cfg1.index_fingerprint() != cfg2.index_fingerprint()
+
+
+# -----------------------------------------------------------------------
+# validate_config
+# -----------------------------------------------------------------------
+
+
+class TestValidateConfig:
+    """Tests for validate_config() against the real component registry."""
+
+    def _make_valid_config(self, **overrides: object) -> ExperimentConfig:
+        """Build a minimal valid linear config with optional overrides."""
+        data: dict = {
+            "name": "test",
+            "pipeline_mode": "linear",
+            "indexing": {
+                "sources": [{"name": "s", "path": "x.pdf", "ingest": {"type": "pdf"}}],
+                "chunking": {"type": "recursive"},
+                "embedding": {"type": "huggingface"},
+                "vectorstore": {"type": "faiss"},
+            },
+            "query": {
+                "retrieval": {"type": "dense", "top_k_retrieve": 10, "top_k_final": 5},
+                "generation": {"type": "ollama"},
+                "prompt": {"type": "chat"},
+            },
+            "evaluation": {"dataset": "", "mode": "full"},
+        }
+        for key, value in overrides.items():
+            parts = key.split(".")
+            d = data
+            for p in parts[:-1]:
+                d = d[p]
+            d[parts[-1]] = value
+        return ExperimentConfig.from_dict(data)
+
+    def test_valid_config_passes(self) -> None:
+        cfg = self._make_valid_config()
+        validate_config(cfg, registry)  # should not raise
+
+    def test_unregistered_component_type(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.indexing.chunking.type = "bogus_chunker"
+        with pytest.raises(ConfigValidationError, match="bogus_chunker"):
+            validate_config(cfg, registry)
+
+    def test_error_lists_available_types(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.indexing.chunking.type = "bogus"
+        with pytest.raises(ConfigValidationError, match="recursive"):
+            validate_config(cfg, registry)
+
+    def test_top_k_constraint(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.retrieval.top_k_final = 20
+        cfg.query.retrieval.top_k_retrieve = 5
+        with pytest.raises(ConfigValidationError, match="top_k_final"):
+            validate_config(cfg, registry)
+
+    def test_missing_dataset(self, tmp_path: Path) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.dataset = str(tmp_path / "nonexistent.jsonl")
+        with pytest.raises(ConfigValidationError, match="not found"):
+            validate_config(cfg, registry)
+
+    def test_existing_dataset_passes(self, tmp_path: Path) -> None:
+        ds = tmp_path / "data.jsonl"
+        ds.write_text('{"query": "Q", "reference": "R"}\n')
+        cfg = self._make_valid_config()
+        cfg.evaluation.dataset = str(ds)
+        validate_config(cfg, registry)  # should not raise
+
+    def test_multiple_errors_collected(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.indexing.chunking.type = "bad1"
+        cfg.indexing.embedding.type = "bad2"
+        with pytest.raises(ConfigValidationError) as exc_info:
+            validate_config(cfg, registry)
+        assert len(exc_info.value.errors) >= 2
+        assert any("bad1" in e for e in exc_info.value.errors)
+        assert any("bad2" in e for e in exc_info.value.errors)
+
+    def test_agent_mode_no_agents_or_tools(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.pipeline_mode = "agent"
+        cfg.agent.agents = []
+        cfg.agent.tools = []
+        with pytest.raises(ConfigValidationError, match="no agents or tools"):
+            validate_config(cfg, registry)
+
+    def test_empty_query_transform_defaults_to_passthrough(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.query_transform.type = ""
+        validate_config(cfg, registry)  # should not raise
+
+    def test_empty_reranking_defaults_to_none(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.reranking.type = ""
+        validate_config(cfg, registry)  # should not raise
+
+    def test_retrieval_only_skips_generation_check(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.generation.type = ""
+        cfg.evaluation.mode = "retrieval_only"
+        validate_config(cfg, registry)  # should not raise
+
+    def test_full_mode_requires_generation(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.generation.type = ""
+        cfg.evaluation.mode = "full"
+        with pytest.raises(ConfigValidationError, match="generator is required"):
+            validate_config(cfg, registry)
+
+    def test_unknown_pipeline_mode(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.pipeline_mode = "unknown"
+        with pytest.raises(ConfigValidationError, match="not recognized"):
+            validate_config(cfg, registry)

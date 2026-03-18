@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.registry import ComponentRegistry
+from core.registry import ComponentRegistry, registry
 
 
 @pytest.fixture()
@@ -89,3 +89,52 @@ class TestComponentRegistry:
 
         clean_registry.clear()
         assert clean_registry.is_registered("gen", "test") is False
+
+
+# -----------------------------------------------------------------------
+# Registration inventory — verifies that `import components` (in
+# conftest.py) registers all expected types. If this fails after
+# adding a new component, ensure the implementation file is imported
+# in components/__init__.py.
+# -----------------------------------------------------------------------
+
+
+class TestRegistrationInventory:
+    # Indexing
+    def test_ingest_pdf(self) -> None:
+        assert registry.is_registered("ingest", "pdf")
+
+    def test_chunking_recursive(self) -> None:
+        assert registry.is_registered("chunking", "recursive")
+
+    def test_embedding_huggingface(self) -> None:
+        assert registry.is_registered("embedding", "huggingface")
+
+    def test_vectorstore_faiss(self) -> None:
+        assert registry.is_registered("vectorstore", "faiss")
+
+    # Query
+    def test_retrieval_dense(self) -> None:
+        assert registry.is_registered("retrieval", "dense")
+
+    def test_generation_ollama(self) -> None:
+        assert registry.is_registered("generation", "ollama")
+
+    def test_generation_edenai(self) -> None:
+        assert registry.is_registered("generation", "edenai")
+
+    def test_prompts_chat(self) -> None:
+        assert registry.is_registered("prompts", "chat")
+
+    # Defaults
+    def test_query_transform_passthrough(self) -> None:
+        assert registry.is_registered("query_transform", "passthrough")
+
+    def test_reranking_none(self) -> None:
+        assert registry.is_registered("reranking", "none")
+
+    def test_memory_none(self) -> None:
+        assert registry.is_registered("memory", "none")
+
+    def test_memory_buffer_window(self) -> None:
+        assert registry.is_registered("memory", "buffer_window")

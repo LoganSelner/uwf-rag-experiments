@@ -460,3 +460,171 @@ class ExperimentConfig:
         }
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
+
+
+# ---------------------------------------------------------------------------
+# Config validation
+# ---------------------------------------------------------------------------
+
+
+class ConfigValidationError(Exception):
+    """Raised when experiment config validation fails."""
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        bullet_list = "\n".join(f"  - {e}" for e in errors)
+        super().__init__(
+            f"Config validation failed with {len(errors)} error(s):\n{bullet_list}"
+        )
+
+
+def validate_config(config: ExperimentConfig, registry: Any) -> None:
+    """Validate an ExperimentConfig against the component registry.
+
+    Checks that all referenced component types are registered,
+    logical constraints hold, and required files exist.
+
+    Args:
+        config: The parsed experiment config.
+        registry: A ComponentRegistry (or duck-typed equivalent with
+            ``is_registered`` and ``list_category`` methods).
+
+    Raises:
+        ConfigValidationError: If any validation checks fail.
+    """
+    errors: list[str] = []
+
+    # --- Indexing components (always validated) ---
+    for i, source in enumerate(config.indexing.sources):
+        _check_registered(
+            errors,
+            registry,
+            source.ingest.type,
+            "ingest",
+            f"indexing.sources[{i}].ingest.type",
+        )
+    _check_registered(
+        errors,
+        registry,
+        config.indexing.chunking.type,
+        "chunking",
+        "indexing.chunking.type",
+    )
+    _check_registered(
+        errors,
+        registry,
+        config.indexing.embedding.type,
+        "embedding",
+        "indexing.embedding.type",
+    )
+    _check_registered(
+        errors,
+        registry,
+        config.indexing.vectorstore.type,
+        "vectorstore",
+        "indexing.vectorstore.type",
+    )
+
+    # --- Linear pipeline components ---
+    if config.pipeline_mode == "linear":
+        # Apply same defaults as pipeline/query.py
+        qt_type = config.query.query_transform.type or "passthrough"
+        _check_registered(
+            errors,
+            registry,
+            qt_type,
+            "query_transform",
+            "query.query_transform.type",
+        )
+
+        _check_registered(
+            errors,
+            registry,
+            config.query.retrieval.type,
+            "retrieval",
+            "query.retrieval.type",
+        )
+
+        rerank_type = config.query.reranking.type or "none"
+        _check_registered(
+            errors,
+            registry,
+            rerank_type,
+            "reranking",
+            "query.reranking.type",
+        )
+
+        retrieval_only = config.evaluation.mode == "retrieval_only"
+        if not retrieval_only:
+            if not config.query.generation.type:
+                errors.append(
+                    "query.generation.type is empty but evaluation.mode "
+                    "is not 'retrieval_only' — a generator is required"
+                )
+            else:
+                _check_registered(
+                    errors,
+                    registry,
+                    config.query.generation.type,
+                    "generation",
+                    "query.generation.type",
+                )
+            _check_registered(
+                errors,
+                registry,
+                config.query.prompt.type,
+                "prompts",
+                "query.prompt.type",
+            )
+
+        # top_k constraint
+        if config.query.retrieval.top_k_final > config.query.retrieval.top_k_retrieve:
+            errors.append(
+                f"query.retrieval.top_k_final ({config.query.retrieval.top_k_final}) "
+                f"> query.retrieval.top_k_retrieve "
+                f"({config.query.retrieval.top_k_retrieve})"
+            )
+
+    # --- Agent pipeline components ---
+    elif config.pipeline_mode == "agent":
+        _check_registered(
+            errors,
+            registry,
+            config.agent.memory.type,
+            "memory",
+            "agent.memory.type",
+        )
+        if not config.agent.agents and not config.agent.tools:
+            errors.append("pipeline_mode is 'agent' but no agents or tools are defined")
+
+    elif config.pipeline_mode not in ("linear", "agent"):
+        errors.append(
+            f"pipeline_mode '{config.pipeline_mode}' is not recognized "
+            "(expected 'linear' or 'agent')"
+        )
+
+    # --- Evaluation dataset ---
+    if config.evaluation.dataset and not Path(config.evaluation.dataset).exists():
+        errors.append(f"Evaluation dataset not found: '{config.evaluation.dataset}'")
+
+    if errors:
+        raise ConfigValidationError(errors)
+
+
+def _check_registered(
+    errors: list[str],
+    registry: Any,
+    type_name: str,
+    category: str,
+    config_path: str,
+) -> None:
+    """Append an error if *type_name* is not registered in *category*."""
+    if not type_name:
+        errors.append(f"{config_path} is empty (no component type specified)")
+        return
+    if not registry.is_registered(category, type_name):
+        available = registry.list_category(category)
+        errors.append(
+            f"{config_path}: '{type_name}' is not registered in "
+            f"category '{category}'. Available: {available}"
+        )
