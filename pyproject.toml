@@ -102,3 +102,8 @@ markers = [
     "slow: marks tests that download models or do heavy computation (deselect with '-m \"not slow\"')",
     "requires_api: marks tests that need external API access (Ollama, EdenAI)",
 ]
+filterwarnings = [
+    # FAISS SWIG bindings don't set __module__ on C extension types — upstream issue, nothing we can fix
+    "ignore:builtin type Swig.*:DeprecationWarning",
+    "ignore:builtin type swigvarlink:DeprecationWarning",
+]
