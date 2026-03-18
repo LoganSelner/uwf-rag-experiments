@@ -22,7 +22,6 @@ coverage.xml
 # --- RAG experiment artifacts ---
 data/indexes/*
 !data/indexes/.gitignore
-legacy-runs/
 
 # --- Data (never commit proprietary university data) ---
 data/raw/
