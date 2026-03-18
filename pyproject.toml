@@ -17,7 +17,8 @@ dependencies = [
     "datasets",                      # Transitive dep of RAGAS
     "python-dotenv>=1.0",
     "rich>=13",
-    "langchain-community>=0.4,<1",   # ChatEdenAI + Ollama LLM wrappers
+    "langchain-community>=0.4,<1",   # ChatEdenAI LLM wrapper
+    "langchain-ollama>=0.3",          # OllamaLLM (replaces deprecated langchain_community.llms.Ollama)
     "tenacity>=8",
 ]
 
@@ -85,6 +86,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["langchain_community", "langchain_community.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain_ollama", "langchain_ollama.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

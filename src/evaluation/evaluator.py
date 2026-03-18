@@ -339,10 +339,10 @@ class Evaluator:
         llm_config = self._config.evaluator_llm
 
         if llm_config.provider == "ollama":
-            from langchain_community.llms import Ollama
+            from langchain_ollama import OllamaLLM
 
             return LangchainLLMWrapper(
-                Ollama(
+                OllamaLLM(
                     model=llm_config.model_name,
                     temperature=llm_config.temperature,
                 )
