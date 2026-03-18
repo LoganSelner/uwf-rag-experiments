@@ -10,10 +10,10 @@ import pytest
 from core.types import (
     Chunk,
     GenerationResult,
-    IndexArtifact,
     RetrievedChunk,
 )
 from pipeline.agent import AgentPipeline
+from pipeline.indexing import IndexArtifact
 from pipeline.query import QueryPipeline
 from pipeline.rag import RAGPipeline
 
@@ -283,3 +283,15 @@ class TestAgentPipeline:
         # Can't even construct, so test the class method directly
         with pytest.raises(NotImplementedError):
             AgentPipeline(config=MagicMock(), index_artifact=MagicMock())
+
+
+# -----------------------------------------------------------------------
+# IndexArtifact
+# -----------------------------------------------------------------------
+
+
+class TestIndexArtifact:
+    def test_fields(self) -> None:
+        a = IndexArtifact(vectorstore=MagicMock(), embedder=MagicMock())
+        assert a.vectorstore is not None
+        assert a.stats == {}

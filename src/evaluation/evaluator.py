@@ -13,13 +13,10 @@ import json
 import logging
 import math
 import statistics
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from core.config import EvaluationConfig
-from core.types import EvalSample, ExperimentResult, ScoredSample
-
-if TYPE_CHECKING:
-    from pipeline.rag import RAGPipeline
+from core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
 
 logger = logging.getLogger(__name__)
 
@@ -116,11 +113,20 @@ class Evaluator:
             return list(self._config.retrieval_only_metrics)
         return list(self._config.metrics)
 
-    def evaluate(self, rag: RAGPipeline, experiment_name: str = "") -> ExperimentResult:
+    def evaluate(
+        self,
+        pipeline: Queryable,
+        *,
+        embedder: Any = None,
+        experiment_name: str = "",
+    ) -> ExperimentResult:
         """Run the full evaluation: multi-run execution + aggregation.
 
         Args:
-            rag: A fully constructed RAGPipeline.
+            pipeline: Anything satisfying the Queryable protocol.
+            embedder: Optional embedder to reuse for RAGAS (avoids
+                extra model loads). Pass the pipeline's embedder if
+                available.
             experiment_name: Label for this experiment (used in results).
 
         Returns:
@@ -129,13 +135,14 @@ class Evaluator:
         dataset = _load_dataset(self._config.dataset)
         num_runs = self._config.num_runs
 
-        # Reuse the pipeline's embedder for RAGAS (avoids extra API
+        # Reuse the caller's embedder for RAGAS (avoids extra API
         # calls — the HuggingFace model is already loaded in memory).
-        from ragas.embeddings.base import LangchainEmbeddingsWrapper
+        if embedder is not None:
+            from ragas.embeddings.base import LangchainEmbeddingsWrapper
 
-        self._embedder_adapter = LangchainEmbeddingsWrapper(
-            _EmbedderAdapter(rag.index_artifact.embedder)  # type: ignore[arg-type]
-        )
+            self._embedder_adapter = LangchainEmbeddingsWrapper(
+                _EmbedderAdapter(embedder)  # type: ignore[arg-type]
+            )
 
         logger.info(
             "Starting evaluation: %d questions, %d runs, mode=%s",
@@ -149,7 +156,7 @@ class Evaluator:
 
         for run_idx in range(1, num_runs + 1):
             logger.info("Run %d/%d", run_idx, num_runs)
-            samples = self._run_once(rag, dataset)
+            samples = self._run_once(pipeline, dataset)
             if not samples:
                 logger.error(
                     "All queries failed in run %d — skipping metrics.",
@@ -190,7 +197,7 @@ class Evaluator:
 
     def _run_once(
         self,
-        rag: RAGPipeline,
+        pipeline: Queryable,
         dataset: list[dict[str, str]],
     ) -> list[EvalSample]:
         """Run the pipeline on each dataset query, producing EvalSamples.
@@ -203,7 +210,7 @@ class Evaluator:
         total = len(dataset)
         for i, item in enumerate(dataset, start=1):
             try:
-                result = rag.query(item["query"])
+                result = pipeline.query(item["query"])
                 contexts = [rc.chunk.content for rc in result.retrieved_chunks]
                 samples.append(
                     EvalSample(

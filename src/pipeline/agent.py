@@ -14,7 +14,8 @@ Both modes produce the same GenerationResult type as QueryPipeline.
 from __future__ import annotations
 
 from core.config import AgentConfig
-from core.types import GenerationResult, IndexArtifact
+from core.types import GenerationResult
+from pipeline.indexing import IndexArtifact
 
 
 class AgentPipeline:
@@ -37,3 +38,7 @@ class AgentPipeline:
     def run(self, query: str) -> GenerationResult:
         """Run a query through the agent pipeline."""
         raise NotImplementedError("AgentPipeline.run() is not yet implemented.")
+
+    def query(self, question: str) -> GenerationResult:
+        """Satisfy the Queryable protocol — delegates to run()."""
+        return self.run(question)

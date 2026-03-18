@@ -9,6 +9,7 @@ for the same indexing config, it's loaded from disk instead of rebuilt.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 from typing import Any
@@ -16,11 +17,25 @@ from typing import Any
 from components.base import BaseChunker, BaseEmbedder, BaseIngestor, BaseVectorStore
 from core.config import ExperimentConfig
 from core.registry import registry
-from core.types import Chunk, Document, IndexArtifact
+from core.types import Chunk, Document
 
 logger = logging.getLogger(__name__)
 
 INDEX_CACHE_DIR = Path("data/indexes")
+
+
+@dataclass
+class IndexArtifact:
+    """Handoff between the indexing pipeline and the query pipeline.
+
+    Carries the populated vectorstore and embedder (needed at query
+    time to embed incoming queries). Also carries stats about what
+    was indexed.
+    """
+
+    vectorstore: BaseVectorStore
+    embedder: BaseEmbedder
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 class IndexingPipeline:

@@ -10,7 +10,6 @@ from core.types import (
     EvalSample,
     ExperimentResult,
     GenerationResult,
-    IndexArtifact,
     RetrievedChunk,
     ScoredSample,
     ToolResult,
@@ -132,10 +131,3 @@ class TestExperimentResult:
         r2 = ExperimentResult(experiment_name="b", metrics={})
         r1.per_run_metrics.append({"x": 1.0})
         assert r2.per_run_metrics == []
-
-
-class TestIndexArtifact:
-    def test_fields(self) -> None:
-        a = IndexArtifact(vectorstore="vs", embedder="emb")
-        assert a.vectorstore == "vs"
-        assert a.stats == {}

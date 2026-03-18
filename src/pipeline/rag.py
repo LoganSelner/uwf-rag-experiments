@@ -2,28 +2,19 @@
 
 Reads ``pipeline_mode`` from config and constructs the appropriate
 pipeline (linear QueryPipeline or AgentPipeline). Manages index
-building/caching. Provides ``run_experiment()`` as the CLI entry point.
+building/caching.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any
 
-# Trigger component registration
-import components  # noqa: F401
 from core.config import ExperimentConfig
-from core.git import get_git_dirty, get_git_sha
-from core.types import GenerationResult, IndexArtifact
-from evaluation.evaluator import Evaluator
-from evaluation.results import save_experiment
-from pipeline.indexing import IndexingPipeline
+from core.types import GenerationResult
+from pipeline.indexing import IndexArtifact, IndexingPipeline
 from pipeline.query import QueryPipeline
 
 logger = logging.getLogger(__name__)
-
-RESULTS_DIR = Path("results")
 
 
 class RAGPipeline:
@@ -97,42 +88,3 @@ class RAGPipeline:
     def query(self, question: str) -> GenerationResult:
         """Run a single query through the pipeline."""
         return self._pipeline.run(question)
-
-
-def run_experiment(
-    config_path: str,
-    no_cache: bool = False,
-    output_dir: str | None = None,
-) -> dict[str, Any]:
-    """Run a full experiment: build pipeline, evaluate, save results.
-
-    This is the main CLI entry point.
-
-    Args:
-        config_path: Path to the experiment YAML config.
-        no_cache: Force rebuild index even if cache exists.
-        output_dir: Override the default results directory.
-
-    Returns:
-        Summary dict with aggregated metrics.
-    """
-    config = ExperimentConfig.from_yaml(config_path)
-    logger.info("Running experiment: %s", config.name)
-
-    # Capture git state early — before a long-running experiment
-    # can change the working tree.
-    git_info = {"sha": get_git_sha(), "dirty": get_git_dirty()}
-
-    # Build pipeline
-    rag = RAGPipeline.from_config(config, no_cache=no_cache)
-
-    # Run evaluation
-    evaluator = Evaluator(config.evaluation)
-    experiment_result = evaluator.evaluate(rag, experiment_name=config.name)
-
-    # Save results
-    results_dir = Path(output_dir) if output_dir else RESULTS_DIR
-    exp_dir = save_experiment(config, experiment_result, results_dir, git_info=git_info)
-
-    logger.info("Experiment '%s' complete. Results saved to %s", config.name, exp_dir)
-    return experiment_result.metrics

@@ -21,7 +21,8 @@ from components.base import (
 )
 from core.config import QueryConfig
 from core.registry import registry
-from core.types import GenerationResult, IndexArtifact, RetrievedChunk
+from core.types import GenerationResult, RetrievedChunk
+from pipeline.indexing import IndexArtifact
 
 logger = logging.getLogger(__name__)
 

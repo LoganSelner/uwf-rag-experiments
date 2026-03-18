@@ -7,7 +7,7 @@ dataclass with well-defined fields. No business logic lives here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Indexing-side types
@@ -65,6 +65,18 @@ class GenerationResult:
     answer: str
     retrieved_chunks: list[RetrievedChunk] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@runtime_checkable
+class Queryable(Protocol):
+    """Anything that can answer a question.
+
+    Satisfied by RAGPipeline, AgentPipeline, and test mocks.
+    The evaluator depends on this protocol, not on concrete
+    pipeline classes.
+    """
+
+    def query(self, question: str) -> GenerationResult: ...
 
 
 # ---------------------------------------------------------------------------
@@ -153,22 +165,3 @@ class ExperimentResult:
     per_run_samples: list[list[ScoredSample]] = field(default_factory=list)
     num_runs: int = 1
     config_snapshot: dict[str, Any] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Pipeline artifacts
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class IndexArtifact:
-    """Handoff between the indexing pipeline and the query pipeline.
-
-    Carries the populated vectorstore and embedder (needed at query
-    time to embed incoming queries). Also carries stats about what
-    was indexed.
-    """
-
-    vectorstore: Any  # BaseVectorStore — typed as Any to avoid circular import
-    embedder: Any  # BaseEmbedder — typed as Any to avoid circular import
-    stats: dict[str, Any] = field(default_factory=dict)
