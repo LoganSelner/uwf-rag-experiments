@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,15 +9,13 @@ import pytest
 
 from core.types import (
     Chunk,
-    ExperimentResult,
     GenerationResult,
     IndexArtifact,
     RetrievedChunk,
-    ScoredSample,
 )
 from pipeline.agent import AgentPipeline
 from pipeline.query import QueryPipeline
-from pipeline.rag import RAGPipeline, _get_git_dirty, _get_git_sha, _save_results
+from pipeline.rag import RAGPipeline
 
 # -----------------------------------------------------------------------
 # Helpers
@@ -286,125 +283,3 @@ class TestAgentPipeline:
         # Can't even construct, so test the class method directly
         with pytest.raises(NotImplementedError):
             AgentPipeline(config=MagicMock(), index_artifact=MagicMock())
-
-
-# -----------------------------------------------------------------------
-# Git helpers (subprocess mocked)
-# -----------------------------------------------------------------------
-
-
-class TestGitHelpers:
-    @patch("pipeline.rag.subprocess.check_output")
-    def test_get_git_sha(self, mock_sub: MagicMock) -> None:
-        mock_sub.return_value = "abc1234\n"
-        assert _get_git_sha() == "abc1234"
-
-    @patch("pipeline.rag.subprocess.check_output", side_effect=FileNotFoundError)
-    def test_get_git_sha_fallback(self, mock_sub: MagicMock) -> None:
-        assert _get_git_sha() == "unknown"
-
-    @patch("pipeline.rag.subprocess.check_output")
-    def test_get_git_dirty_clean(self, mock_sub: MagicMock) -> None:
-        mock_sub.return_value = b""
-        assert _get_git_dirty() is False
-
-    @patch("pipeline.rag.subprocess.check_output")
-    def test_get_git_dirty_dirty(self, mock_sub: MagicMock) -> None:
-        mock_sub.return_value = b" M src/foo.py\n"
-        assert _get_git_dirty() is True
-
-    @patch(
-        "pipeline.rag.subprocess.check_output",
-        side_effect=FileNotFoundError,
-    )
-    def test_get_git_dirty_no_git(self, mock_sub: MagicMock) -> None:
-        assert _get_git_dirty() is False
-
-
-# -----------------------------------------------------------------------
-# _save_results
-# -----------------------------------------------------------------------
-
-
-class TestSaveResults:
-    def _make_config(self, minimal_config_dict: dict | None = None):
-        """Build a real ExperimentConfig for _save_results."""
-        from core.config import ExperimentConfig
-
-        if minimal_config_dict:
-            return ExperimentConfig.from_dict(minimal_config_dict)
-        # Inline minimal config
-        return ExperimentConfig.from_dict(
-            {
-                "name": "test_exp",
-                "pipeline_mode": "linear",
-                "indexing": {
-                    "sources": [{"name": "s", "path": "/f", "ingest": {"type": "pdf"}}],
-                    "chunking": {"type": "recursive"},
-                    "embedding": {"type": "huggingface"},
-                    "vectorstore": {"type": "faiss"},
-                },
-                "query": {
-                    "retrieval": {"type": "dense"},
-                    "generation": {"type": "ollama"},
-                    "generation_llm": {"model_name": "m"},
-                    "prompt": {"type": "chat"},
-                },
-                "evaluation": {"dataset": "d.jsonl"},
-            }
-        )
-
-    def test_saves_summary_json(self, tmp_path: Path) -> None:
-        config = self._make_config()
-        result = ExperimentResult(
-            experiment_name="test_exp",
-            metrics={"acc": 0.9},
-            config_snapshot={"key": "value"},
-        )
-        with patch("pipeline.rag._get_git_sha", return_value="abc"):
-            with patch("pipeline.rag._get_git_dirty", return_value=False):
-                _save_results(config, result, tmp_path)
-
-        summary_path = tmp_path / "test_exp" / "summary.json"
-        assert summary_path.exists()
-        summary = json.loads(summary_path.read_text())
-        assert summary["experiment_name"] == "test_exp"
-        assert summary["metrics"]["acc"] == 0.9
-        assert summary["git_sha"] == "abc"
-        assert summary["git_dirty"] is False
-        assert "timestamp" in summary
-
-    def test_saves_config_yaml(self, tmp_path: Path) -> None:
-        config = self._make_config()
-        result = ExperimentResult(experiment_name="test_exp", metrics={})
-        with patch("pipeline.rag._get_git_sha", return_value="x"):
-            with patch("pipeline.rag._get_git_dirty", return_value=False):
-                _save_results(config, result, tmp_path)
-
-        config_path = tmp_path / "test_exp" / "config.yaml"
-        assert config_path.exists()
-
-    def test_saves_run_jsonl(self, tmp_path: Path) -> None:
-        config = self._make_config()
-        sample = ScoredSample(
-            id="1",
-            query="Q",
-            response="A",
-            retrieved_contexts=["ctx"],
-            reference="R",
-            scores={"f": 0.9},
-        )
-        result = ExperimentResult(
-            experiment_name="test_exp",
-            metrics={"f": 0.9},
-            per_run_samples=[[sample]],
-        )
-        with patch("pipeline.rag._get_git_sha", return_value="x"):
-            with patch("pipeline.rag._get_git_dirty", return_value=False):
-                _save_results(config, result, tmp_path)
-
-        run_path = tmp_path / "test_exp" / "run_1.jsonl"
-        assert run_path.exists()
-        line = json.loads(run_path.read_text().strip())
-        assert line["id"] == "1"
-        assert line["scores"]["f"] == 0.9

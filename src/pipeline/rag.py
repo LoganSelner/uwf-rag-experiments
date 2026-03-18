@@ -7,55 +7,23 @@ building/caching. Provides ``run_experiment()`` as the CLI entry point.
 
 from __future__ import annotations
 
-import dataclasses
-from datetime import datetime
-import json
 import logging
 from pathlib import Path
-import subprocess
 from typing import Any
-
-import yaml
 
 # Trigger component registration
 import components  # noqa: F401
 from core.config import ExperimentConfig
+from core.git import get_git_dirty, get_git_sha
 from core.types import GenerationResult, IndexArtifact
 from evaluation.evaluator import Evaluator
+from evaluation.results import save_experiment
 from pipeline.indexing import IndexingPipeline
 from pipeline.query import QueryPipeline
 
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path("results")
-
-
-def _get_git_sha() -> str:
-    """Return the short current git SHA, or ``'unknown'`` when unavailable."""
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception:
-        return "unknown"
-
-
-def _get_git_dirty() -> bool:
-    """Return True if the working tree has uncommitted changes."""
-    try:
-        output = (
-            subprocess.check_output(
-                ["git", "status", "--porcelain"],
-                stderr=subprocess.DEVNULL,
-            )
-            .decode()
-            .strip()
-        )
-        return bool(output)
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
 
 
 class RAGPipeline:
@@ -151,62 +119,20 @@ def run_experiment(
     config = ExperimentConfig.from_yaml(config_path)
     logger.info("Running experiment: %s", config.name)
 
+    # Capture git state early — before a long-running experiment
+    # can change the working tree.
+    git_info = {"sha": get_git_sha(), "dirty": get_git_dirty()}
+
     # Build pipeline
     rag = RAGPipeline.from_config(config, no_cache=no_cache)
 
     # Run evaluation
     evaluator = Evaluator(config.evaluation)
-    experiment_result = evaluator.evaluate(rag)
+    experiment_result = evaluator.evaluate(rag, experiment_name=config.name)
 
     # Save results
     results_dir = Path(output_dir) if output_dir else RESULTS_DIR
-    _save_results(config, experiment_result, results_dir)
+    exp_dir = save_experiment(config, experiment_result, results_dir, git_info=git_info)
 
-    logger.info(
-        "Experiment '%s' complete. Results saved to %s",
-        config.name,
-        results_dir / config.name,
-    )
+    logger.info("Experiment '%s' complete. Results saved to %s", config.name, exp_dir)
     return experiment_result.metrics
-
-
-def _save_results(
-    config: ExperimentConfig,
-    result: Any,
-    base_dir: Path,
-) -> None:
-    """Save experiment results.
-
-    results/<experiment_name>/
-        summary.json    — aggregated metrics + config snapshot + metadata
-        config.yaml     — full resolved config for reproducibility
-        run_1.jsonl     — per-sample data for run 1
-        run_2.jsonl
-        ...
-    """
-    exp_dir = base_dir / config.name
-    exp_dir.mkdir(parents=True, exist_ok=True)
-
-    # Summary
-    summary = {
-        "experiment_name": result.experiment_name,
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "metrics": result.metrics,
-        "num_runs": result.num_runs,
-        "config_snapshot": result.config_snapshot,
-        "git_sha": _get_git_sha(),
-        "git_dirty": _get_git_dirty(),
-    }
-    with open(exp_dir / "summary.json", "w") as f:
-        json.dump(summary, f, indent=2, default=str)
-
-    # Full resolved config for reproducibility
-    config_dict = dataclasses.asdict(config)
-    with open(exp_dir / "config.yaml", "w") as f:
-        yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False)
-
-    # Per-run results: JSONL with per-sample data
-    for i, run_samples in enumerate(result.per_run_samples, 1):
-        with open(exp_dir / f"run_{i}.jsonl", "w") as f:
-            for sample in run_samples:
-                f.write(json.dumps(sample.to_result_dict(), default=str) + "\n")

@@ -116,11 +116,12 @@ class Evaluator:
             return list(self._config.retrieval_only_metrics)
         return list(self._config.metrics)
 
-    def evaluate(self, rag: RAGPipeline) -> ExperimentResult:
+    def evaluate(self, rag: RAGPipeline, experiment_name: str = "") -> ExperimentResult:
         """Run the full evaluation: multi-run execution + aggregation.
 
         Args:
             rag: A fully constructed RAGPipeline.
+            experiment_name: Label for this experiment (used in results).
 
         Returns:
             ExperimentResult with aggregated and per-run metrics.
@@ -180,26 +181,11 @@ class Evaluator:
         logger.info("Aggregated metrics: %s", aggregated)
 
         return ExperimentResult(
-            experiment_name=rag._config.name,
+            experiment_name=experiment_name,
             metrics=aggregated,
             per_run_metrics=per_run_metrics,
             per_run_samples=per_run_samples,
             num_runs=num_runs,
-            config_snapshot={
-                "name": rag._config.name,
-                "description": rag._config.description,
-                "pipeline_mode": rag._config.pipeline_mode,
-                "evaluation_mode": self._config.mode,
-                "index_fingerprint": rag._config.index_fingerprint(),
-                "chunk_size": rag._config.indexing.chunking.params.get("chunk_size"),
-                "embedding_model": rag._config.indexing.embedding.params.get(
-                    "model_name", ""
-                ),
-                "retrieval_type": rag._config.query.retrieval.type,
-                "reranking_type": rag._config.query.reranking.type or "none",
-                "generation_model": rag._config.query.generation_llm.model_name,
-                "top_k_final": rag._config.query.retrieval.top_k_final,
-            },
         )
 
     def _run_once(
