@@ -386,7 +386,9 @@ class Evaluator:
         if not per_run:
             return {}
 
-        all_keys = per_run[0].keys()
+        all_keys: set[str] = set()
+        for run in per_run:
+            all_keys.update(run.keys())
         aggregated: dict[str, float] = {}
 
         for key in all_keys:

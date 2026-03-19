@@ -98,6 +98,44 @@ class TestAggregateMetrics:
         assert abs(result["acc"] - 0.9) < 1e-9
         assert result["acc_std"] > 0
 
+    def test_empty_first_run_with_valid_later_runs(self) -> None:
+        result = Evaluator._aggregate_metrics(
+            [
+                {},
+                {"acc": 0.8},
+                {"acc": 0.9},
+            ]
+        )
+        assert abs(result["acc"] - 0.85) < 1e-9
+        assert result["acc_std"] > 0
+
+    def test_sparse_keys_across_runs(self) -> None:
+        result = Evaluator._aggregate_metrics(
+            [
+                {"acc": 0.8},
+                {"acc": 0.9, "faithfulness": 0.7},
+                {"faithfulness": 0.9},
+            ]
+        )
+        assert abs(result["acc"] - 0.85) < 1e-9
+        assert abs(result["faithfulness"] - 0.8) < 1e-9
+        assert "acc_std" in result
+        assert "faithfulness_std" in result
+
+    def test_all_empty_runs(self) -> None:
+        assert Evaluator._aggregate_metrics([{}, {}, {}]) == {}
+
+    def test_single_key_in_later_run_only(self) -> None:
+        result = Evaluator._aggregate_metrics(
+            [
+                {},
+                {},
+                {"acc": 0.95},
+            ]
+        )
+        assert result["acc"] == 0.95
+        assert result["acc_std"] == 0.0
+
     def test_nan_filtered(self) -> None:
         result = Evaluator._aggregate_metrics(
             [

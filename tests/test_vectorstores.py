@@ -108,6 +108,39 @@ class TestFAISSVectorStore:
         scores = [r.score for r in results]
         assert scores == sorted(scores, reverse=True)
 
+    def test_l2_scores_are_negative(self) -> None:
+        store = FAISSVectorStore({"metric": "l2"})
+        chunks = _make_embedded_chunks(5)
+        store.add(chunks)
+        results = store.search(chunks[0].embedding, top_k=5)
+        # Self-match should score 0.0 (negated distance of 0)
+        assert results[0].score == 0.0
+        # All others should be strictly negative
+        for r in results[1:]:
+            assert r.score < 0.0
+
+    def test_l2_score_ordering(self) -> None:
+        store = FAISSVectorStore({"metric": "l2"})
+        store.add(_make_embedded_chunks(10))
+        results = store.search([0.1] * 8, top_k=5)
+        scores = [r.score for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_l2_filtered_scores_are_negative(self) -> None:
+        store = FAISSVectorStore({"metric": "l2"})
+        store.add(_make_embedded_chunks(5))
+        results = store.search([0.1] * 8, top_k=5, filters={"source_name": "test"})
+        for r in results:
+            assert r.score <= 0.0
+
+    def test_cosine_scores_are_not_negated(self) -> None:
+        store = FAISSVectorStore({"metric": "cosine"})
+        chunks = _make_embedded_chunks(5)
+        store.add(chunks)
+        results = store.search(chunks[0].embedding, top_k=5)
+        # Self-match with inner product should be positive
+        assert results[0].score > 0.0
+
     def test_matches_filters_helper(self) -> None:
         chunk = Chunk(content="x", chunk_id="1", metadata={"k": "v", "n": 5})
         assert FAISSVectorStore._matches_filters(chunk, {"k": "v"}) is True

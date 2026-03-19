@@ -82,7 +82,7 @@ class FAISSVectorStore(BaseVectorStore):
             results.append(
                 RetrievedChunk(
                     chunk=self._chunks[int(idx)],
-                    score=float(score),
+                    score=-float(score) if self._metric == "l2" else float(score),
                     retrieval_method="dense",
                 )
             )
@@ -114,7 +114,7 @@ class FAISSVectorStore(BaseVectorStore):
                 results.append(
                     RetrievedChunk(
                         chunk=chunk,
-                        score=float(score),
+                        score=-float(score) if self._metric == "l2" else float(score),
                         retrieval_method="dense",
                     )
                 )
