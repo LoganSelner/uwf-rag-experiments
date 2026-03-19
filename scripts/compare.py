@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections import OrderedDict
 import csv
 import io
 import json
@@ -36,6 +37,10 @@ from evaluation.comparison import (
     resolve_metric_name,
     sort_rows,
 )
+
+# ---------------------------------------------------------------------------
+# Rich terminal rendering (script-layer only — depends on Rich)
+# ---------------------------------------------------------------------------
 
 
 def _metric_cell(value: float | None, std: float | None) -> Text:
@@ -63,10 +68,7 @@ def render_rich_table(
     metrics: list[str],
     console: Console | None = None,
 ) -> Table:
-    """Build and print a Rich table from comparison data.
-
-    Returns the Table object for testability.
-    """
+    """Build and print a Rich table from comparison data."""
     console = console or Console()
 
     table = Table(
@@ -133,7 +135,6 @@ def render_diff_table(
         console.print("[yellow]Need at least 2 experiments to diff configs.[/yellow]")
         return None
 
-    # Diff first two experiments
     diffs = diff_configs(result_dirs[0], result_dirs[1])
 
     if not diffs:
@@ -175,8 +176,6 @@ def render_per_sample_table(
         return None
 
     # Group by sample_id to build columns per experiment
-    from collections import OrderedDict
-
     samples: OrderedDict[str, dict[str, Any]] = OrderedDict()
     experiments: list[str] = []
     for row in rows:
@@ -213,6 +212,11 @@ def render_per_sample_table(
 
     console.print(table)
     return table
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:

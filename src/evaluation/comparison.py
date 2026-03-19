@@ -30,8 +30,9 @@ DEFAULT_METRICS = [
     "answer_relevancy",
 ]
 
-# Short display names for table headers
-METRIC_SHORT_NAMES = {
+# Short display names for table headers (used by format_comparison_table
+# and the compare.py CLI for both markdown and Rich output).
+METRIC_SHORT_NAMES: dict[str, str] = {
     "answer_correctness": "Ans.Corr",
     "context_precision": "Ctx.Prec",
     "faithfulness": "Faith.",
@@ -91,6 +92,23 @@ def compare_experiments(
     return rows
 
 
+def sort_rows(
+    rows: list[dict[str, Any]],
+    metric: str,
+    ascending: bool = False,
+) -> list[dict[str, Any]]:
+    """Return *rows* sorted by *metric* (descending by default).
+
+    Missing or ``None`` values sort to the bottom.
+    """
+
+    def _sort_key(r: dict[str, Any]) -> float:
+        v = r.get(metric)
+        return float(v) if v is not None else float("-inf")
+
+    return sorted(rows, key=_sort_key, reverse=not ascending)
+
+
 def format_comparison_table(
     rows: list[dict[str, Any]],
     metrics: list[str] | None = None,
@@ -98,7 +116,7 @@ def format_comparison_table(
     """Format comparison data as a markdown table.
 
     Matches the ACMSE paper Table 2 format:
-    | Experiment | Ans.Corr | Ctx.Prec | Faith. | CER | Ans.Rel |
+    ``| Experiment | Ans.Corr | Ctx.Prec | Faith. | CER | Ans.Rel |``
     """
     cols = metrics or DEFAULT_METRICS
 
@@ -140,23 +158,6 @@ def resolve_metric_name(name: str, metrics: list[str]) -> str | None:
     if canonical and canonical in metrics:
         return canonical
     return None
-
-
-def sort_rows(
-    rows: list[dict[str, Any]],
-    metric: str,
-    ascending: bool = False,
-) -> list[dict[str, Any]]:
-    """Return *rows* sorted by *metric* (descending by default).
-
-    Missing or ``None`` values sort to the bottom.
-    """
-
-    def _sort_key(r: dict[str, Any]) -> float:
-        v = r.get(metric)
-        return float(v) if v is not None else float("-inf")
-
-    return sorted(rows, key=_sort_key, reverse=not ascending)
 
 
 # ---------------------------------------------------------------------------
@@ -271,11 +272,19 @@ def load_per_sample_scores(
             exp_name = result_dir.name
 
         with open(run_path) as f:
-            for line in f:
+            for line_num, line in enumerate(f, start=1):
                 line = line.strip()
                 if not line:
                     continue
-                sample = json.loads(line)
+                try:
+                    sample = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "Skipping corrupted JSONL line %d in %s",
+                        line_num,
+                        run_path,
+                    )
+                    continue
                 row: dict[str, Any] = {
                     "experiment": exp_name,
                     "sample_id": sample.get("id", ""),
