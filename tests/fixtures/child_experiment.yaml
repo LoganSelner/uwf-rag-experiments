@@ -1,0 +1,14 @@
+extends: "base.yaml"
+
+name: "chunking_1000"
+description: "Test larger chunk size"
+
+indexing:
+  chunking:
+    params:
+      chunk_size: 1000
+      chunk_overlap: 100
+
+query:
+  retrieval:
+    top_k_final: 3

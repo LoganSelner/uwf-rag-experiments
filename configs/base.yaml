@@ -1,0 +1,83 @@
+# Base experiment config — all experiments inherit from this.
+#
+# This defines the default baseline: recursive chunking, bge-m3
+# embeddings, FAISS vectorstore, dense retrieval, Ollama generation.
+# Experiment configs override only the variables they're testing.
+
+name: "baseline"
+description: "Default baseline configuration"
+pipeline_mode: "linear"
+
+indexing:
+  sources:
+    - name: "knowledge_base"
+      path: "data/sources/knowledge_base.pdf"
+      ingest:
+        type: "pdf"
+
+  chunking:
+    type: "recursive"
+    params:
+      chunk_size: 512
+      chunk_overlap: 50
+      separators: ["\n\n", "\n", ". ", " ", ""]
+
+  embedding:
+    type: "huggingface"
+    params:
+      model_name: "BAAI/bge-m3"
+      normalize: true
+
+  vectorstore:
+    type: "faiss"
+    params:
+      metric: "cosine"
+
+query:
+  query_transform:
+    type: "passthrough"
+
+  retrieval:
+    type: "dense"
+    top_k_retrieve: 10
+    top_k_final: 5
+
+  reranking:
+    type: "none"
+
+  generation:
+    type: "ollama"
+
+  generation_llm:
+    provider: "ollama"
+    model_name: "qwen2.5:32b"
+    temperature: 0.0
+
+  prompt:
+    type: "chat"
+    system_template: |
+      You are an academic advisor for the University of West Florida.
+      Answer the student's question using ONLY the provided context.
+      If the context does not contain enough information to answer,
+      say so clearly.
+    context_format: "numbered"
+    use_chain_of_thought: false
+    citation_style: "none"
+
+evaluation:
+  dataset: "data/datasets/testKB_dataset.jsonl"
+  mode: "full"
+  metrics:
+    - "answer_correctness"
+    - "context_precision"
+    - "faithfulness"
+    - "context_entity_recall"
+    - "answer_relevancy"
+  retrieval_only_metrics:
+    - "context_precision"
+    - "context_entity_recall"
+  num_runs: 3
+  evaluator_llm:
+    provider: "ollama"
+    model_name: "qwen2.5:32b"
+    temperature: 0.0

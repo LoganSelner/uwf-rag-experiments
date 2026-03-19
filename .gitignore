@@ -1,3 +1,4 @@
+# --- Python ---
 __pycache__/
 *.py[cod]
 *.pyo
@@ -12,28 +13,23 @@ build/
 .ruff_cache/
 .coverage.*
 coverage.xml
+
+# --- Environment ---
 .env
 .env.*
 !.env.example
 
 # --- RAG experiment artifacts ---
-artifacts/
-indexes/
-runs/
-outputs/
-cache/
-*.sqlite
-*.db
-*.duckdb
-*.parquet
+data/indexes/*
+!data/indexes/.gitignore
 
-# --- Data / KB (never commit) ---
-Data/
-data/
-datasets/
-kb/
-knowledge_base/
-*.jsonl
-*.pdf
-*.xlsx
-*.csv
+# --- Data (never commit proprietary university data) ---
+data/raw/
+data/sources/
+data/queries/
+data/datasets/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp

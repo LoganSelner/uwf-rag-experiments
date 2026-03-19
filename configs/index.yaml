@@ -1,8 +1,0 @@
-# Index settings: source documents, vector store, and chunking strategy.
-source_dir: data/raw
-persist_dir: indexes/chroma
-collection_name: uwf-kb
-
-chunk_size: 1000
-chunk_overlap: 100
-chunker_type: recursive   # currently implemented: recursive

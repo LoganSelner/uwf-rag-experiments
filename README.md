@@ -2,252 +2,163 @@
 
 Reproducible Retrieval-Augmented Generation (RAG) experiments for UWF advising data.
 
-This repository is an experiment harness, not a production chatbot service. It is designed to let you change one RAG factor at a time (chunking, retrieval, reranking, generation, prompts, models, datasets), run the pipeline, evaluate with RAGAS, and compare runs side-by-side.
-
-This repository is intended for private internal collaboration by authorized teammates.
-
-## What This README Covers
-
-1. What is implemented right now
-2. How to run the full workflow
-3. How configuration works
-4. What artifacts are produced
-5. How to extend the architecture safely
-
-## Current Implementation Status
-
-Implemented in runtime code today:
-
-- `chunker_type`: `recursive`
-- `retriever_type`: `dense`, `mmr`
-- `reranker_type`: `none`, `cross_encoder`
-- `generator_type`: `stuff`
-
-Configured as planned but not yet registered in runtime:
-
-- `retriever_type`: `hybrid`
-- `generator_type`: `map_reduce`, `refine`
-
-If a non-implemented type is selected in `configs/eval.yaml`, the pipeline raises a clear `ValueError` listing available options.
+This is an experiment harness, not a production chatbot. It lets you change one RAG factor at a time (chunking, retrieval, reranking, generation, prompts, models), run the pipeline, evaluate with RAGAS, and compare results side-by-side.
 
 ## Project Structure
 
 ```text
-.
-├── configs/
-│   ├── models.yaml
-│   ├── index.yaml
-│   ├── eval.yaml
-│   └── pipelines/
-├── data/
-│   ├── raw/           # source PDFs
-│   └── queries/       # eval CSVs
-├── indexes/           # local Chroma persistence
-├── runs/              # per-run artifacts
-├── src/rag_testing/
-│   ├── components/
-│   ├── ingest.py
-│   ├── pipeline.py
-│   ├── run_pipeline.py
-│   ├── evaluate_ragas.py
-│   └── compare_runs.py
-├── tests/
-├── Makefile
-├── pyproject.toml
-└── uv.lock
+src/
+  core/          config loading, component registry, shared types
+  components/    chunkers, embedders, generators, ingestors, prompts,
+                 retrievers, vectorstores, defaults
+  pipeline/      indexing, query, rag orchestration, agent (stub)
+  evaluation/    RAGAS evaluator, experiment comparison
+configs/
+  base.yaml                     default baseline configuration
+  experiments/                  per-experiment overrides (inherit from base)
+scripts/
+  run_experiment.py             CLI: run a full experiment
+  compare.py                    CLI: compare experiment results
+tests/                          184 unit tests
+results/                        experiment outputs (gitignored contents)
+data/
+  sources/                      source PDFs (gitignored)
+  datasets/                     evaluation JSONL datasets (gitignored)
+  indexes/                      cached FAISS indexes (gitignored)
 ```
 
 ## Prerequisites
 
-- Python `3.11`
-- [`uv`](https://github.com/astral-sh/uv)
-- API key(s) matching your configured backend in `configs/models.yaml`
-
-`.env.example`:
-
-```bash
-EDENAI_API_KEY=your_edenai_key_here
-OPENAI_API_KEY=your_openai_key_here
-```
-
-Copy and edit:
-
-```bash
-cp .env.example .env
-```
+- Python 3.11
+- [uv](https://github.com/astral-sh/uv)
+- [Ollama](https://ollama.com/) (for local LLM) **or** an `EDENAI_API_KEY` for cloud LLMs
 
 ## Setup
 
 ```bash
 make bootstrap
+cp .env.example .env
+# Edit .env with your API key(s)
 ```
-
-This installs Python/dependencies and sets up pre-commit hooks.
 
 ## Workflow
 
-### 1. Build or update the vector index
+### 1. Define an experiment
 
-Default:
+Experiments are YAML configs that inherit from `configs/base.yaml` and override only the variables being tested:
 
-```bash
-make index
+```yaml
+# configs/experiments/edenai_baseline.yaml
+extends: ../base.yaml
+
+name: "edenai_baseline"
+description: "Baseline with Eden AI (OpenAI GPT-4)"
+
+query:
+  generation:
+    type: "edenai"
+    params:
+      sub_provider: "openai"
+  generation_llm:
+    provider: "edenai"
+    model_name: "gpt-4"
+    temperature: 0.0
 ```
 
-Force rebuild:
+### 2. Run an experiment
 
 ```bash
-uv run rag-test-index --force
+python scripts/run_experiment.py configs/base.yaml -v
+# or
+make experiment CONFIG=configs/experiments/edenai_baseline.yaml
 ```
 
-### 2. Run the active pipeline over eval questions
+This builds the index (or loads from cache), runs the pipeline against the evaluation dataset, computes RAGAS metrics across multiple runs, and saves results.
+
+### 3. Compare results
 
 ```bash
-make run
+python scripts/compare.py results/baseline results/edenai_baseline
 ```
 
-### 3. Evaluate a run with RAGAS
-
-Evaluate latest run for the active pipeline:
+Additional flags:
 
 ```bash
-make eval
+--diff                  # Show config differences between experiments
+--per-sample            # Show per-question score comparison
+--sort faithfulness     # Sort by a specific metric
 ```
 
-Evaluate a specific run directory:
+## Configuration
 
-```bash
-uv run rag-test-eval --run-dir runs/<timestamp>_<pipeline_name>
-```
+The base config (`configs/base.yaml`) defines all default values. Experiment configs use `extends:` to inherit and override:
 
-### 4. Compare scored runs
+| Section | Controls |
+|---|---|
+| `indexing.sources` | PDF paths and ingestor type |
+| `indexing.chunking` | Chunk size, overlap, separators |
+| `indexing.embedding` | Embedding model (e.g., `BAAI/bge-m3`) |
+| `indexing.vectorstore` | Vector store type and metric |
+| `query.retrieval` | Retriever type, `top_k_retrieve`, `top_k_final` |
+| `query.reranking` | Reranker type (or `none`) |
+| `query.generation` | Generator backend (`ollama`, `edenai`) |
+| `query.generation_llm` | Model name, temperature, max tokens |
+| `query.prompt` | System template, context format, citation style |
+| `evaluation` | Dataset path, metrics list, number of runs |
 
-```bash
-make compare
-```
+## Output Format
 
-With filters/sorting:
-
-```bash
-uv run rag-test-compare --last 10 --sort-by faithfulness
-```
-
-## Make vs Direct CLI
-
-Project convention:
-
-- Use `make` targets for default/common paths (`index`, `run`, `eval`, `compare`)
-- Use direct CLI when passing flags (`--force`, `--run-dir`, `--last`, `--sort-by`)
-
-## Configuration Model
-
-### `configs/models.yaml`
-
-Defines:
-
-- LLM backend/provider/model/temperature/max tokens
-- Embeddings backend/provider/model
-- which environment variable contains the API key for each
-
-### `configs/index.yaml`
-
-Defines:
-
-- PDF source directory (`source_dir`)
-- Chroma persistence directory (`persist_dir`)
-- collection name
-- chunking parameters (`chunk_size`, `chunk_overlap`, `chunker_type`)
-
-### `configs/eval.yaml`
-
-Defines:
-
-- evaluation dataset path (`qa_path`)
-- runs output directory (`runs_dir`)
-- active pipeline component types
-- retrieval sizing (`retrieval_k`, `top_k`, `mmr_fetch_k`)
-- prompt override (`prompt_template`)
-- metric list for RAGAS
-
-### `configs/pipelines/*.yaml`
-
-Reusable presets. Copy one into `configs/eval.yaml` to activate it.
-
-## Output Artifacts
-
-Each run creates a timestamped folder:
+Each experiment produces:
 
 ```text
-runs/<timestamp>_<retriever>_<reranker>_<generator>/
+results/<experiment_name>/
+  summary.json    aggregated metrics + config snapshot + git metadata
+  config.yaml     full resolved configuration for reproducibility
+  run_1.jsonl     per-sample scores for run 1
+  run_2.jsonl     per-sample scores for run 2
+  ...
 ```
-
-Produced files:
-
-- `predictions.jsonl`: one row per question with answer + retrieved contexts
-- `config_used.yaml`: full resolved settings snapshot + `git_sha`
-- `scores.jsonl`: per-sample RAGAS metric outputs (after evaluation)
-- `metrics.json`: aggregate mean metrics (after evaluation)
-
-## Quality and Checks
-
-Run full quality gate:
-
-```bash
-make qa
-```
-
-Equivalent steps:
-
-- `make fmt-check`
-- `make typecheck`
-- `make lint`
-- `make test`
-
-Also available:
-
-- `make precommit` (runs all pre-commit hooks on all tracked files)
-
-## Housekeeping
-
-- `make clean`: remove caches
-- `make deep-clean`: remove caches + env/build/coverage artifacts
-- `make purge-artifacts CONFIRM=1`: delete generated experiment artifacts (`runs/`, `indexes/`, etc.)
-
-`purge-artifacts` is intentionally guarded and does nothing unless `CONFIRM=1` is provided.
 
 ## Extending the System
 
-Component interfaces are protocol-based and intentionally swappable:
+Components are registered via decorators and resolved from YAML config at runtime:
 
-- `Chunker`
-- `Retriever`
-- `Reranker`
-- `Generator`
+```python
+from components.base import BaseChunker
+from core.registry import registry
 
-Extension pattern:
+@registry.register("chunking", "my_chunker")
+class MyChunker(BaseChunker):
+    def chunk(self, documents):
+        ...
+```
 
-1. Add a component class under `src/rag_testing/components/` with a `from_settings(...)` constructor
-2. Register it in the corresponding registry in `ingest.py` or `pipeline.py`
-3. Add/update tests in `tests/test_components.py` (and related integration tests)
-4. Activate it from config
+Then activate it in config:
 
-## Testing Status
+```yaml
+indexing:
+  chunking:
+    type: "my_chunker"
+    params:
+      custom_param: 42
+```
 
-The project includes unit tests for config loading, components, ingest flow, run artifacts, evaluation flow, and run comparison.
+Available component categories: `ingest`, `chunking`, `embedding`, `vectorstore`, `retrieval`, `reranking`, `generation`, `prompts`, `query_transform`, `memory`.
 
-Run tests:
+## Code Quality
 
 ```bash
-make test
+make qa          # Full gate: format check + mypy + ruff + tests
+make test        # Fast tests only (skip @pytest.mark.slow)
+make test-all    # All tests including slow
+make fmt         # Auto-fix formatting
+make lint        # Ruff lint check
+make typecheck   # Mypy type check
 ```
 
 ## Troubleshooting
 
-- Missing API key errors:
-  - Ensure `.env` exists and key names match `api_key_env` values in `configs/models.yaml`
-- `rag-test-index` skips indexing:
-  - Collection already has vectors. Use `uv run rag-test-index --force` to rebuild.
-- `rag-test-eval` cannot find a run:
-  - Run `make run` first, or pass `--run-dir` explicitly.
-- Unknown component type error:
-  - Selected type is not implemented/registered yet.
+- **Missing API key**: Ensure `.env` exists and contains `EDENAI_API_KEY=...`
+- **Ollama not running**: Start Ollama with `ollama serve` before running experiments with `generation.type: "ollama"`
+- **Index cache stale**: Use `--no-cache` flag to force rebuild: `python scripts/run_experiment.py configs/base.yaml --no-cache`
+- **Unknown component type**: The selected type isn't registered. Check spelling matches a `@registry.register(...)` decorator.

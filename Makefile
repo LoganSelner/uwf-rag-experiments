@@ -5,10 +5,12 @@ SHELL := /bin/bash
 
 # --- Vars ---
 UV      ?= uv
+CONFIG  ?= configs/base.yaml
+DIRS    ?= results/*
 
 # --- Phony ---
-.PHONY: help bootstrap update env test fmt fmt-check lint typecheck qa \
-	precommit index run eval compare clean deep-clean purge-artifacts
+.PHONY: help bootstrap update env test test-all experiment compare \
+	fmt fmt-check lint typecheck qa precommit clean deep-clean
 
 help: ## Show available targets
 	@awk '\
@@ -38,36 +40,33 @@ env: ## Print tool versions
 	@echo "Mypy:    $$($(UV) run mypy --version || true)"
 	@echo "pytest:  $$($(UV) run pytest --version | head -n1 || true)"
 
-test: ## Pytest
+# ---------- RAG workflow ----------
+experiment: ## Run an experiment (CONFIG=configs/base.yaml)
+	$(UV) run python scripts/run_experiment.py $(CONFIG)
+
+compare: ## Compare experiment results (DIRS="results/a results/b")
+	$(UV) run python scripts/compare.py $(DIRS)
+
+# ---------- Code quality ----------
+test: ## Run fast tests (skip slow)
+	$(UV) run pytest -m "not slow"
+
+test-all: ## Run all tests including slow
 	$(UV) run pytest
 
-# ---------- RAG workflow ----------
-index: ## Build/update Chroma index from data/raw PDFs
-	$(UV) run rag-test-index
-
-run: ## Generate predictions for the active pipeline config
-	$(UV) run rag-test-run
-
-eval: ## Evaluate the latest run for the active pipeline config
-	$(UV) run rag-test-eval
-
-compare: ## Compare scored runs in a Rich table
-	$(UV) run rag-test-compare
-
-# ---------- Code quality (dev UX uses project env; CI uses pre-commit manual) ----------
-fmt: ## Apply fixes now (ruff imports + format)
-	$(UV) run ruff check --select I --fix src tests || true
-	$(UV) run ruff check --fix src tests || true
+fmt: ## Auto-fix lint + format
+	$(UV) run ruff check --select I --fix src scripts tests || true
+	$(UV) run ruff check --fix src scripts tests || true
 	$(UV) run ruff format .
 
-fmt-check: ## Non-mutating gate (CI/local)
-	$(UV) run ruff check --select I src tests
+fmt-check: ## Check formatting (CI gate)
+	$(UV) run ruff check --select I src scripts tests
 	$(UV) run ruff format --check .
 
 lint: ## Ruff lint
 	$(UV) run ruff check .
 
-typecheck: ## Mypy
+typecheck: ## Mypy type check
 	$(UV) run mypy
 
 qa: fmt-check typecheck lint test ## Full quality gate
@@ -82,12 +81,5 @@ clean: ## Remove caches
 	-find . -type d -name ".pytest_cache" -prune -exec rm -rf {} +
 	-find . -type d -name ".mypy_cache" -prune -exec rm -rf {} +
 
-deep-clean: clean ## Also remove env, coverage, and build artifacts
+deep-clean: clean ## Also remove env and build artifacts
 	-rm -rf .venv htmlcov coverage.xml .dist build dist *.egg-info
-
-purge-artifacts: ## Delete generated RAG artifacts (runs/indexes). Use CONFIRM=1
-	@if [ "$(CONFIRM)" != "1" ]; then \
-		echo "Refusing to delete runs/ and indexes/. Re-run with CONFIRM=1"; \
-		exit 1; \
-	fi
-	-rm -rf runs indexes artifacts outputs cache
