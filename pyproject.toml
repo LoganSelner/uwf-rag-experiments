@@ -17,6 +17,7 @@ dependencies = [
     "datasets",                      # Transitive dep of RAGAS
     "python-dotenv>=1.0",
     "rich>=13",
+    "langchain-text-splitters>=0.3",
     "langchain-community>=0.4,<1",   # ChatEdenAI LLM wrapper
     "langchain-ollama>=0.3",          # OllamaLLM (replaces deprecated langchain_community.llms.Ollama)
     "tenacity>=8",
@@ -82,6 +83,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["ragas", "ragas.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain_text_splitters", "langchain_text_splitters.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
