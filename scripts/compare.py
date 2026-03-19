@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections import OrderedDict
 import csv
 import io
 import json
@@ -28,77 +29,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from evaluation.comparison import (
     DEFAULT_METRICS,
+    METRIC_SHORT_NAMES,
     compare_experiments,
     diff_configs,
+    format_comparison_table,
     load_per_sample_scores,
+    resolve_metric_name,
     sort_rows,
 )
 
-# --- Presentation helpers (script-layer concerns) ---
-
-# Short display names for table headers
-METRIC_SHORT_NAMES = {
-    "answer_correctness": "Ans.Corr",
-    "context_precision": "Ctx.Prec",
-    "faithfulness": "Faith.",
-    "context_entity_recall": "CER",
-    "answer_relevancy": "Ans.Rel",
-    # Opt-in metrics (not in DEFAULT_METRICS)
-    "answer_similarity": "Ans.Sim",
-    "context_recall": "Ctx.Rec",
-    "factual_correctness": "Fact.Corr",
-}
-
-
-def format_comparison_table(
-    rows: list[dict[str, Any]],
-    metrics: list[str] | None = None,
-) -> str:
-    """Format comparison data as a markdown table.
-
-    Matches the ACMSE paper Table 2 format:
-    | Experiment | Ans.Corr | Ctx.Prec | Faith. | CER | Ans.Rel |
-    """
-    cols = metrics or DEFAULT_METRICS
-
-    # Header
-    headers = ["Experiment"]
-    headers.extend(METRIC_SHORT_NAMES.get(m, m) for m in cols)
-    header_line = "| " + " | ".join(headers) + " |"
-    separator = "| " + " | ".join("-" * len(h) for h in headers) + " |"
-
-    # Rows
-    lines = [header_line, separator]
-    for row in rows:
-        cells = [row.get("experiment", "")]
-        for metric in cols:
-            value = row.get(metric)
-            std = row.get(f"{metric}_std")
-            if value is None:
-                cells.append("-")
-            elif std is not None and std > 0:
-                cells.append(f"{value:.3f} ± {std:.3f}")
-            else:
-                cells.append(f"{value:.3f}")
-        lines.append("| " + " | ".join(cells) + " |")
-
-    return "\n".join(lines)
-
-
-def resolve_metric_name(name: str, metrics: list[str]) -> str | None:
-    """Resolve a metric name from its full or short display name.
-
-    Accepts either the canonical name (``faithfulness``) or the short
-    display name (``Faith.``), and returns the canonical name if it
-    appears in *metrics*.  Returns ``None`` when unrecognised.
-    """
-    if name in metrics:
-        return name
-    reverse = {v.lower(): k for k, v in METRIC_SHORT_NAMES.items()}
-    canonical = reverse.get(name.lower())
-    if canonical and canonical in metrics:
-        return canonical
-    return None
+# ---------------------------------------------------------------------------
+# Rich terminal rendering (script-layer only — depends on Rich)
+# ---------------------------------------------------------------------------
 
 
 def _metric_cell(value: float | None, std: float | None) -> Text:
@@ -126,10 +68,7 @@ def render_rich_table(
     metrics: list[str],
     console: Console | None = None,
 ) -> Table:
-    """Build and print a Rich table from comparison data.
-
-    Returns the Table object for testability.
-    """
+    """Build and print a Rich table from comparison data."""
     console = console or Console()
 
     table = Table(
@@ -196,7 +135,6 @@ def render_diff_table(
         console.print("[yellow]Need at least 2 experiments to diff configs.[/yellow]")
         return None
 
-    # Diff first two experiments
     diffs = diff_configs(result_dirs[0], result_dirs[1])
 
     if not diffs:
@@ -238,8 +176,6 @@ def render_per_sample_table(
         return None
 
     # Group by sample_id to build columns per experiment
-    from collections import OrderedDict
-
     samples: OrderedDict[str, dict[str, Any]] = OrderedDict()
     experiments: list[str] = []
     for row in rows:
@@ -276,6 +212,11 @@ def render_per_sample_table(
 
     console.print(table)
     return table
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:

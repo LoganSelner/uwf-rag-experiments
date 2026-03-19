@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from compare import format_comparison_table, resolve_metric_name
 import pytest
 import yaml
 
@@ -13,9 +12,11 @@ from evaluation.comparison import (
     _flatten_dict,
     compare_experiments,
     diff_configs,
+    format_comparison_table,
     load_config,
     load_per_sample_scores,
     load_summary,
+    resolve_metric_name,
     sort_rows,
 )
 

@@ -30,6 +30,20 @@ DEFAULT_METRICS = [
     "answer_relevancy",
 ]
 
+# Short display names for table headers (used by format_comparison_table
+# and the compare.py CLI for both markdown and Rich output).
+METRIC_SHORT_NAMES: dict[str, str] = {
+    "answer_correctness": "Ans.Corr",
+    "context_precision": "Ctx.Prec",
+    "faithfulness": "Faith.",
+    "context_entity_recall": "CER",
+    "answer_relevancy": "Ans.Rel",
+    # Opt-in metrics (not in DEFAULT_METRICS)
+    "answer_similarity": "Ans.Sim",
+    "context_recall": "Ctx.Rec",
+    "factual_correctness": "Fact.Corr",
+}
+
 
 def load_summary(result_dir: str | Path) -> dict[str, Any]:
     """Load a summary.json from an experiment result directory."""
@@ -93,6 +107,57 @@ def sort_rows(
         return float(v) if v is not None else float("-inf")
 
     return sorted(rows, key=_sort_key, reverse=not ascending)
+
+
+def format_comparison_table(
+    rows: list[dict[str, Any]],
+    metrics: list[str] | None = None,
+) -> str:
+    """Format comparison data as a markdown table.
+
+    Matches the ACMSE paper Table 2 format:
+    ``| Experiment | Ans.Corr | Ctx.Prec | Faith. | CER | Ans.Rel |``
+    """
+    cols = metrics or DEFAULT_METRICS
+
+    # Header
+    headers = ["Experiment"]
+    headers.extend(METRIC_SHORT_NAMES.get(m, m) for m in cols)
+    header_line = "| " + " | ".join(headers) + " |"
+    separator = "| " + " | ".join("-" * len(h) for h in headers) + " |"
+
+    # Rows
+    lines = [header_line, separator]
+    for row in rows:
+        cells = [row.get("experiment", "")]
+        for metric in cols:
+            value = row.get(metric)
+            std = row.get(f"{metric}_std")
+            if value is None:
+                cells.append("-")
+            elif std is not None and std > 0:
+                cells.append(f"{value:.3f} ± {std:.3f}")
+            else:
+                cells.append(f"{value:.3f}")
+        lines.append("| " + " | ".join(cells) + " |")
+
+    return "\n".join(lines)
+
+
+def resolve_metric_name(name: str, metrics: list[str]) -> str | None:
+    """Resolve a metric name from its full or short display name.
+
+    Accepts either the canonical name (``faithfulness``) or the short
+    display name (``Faith.``), and returns the canonical name if it
+    appears in *metrics*.  Returns ``None`` when unrecognised.
+    """
+    if name in metrics:
+        return name
+    reverse = {v.lower(): k for k, v in METRIC_SHORT_NAMES.items()}
+    canonical = reverse.get(name.lower())
+    if canonical and canonical in metrics:
+        return canonical
+    return None
 
 
 # ---------------------------------------------------------------------------
