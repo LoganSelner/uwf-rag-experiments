@@ -75,6 +75,14 @@ class TestLoadYamlWithInheritance:
         with pytest.raises(FileNotFoundError):
             load_yaml_with_inheritance(tmp_path / "nonexistent.yaml")
 
+    def test_circular_extends_raises(self, tmp_path: Path) -> None:
+        a = tmp_path / "a.yaml"
+        b = tmp_path / "b.yaml"
+        a.write_text('extends: "b.yaml"\nname: "a"\n')
+        b.write_text('extends: "a.yaml"\nname: "b"\n')
+        with pytest.raises(ConfigValidationError, match="Circular"):
+            load_yaml_with_inheritance(a)
+
 
 # -----------------------------------------------------------------------
 # ComponentConfig
@@ -224,7 +232,7 @@ class TestValidateConfig:
             "name": "test",
             "pipeline_mode": "linear",
             "indexing": {
-                "sources": [{"name": "s", "path": "x.pdf", "ingest": {"type": "pdf"}}],
+                "sources": [{"name": "s", "path": "", "ingest": {"type": "pdf"}}],
                 "chunking": {"type": "recursive"},
                 "embedding": {"type": "huggingface"},
                 "vectorstore": {"type": "faiss"},
@@ -232,6 +240,7 @@ class TestValidateConfig:
             "query": {
                 "retrieval": {"type": "dense", "top_k_retrieve": 10, "top_k_final": 5},
                 "generation": {"type": "ollama"},
+                "generation_llm": {"model_name": "test-model"},
                 "prompt": {"type": "chat"},
             },
             "evaluation": {"dataset": "", "mode": "full"},
@@ -325,4 +334,34 @@ class TestValidateConfig:
         cfg = self._make_valid_config()
         cfg.pipeline_mode = "unknown"
         with pytest.raises(ConfigValidationError, match="not recognized"):
+            validate_config(cfg, registry)
+
+    def test_empty_sources_list(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.indexing.sources = []
+        with pytest.raises(ConfigValidationError, match="sources is empty"):
+            validate_config(cfg, registry)
+
+    def test_source_path_not_found(self, tmp_path: Path) -> None:
+        cfg = self._make_valid_config()
+        cfg.indexing.sources[0].path = str(tmp_path / "nonexistent.pdf")
+        with pytest.raises(ConfigValidationError, match="file not found"):
+            validate_config(cfg, registry)
+
+    def test_generation_llm_model_name_empty(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.generation_llm.model_name = ""
+        with pytest.raises(ConfigValidationError, match="model_name is empty"):
+            validate_config(cfg, registry)
+
+    def test_top_k_retrieve_zero(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.retrieval.top_k_retrieve = 0
+        with pytest.raises(ConfigValidationError, match="top_k_retrieve must be > 0"):
+            validate_config(cfg, registry)
+
+    def test_top_k_final_negative(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.retrieval.top_k_final = -1
+        with pytest.raises(ConfigValidationError, match="top_k_final must be > 0"):
             validate_config(cfg, registry)

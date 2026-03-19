@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from components.vectorstores import FAISSVectorStore
 from core.types import Chunk, EmbeddedChunk, RetrievedChunk
@@ -146,3 +147,7 @@ class TestFAISSVectorStore:
         assert FAISSVectorStore._matches_filters(chunk, {"k": "v"}) is True
         assert FAISSVectorStore._matches_filters(chunk, {"k": "other"}) is False
         assert FAISSVectorStore._matches_filters(chunk, {"missing": 1}) is False
+
+    def test_invalid_metric_raises(self) -> None:
+        with pytest.raises(ValueError, match="metric must be one of"):
+            FAISSVectorStore({"metric": "invalid"})

@@ -32,6 +32,12 @@ class FAISSVectorStore(BaseVectorStore):
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self._metric: str = self.config.get("metric", "cosine")
+        _valid_metrics = {"cosine", "l2"}
+        if self._metric not in _valid_metrics:
+            raise ValueError(
+                f"FAISSVectorStore metric must be one of {_valid_metrics}, "
+                f"got '{self._metric}'"
+            )
         self._index: faiss.IndexFlatIP | faiss.IndexFlatL2 | None = None
         self._chunks: list[Chunk] = []
         self._dim: int | None = None

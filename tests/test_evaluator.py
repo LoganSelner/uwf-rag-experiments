@@ -146,6 +146,16 @@ class TestAggregateMetrics:
         )
         assert abs(result["acc"] - 0.9) < 1e-9
 
+    def test_none_filtered(self) -> None:
+        result = Evaluator._aggregate_metrics(
+            [
+                {"acc": 0.8},
+                {"acc": None},
+                {"acc": 1.0},
+            ]
+        )
+        assert abs(result["acc"] - 0.9) < 1e-9
+
 
 # -----------------------------------------------------------------------
 # _EmbedderAdapter
