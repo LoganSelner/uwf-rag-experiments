@@ -12,7 +12,7 @@ indexing:
         type: "pdf"
 
   chunking:
-    type: "recursive"
+    type: "recursive_langchain"
     params:
       chunk_size: 512
       chunk_overlap: 50

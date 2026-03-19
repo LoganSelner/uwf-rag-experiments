@@ -26,7 +26,7 @@ def _make_chunk_id(
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
-@registry.register("chunking", "recursive")
+@registry.register("chunking", "recursive_langchain")
 class LangChainRecursiveChunker(BaseChunker):
     """LangChain-backed recursive character text splitter.
 

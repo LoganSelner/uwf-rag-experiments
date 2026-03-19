@@ -156,10 +156,10 @@ class TestLangChainRecursiveChunker:
         chunks = chunker.chunk([doc])
         assert len(chunks) >= 2
 
-    def test_registered_as_recursive(self) -> None:
+    def test_registered_as_recursive_langchain(self) -> None:
         from core.registry import registry
 
-        cls = registry.get("chunking", "recursive")
+        cls = registry.get("chunking", "recursive_langchain")
         assert cls is LangChainRecursiveChunker
 
     def test_custom_registered_as_recursive_custom(self) -> None:

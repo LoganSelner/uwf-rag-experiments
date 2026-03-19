@@ -1,6 +1,6 @@
 # Base experiment config — all experiments inherit from this.
 #
-# This defines the default baseline: recursive chunking, bge-m3
+# This defines the default baseline: recursive_langchain chunking, bge-m3
 # embeddings, FAISS vectorstore, dense retrieval, Ollama generation.
 # Experiment configs override only the variables they're testing.
 
@@ -16,7 +16,7 @@ indexing:
         type: "pdf"
 
   chunking:
-    type: "recursive"
+    type: "recursive_langchain"
     params:
       chunk_size: 512
       chunk_overlap: 50
