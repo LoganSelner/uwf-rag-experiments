@@ -217,9 +217,18 @@ class TestGoogleEmbedder:
 
     @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
     @patch("google.genai.Client")
-    def test_model_name_mapping(self, mock_client_cls: MagicMock) -> None:
-        embedder = self._make_embedder(model_name="models/embedding-001")
-        assert embedder._model_name == "gemini-embedding-001"
+    def test_embed_query_uses_configured_model_name(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.embed_content.return_value = _mock_embed_result([[1.0]])
+
+        embedder = self._make_embedder(model_name="text-embedding-004")
+        embedder.embed_query("test query")
+
+        call_kwargs = mock_client.models.embed_content.call_args
+        assert call_kwargs.kwargs["model"] == "text-embedding-004"
 
     @patch.dict("os.environ", {"GOOGLE_API_KEY": "", "GEMINI_API_KEY": ""}, clear=False)
     @patch("google.genai.Client")

@@ -6,33 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from components.generators import GoogleGenerator, OllamaGenerator, _is_retryable
+from components.generators import GoogleGenerator, OllamaGenerator
 from core.types import GenerationResult
-
-# -----------------------------------------------------------------------
-# _is_retryable
-# -----------------------------------------------------------------------
-
-
-class TestIsRetryable:
-    def test_network_error_retryable(self) -> None:
-        assert _is_retryable(OSError("Connection refused")) is True
-
-    def test_runtime_error_retryable(self) -> None:
-        assert _is_retryable(RuntimeError("500 Internal Server Error")) is True
-
-    def test_type_error_not_retryable(self) -> None:
-        assert _is_retryable(TypeError("bad type")) is False
-
-    def test_value_error_not_retryable(self) -> None:
-        assert _is_retryable(ValueError("bad value")) is False
-
-    def test_key_error_not_retryable(self) -> None:
-        assert _is_retryable(KeyError("missing")) is False
-
-    def test_attribute_error_not_retryable(self) -> None:
-        assert _is_retryable(AttributeError("no attr")) is False
-
 
 # -----------------------------------------------------------------------
 # OllamaGenerator

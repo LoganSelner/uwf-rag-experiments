@@ -30,20 +30,8 @@ logger = logging.getLogger(__name__)
 _NON_RETRYABLE = (TypeError, ValueError, KeyError, AttributeError, SyntaxError)
 
 
-def _is_retryable(exc: BaseException) -> bool:
-    """Return True for transient errors worth retrying.
-
-    Known programming errors are never retried. Everything else
-    (network errors, provider 5xx, timeouts) is retried as a
-    conservative default.
-    """
-    if isinstance(exc, _NON_RETRYABLE):
-        return False
-    return True
-
-
 _retry_decorator = retry(
-    retry=retry_if_exception(_is_retryable),
+    retry=retry_if_exception(lambda e: not isinstance(e, _NON_RETRYABLE)),
     wait=wait_exponential(multiplier=1, min=2, max=60),
     stop=stop_after_attempt(4),
     before_sleep=before_sleep_log(logger, logging.WARNING),

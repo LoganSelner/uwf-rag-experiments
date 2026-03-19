@@ -74,12 +74,6 @@ class HuggingFaceEmbedder(BaseEmbedder):
         return vec.tolist()
 
 
-# Map legacy model names to current google-genai equivalents
-_GOOGLE_MODEL_MAP: dict[str, str] = {
-    "models/embedding-001": "gemini-embedding-001",
-}
-
-
 @registry.register("embedding", "google")
 class GoogleEmbedder(BaseEmbedder):
     """Embeds text using Google's Gemini embedding API.
@@ -97,8 +91,7 @@ class GoogleEmbedder(BaseEmbedder):
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        raw_name = self.config.get("model_name", "gemini-embedding-001")
-        self._model_name: str = _GOOGLE_MODEL_MAP.get(raw_name, raw_name)
+        self._model_name: str = self.config.get("model_name", "gemini-embedding-001")
         self._batch_size: int = self.config.get("batch_size", 100)
         self._task_type_document: str = self.config.get(
             "task_type_document", "RETRIEVAL_DOCUMENT"
