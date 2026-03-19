@@ -125,6 +125,107 @@ class OllamaGenerator(BaseGenerator):
         return json.loads(body)
 
 
+@registry.register("generation", "google")
+class GoogleGenerator(BaseGenerator):
+    """Generates answers using Google's Gemini API.
+
+    Wraps the ``google-genai`` SDK.
+
+    Config params:
+        llm.model_name: Gemini model (e.g. "gemini-2.0-flash")
+        llm.temperature: Sampling temperature (default: 0.0)
+        llm.max_tokens: Max output tokens (optional)
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        llm = self.config.get("llm", {})
+        self._model: str = llm.get("model_name", "")
+        self._temperature: float = llm.get("temperature", 0.0)
+        self._max_tokens: int | None = llm.get("max_tokens")
+
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get(
+            "GEMINI_API_KEY", ""
+        )
+        if not api_key:
+            raise ValueError(
+                "GOOGLE_API_KEY or GEMINI_API_KEY environment variable is "
+                "required. Set it in .env or your shell environment."
+            )
+
+        from google import genai
+
+        self._client: Any = genai.Client(api_key=api_key)
+
+    def generate(self, prompt: str | list[dict[str, str]]) -> GenerationResult:
+        """Call Gemini's generate_content API and return a GenerationResult."""
+        from google.genai import types
+
+        system_instruction: str | None = None
+        if isinstance(prompt, str):
+            contents: list[types.Content] = [
+                types.Content(role="user", parts=[types.Part(text=prompt)])
+            ]
+        else:
+            contents = []
+            for msg in prompt:
+                role = msg.get("role", "user")
+                text = msg.get("content", "")
+                if role == "system":
+                    system_instruction = text
+                else:
+                    # google-genai uses "model" instead of "assistant"
+                    api_role = "model" if role == "assistant" else "user"
+                    contents.append(
+                        types.Content(role=api_role, parts=[types.Part(text=text)])
+                    )
+
+        gen_config = types.GenerateContentConfig(
+            temperature=self._temperature,
+        )
+        if self._max_tokens is not None:
+            gen_config.max_output_tokens = self._max_tokens
+        if system_instruction is not None:
+            gen_config.system_instruction = system_instruction
+
+        try:
+            response = self._call_api(contents, gen_config)
+        except Exception as e:
+            raise RuntimeError(
+                f"Google API call failed (model={self._model}): {e}"
+            ) from e
+
+        answer = response.text or ""
+
+        metadata: dict[str, Any] = {
+            "model": self._model,
+            "provider": "google",
+        }
+        if response.usage_metadata:
+            metadata["prompt_tokens"] = response.usage_metadata.prompt_token_count
+            metadata["completion_tokens"] = (
+                response.usage_metadata.candidates_token_count
+            )
+
+        return GenerationResult(
+            query="",  # Pipeline fills this in
+            answer=answer,
+            metadata=metadata,
+        )
+
+    @_retry_decorator
+    def _call_api(self, contents: list[Any], config: Any) -> Any:
+        """Call Gemini with automatic retry on transient failures."""
+        return self._client.models.generate_content(
+            model=self._model,
+            contents=contents,
+            config=config,
+        )
+
+
 @registry.register("generation", "edenai")
 class EdenAIGenerator(BaseGenerator):
     """Generates answers using Eden AI's chat gateway.

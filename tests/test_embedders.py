@@ -1,12 +1,13 @@
-"""Tests for src/components/embedders.py — HuggingFace embedder."""
+"""Tests for src/components/embedders.py — HuggingFace and Google embedders."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
-from components.embedders import HuggingFaceEmbedder
+from components.embedders import GoogleEmbedder, HuggingFaceEmbedder
 from core.types import Chunk, EmbeddedChunk
 
 
@@ -105,3 +106,131 @@ class TestHuggingFaceEmbedder:
         mock_model.encode.assert_called_once_with(
             "test", normalize_embeddings=True, show_progress_bar=False
         )
+
+
+# -----------------------------------------------------------------------
+# GoogleEmbedder
+# -----------------------------------------------------------------------
+
+
+def _mock_embedding(values: list[float]) -> MagicMock:
+    """Create a mock embedding object with a .values attribute."""
+    emb = MagicMock()
+    emb.values = values
+    return emb
+
+
+def _mock_embed_result(embeddings: list[list[float]]) -> MagicMock:
+    """Create a mock result from client.models.embed_content()."""
+    result = MagicMock()
+    result.embeddings = [_mock_embedding(v) for v in embeddings]
+    return result
+
+
+class TestGoogleEmbedder:
+    """Tests for GoogleEmbedder — all API calls are mocked."""
+
+    def _make_embedder(self, **config_overrides: object) -> GoogleEmbedder:
+        """Create a GoogleEmbedder with a mocked genai.Client."""
+        config: dict = {**config_overrides}
+        return GoogleEmbedder(config)
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_embed_query_returns_list_of_floats(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.embed_content.return_value = _mock_embed_result(
+            [[0.1, 0.2, 0.3]]
+        )
+
+        embedder = self._make_embedder()
+        result = embedder.embed_query("hello")
+
+        assert result == [0.1, 0.2, 0.3]
+        assert all(isinstance(v, float) for v in result)
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_embed_query_uses_retrieval_query_task_type(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.embed_content.return_value = _mock_embed_result([[1.0]])
+
+        embedder = self._make_embedder()
+        embedder.embed_query("test")
+
+        call_kwargs = mock_client.models.embed_content.call_args
+        assert call_kwargs.kwargs["config"]["task_type"] == "RETRIEVAL_QUERY"
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_embed_chunks_returns_embedded_chunks(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.embed_content.return_value = _mock_embed_result(
+            [[0.1, 0.2], [0.3, 0.4]]
+        )
+
+        embedder = self._make_embedder()
+        chunks = _make_chunks(2)
+        result = embedder.embed_chunks(chunks)
+
+        assert len(result) == 2
+        assert all(isinstance(ec, EmbeddedChunk) for ec in result)
+        assert result[0].chunk is chunks[0]
+        assert result[0].embedding == [0.1, 0.2]
+        assert result[1].embedding == [0.3, 0.4]
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_embed_chunks_uses_retrieval_document_task_type(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.embed_content.return_value = _mock_embed_result([[1.0]])
+
+        embedder = self._make_embedder()
+        embedder.embed_chunks(_make_chunks(1))
+
+        call_kwargs = mock_client.models.embed_content.call_args
+        assert call_kwargs.kwargs["config"]["task_type"] == "RETRIEVAL_DOCUMENT"
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_default_model_name(self, mock_client_cls: MagicMock) -> None:
+        embedder = self._make_embedder()
+        assert embedder._model_name == "gemini-embedding-001"
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_custom_model_name(self, mock_client_cls: MagicMock) -> None:
+        embedder = self._make_embedder(model_name="text-embedding-004")
+        assert embedder._model_name == "text-embedding-004"
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_model_name_mapping(self, mock_client_cls: MagicMock) -> None:
+        embedder = self._make_embedder(model_name="models/embedding-001")
+        assert embedder._model_name == "gemini-embedding-001"
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "", "GEMINI_API_KEY": ""}, clear=False)
+    @patch("google.genai.Client")
+    def test_missing_api_key_raises(self, mock_client_cls: MagicMock) -> None:
+        with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+            GoogleEmbedder()
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_embed_chunks_empty_list(self, mock_client_cls: MagicMock) -> None:
+        embedder = self._make_embedder()
+        result = embedder.embed_chunks([])
+
+        assert result == []

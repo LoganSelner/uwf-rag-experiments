@@ -116,6 +116,12 @@ class TestRegistrationInventory:
     def test_vectorstore_faiss(self) -> None:
         assert registry.is_registered("vectorstore", "faiss")
 
+    def test_vectorstore_chroma(self) -> None:
+        assert registry.is_registered("vectorstore", "chroma")
+
+    def test_embedding_google(self) -> None:
+        assert registry.is_registered("embedding", "google")
+
     # Query
     def test_retrieval_dense(self) -> None:
         assert registry.is_registered("retrieval", "dense")
@@ -126,12 +132,18 @@ class TestRegistrationInventory:
     def test_generation_edenai(self) -> None:
         assert registry.is_registered("generation", "edenai")
 
+    def test_generation_google(self) -> None:
+        assert registry.is_registered("generation", "google")
+
     def test_prompts_chat(self) -> None:
         assert registry.is_registered("prompts", "chat")
 
     # Defaults
     def test_query_transform_passthrough(self) -> None:
         assert registry.is_registered("query_transform", "passthrough")
+
+    def test_query_transform_contextualizer(self) -> None:
+        assert registry.is_registered("query_transform", "contextualizer")
 
     def test_reranking_none(self) -> None:
         assert registry.is_registered("reranking", "none")

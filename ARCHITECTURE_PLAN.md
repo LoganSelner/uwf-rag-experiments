@@ -70,14 +70,19 @@ behind `BaseEmbedder`), vectorstore (`faiss-cpu` behind
 | Category | Component | Registry Name | Notes |
 |----------|-----------|---------------|-------|
 | Ingest | `PDFIngestor` | `pdf` | PyMuPDF |
-| Chunking | `RecursiveChunker` | `recursive` | Custom 131-line implementation |
+| Chunking | `RecursiveChunker` | `recursive_custom` | Custom 131-line implementation |
+| Chunking | `LangChainRecursiveChunker` | `recursive_langchain` | `langchain-text-splitters` wrapper |
 | Embedding | `HuggingFaceEmbedder` | `huggingface` | sentence-transformers, bge-m3 default |
+| Embedding | `GoogleEmbedder` | `google` | `google-genai` SDK, gemini-embedding-001 default |
 | Vectorstore | `FAISSVectorStore` | `faiss` | Cosine + L2, metadata post-filtering |
+| Vectorstore | `ChromaVectorStore` | `chroma` | ChromaDB, native metadata filtering |
 | Retrieval | `DenseRetriever` | `dense` | Single-vector similarity search |
 | Generation | `OllamaGenerator` | `ollama` | Local LLM via Ollama |
 | Generation | `EdenAIGenerator` | `edenai` | Cloud LLM via Eden AI gateway |
+| Generation | `GoogleGenerator` | `google` | Gemini via `google-genai` SDK |
 | Prompts | `ChatPromptTemplate` | `chat` | Numbered/plain context, CoT, citations |
 | Query Transform | `PassthroughQueryTransformer` | `passthrough` | Returns query unchanged |
+| Query Transform | `ContextualizerQueryTransformer` | `contextualizer` | LLM reformulation with history |
 | Reranking | `NoOpReranker` | `none` | Passes through, truncates to top_k |
 | Memory | `NoMemory` | `none` | No-op |
 | Memory | `BufferWindowMemory` | `buffer_window` | Last N turns |
@@ -184,22 +189,22 @@ indexing:
       path: "data/sources/student_handbook.pdf"
       ingest: { type: "pdf" }
   chunking:
-    type: "langchain_recursive"               # (new)
+    type: "recursive_langchain"
     params: { chunk_size: 1200, chunk_overlap: 200 }
   embedding:
-    type: "google"                             # (new)
+    type: "google"
     params: { model_name: "models/embedding-001" }
   vectorstore:
-    type: "chroma"                             # (new)
+    type: "chroma"
 query:
   query_transform:
-    type: "contextualizer"                     # (new) — LLM reformulation with history
+    type: "contextualizer"
   retrieval:
     type: "dense"
     top_k_retrieve: 3
     top_k_final: 3
   generation:
-    type: "google"                             # (new)
+    type: "google"
   generation_llm:
     provider: "google"
     model_name: "gemini-1.0-pro"
@@ -224,7 +229,7 @@ indexing:
       path: "data/sources/student_handbook.pdf"
       ingest: { type: "pdf" }
   chunking:
-    type: "langchain_recursive"               # (new)
+    type: "recursive_langchain"
     params: { chunk_size: 1200, chunk_overlap: 200 }
   embedding:
     type: "openai"                             # (new)
@@ -282,31 +287,30 @@ variable is `pipeline_mode` and the agent config.
 Each phase unlocks a meaningful set of experiments that couldn't
 be run before. Phases are ordered by research value.
 
-### Housekeeping (before Phase 3)
+### Housekeeping (before Phase 3) — COMPLETED
 
-- [ ] Add `data/sources/README.md` and `data/datasets/README.md`
+- [x] Add `data/sources/README.md` and `data/datasets/README.md`
       explaining expected file formats and placement
-- [ ] Update `.gitignore` to track directory READMEs while
+- [x] Update `.gitignore` to track directory READMEs while
       ignoring contents
-- [ ] Move presentation concerns (`METRIC_SHORT_NAMES`,
+- [x] Move presentation concerns (`METRIC_SHORT_NAMES`,
       `format_comparison_table`, `resolve_metric_name`) from
       `src/evaluation/comparison.py` to `scripts/compare.py`
-- [ ] Replace custom `RecursiveChunker` with LangChain-backed
-      implementation as the `"recursive"` default; keep custom
-      as `"recursive_custom"` for A/B comparison
+- [x] Add LangChain-backed chunker as `"recursive_langchain"`;
+      custom kept as `"recursive_custom"` for A/B comparison
 
 ### Phase 3A — v1 Replication Components
 
 Goal: Run the v1 configuration on our linear pipeline and
 reproduce the paper's RAGAS scores.
 
-| # | Component | Registry | Interface | Library |
-|---|-----------|----------|-----------|---------|
-| 1 | ChromaDB vectorstore | `chroma` | `BaseVectorStore` | `chromadb` |
-| 2 | Google AI embeddings | `google` | `BaseEmbedder` | `google-generativeai` |
-| 3 | Gemini generator | `google` | `BaseGenerator` | `google-generativeai` |
-| 4 | Contextualizing query transformer | `contextualizer` | `BaseQueryTransformer` | Custom (LLM call) |
-| 5 | LangChain recursive chunker | `langchain_recursive` | `BaseChunker` | `langchain-text-splitters` |
+| # | Component | Registry | Interface | Library | Status |
+|---|-----------|----------|-----------|---------|--------|
+| 1 | ChromaDB vectorstore | `chroma` | `BaseVectorStore` | `chromadb` | Done |
+| 2 | Google AI embeddings | `google` | `BaseEmbedder` | `google-genai` | Done |
+| 3 | Gemini generator | `google` | `BaseGenerator` | `google-genai` | Done |
+| 4 | Contextualizing query transformer | `contextualizer` | `BaseQueryTransformer` | Custom (LLM call) | Done |
+| 5 | LangChain recursive chunker | `recursive_langchain` | `BaseChunker` | `langchain-text-splitters` | Done |
 
 **Milestone:** Can run `configs/experiments/v1_replication.yaml`
 and compare scores against the paper's Table 2.
@@ -557,8 +561,8 @@ tenacity                  Retry logic for API calls
 
 ```
 chromadb                  Alternative vectorstore
-google-generativeai       Gemini + Google embeddings
-langchain-text-splitters  LangChain recursive/semantic chunkers
+google-genai              Gemini + Google embeddings
+langchain-text-splitters  LangChain recursive chunker
 ```
 
 ### Phase 3B additions

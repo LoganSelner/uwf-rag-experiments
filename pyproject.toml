@@ -21,6 +21,8 @@ dependencies = [
     "langchain-community>=0.4,<1",   # ChatEdenAI LLM wrapper
     "langchain-ollama>=0.3",          # OllamaLLM (replaces deprecated langchain_community.llms.Ollama)
     "tenacity>=8",
+    "google-genai>=1.0",
+    "chromadb>=0.5",
 ]
 
 [dependency-groups]
@@ -103,6 +105,14 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["dotenv", "dotenv.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["chromadb", "chromadb.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["google", "google.genai", "google.genai.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -19,6 +19,7 @@ from components import (  # noqa: F401
     generators,
     ingestors,
     prompts,
+    query_transforms,
     retrievers,
     vectorstores,
 )
