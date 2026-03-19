@@ -393,7 +393,9 @@ class Evaluator:
 
         for key in all_keys:
             values = [
-                run[key] for run in per_run if key in run and not math.isnan(run[key])
+                run[key]
+                for run in per_run
+                if key in run and run[key] is not None and not math.isnan(run[key])
             ]
             if values:
                 aggregated[key] = statistics.mean(values)

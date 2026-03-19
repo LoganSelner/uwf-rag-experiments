@@ -48,8 +48,28 @@ def load_yaml_with_inheritance(path: str | Path) -> dict[str, Any]:
 
     The ``extends`` field is relative to the directory containing the
     child config file. Multiple levels of inheritance are supported.
+
+    Raises:
+        ConfigValidationError: If a circular inheritance chain is detected.
     """
-    path = Path(path)
+    return _load_yaml_recursive(path, _visited=None)
+
+
+def _load_yaml_recursive(
+    path: str | Path,
+    *,
+    _visited: set[Path] | None,
+) -> dict[str, Any]:
+    """Internal: load YAML with cycle detection."""
+    path = Path(path).resolve()
+
+    if _visited is None:
+        _visited = set()
+
+    if path in _visited:
+        raise ConfigValidationError([f"Circular YAML inheritance detected: {path}"])
+    _visited.add(path)
+
     with open(path) as f:
         raw: dict[str, Any] = yaml.safe_load(f) or {}
 
@@ -58,7 +78,7 @@ def load_yaml_with_inheritance(path: str | Path) -> dict[str, Any]:
         return raw
 
     parent_path = (path.parent / extends).resolve()
-    parent = load_yaml_with_inheritance(parent_path)
+    parent = _load_yaml_recursive(parent_path, _visited=_visited)
     return _deep_merge(parent, raw)
 
 
@@ -495,6 +515,9 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
     errors: list[str] = []
 
     # --- Indexing components (always validated) ---
+    if not config.indexing.sources:
+        errors.append("indexing.sources is empty — at least one source is required")
+
     for i, source in enumerate(config.indexing.sources):
         _check_registered(
             errors,
@@ -576,8 +599,23 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
                 "prompts",
                 "query.prompt.type",
             )
+            if not config.query.generation_llm.model_name:
+                errors.append(
+                    "query.generation_llm.model_name is empty but evaluation.mode "
+                    "is not 'retrieval_only' — a model name is required for generation"
+                )
 
-        # top_k constraint
+        # top_k constraints
+        if config.query.retrieval.top_k_retrieve <= 0:
+            errors.append(
+                f"query.retrieval.top_k_retrieve must be > 0 "
+                f"(got {config.query.retrieval.top_k_retrieve})"
+            )
+        if config.query.retrieval.top_k_final <= 0:
+            errors.append(
+                f"query.retrieval.top_k_final must be > 0 "
+                f"(got {config.query.retrieval.top_k_final})"
+            )
         if config.query.retrieval.top_k_final > config.query.retrieval.top_k_retrieve:
             errors.append(
                 f"query.retrieval.top_k_final ({config.query.retrieval.top_k_final}) "
