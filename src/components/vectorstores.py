@@ -53,7 +53,8 @@ class FAISSVectorStore(BaseVectorStore):
 
         dim = len(chunks[0].embedding)
         self._ensure_index(dim)
-        assert self._index is not None
+        if self._index is None:
+            raise RuntimeError("FAISS index was not created by _ensure_index()")
 
         vectors = np.array([ec.embedding for ec in chunks], dtype=np.float32)
         self._index.add(vectors)
@@ -98,7 +99,8 @@ class FAISSVectorStore(BaseVectorStore):
         FAISS has no native filtering. We retrieve extra candidates
         (4x top_k, minimum 50), filter by metadata, then truncate.
         """
-        assert self._index is not None
+        if self._index is None:
+            raise RuntimeError("FAISS index is not initialized — call add() first")
         fetch_k = min(max(top_k * 4, 50), self._index.ntotal)
         vec = np.array([query_vector], dtype=np.float32)
         scores, indices = self._index.search(vec, fetch_k)
@@ -132,7 +134,8 @@ class FAISSVectorStore(BaseVectorStore):
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
 
-        assert self._index is not None
+        if self._index is None:
+            raise RuntimeError("Cannot save — FAISS index is not initialized")
         faiss.write_index(self._index, str(path / "index.faiss"))
         with open(path / "chunks.pkl", "wb") as f:
             pickle.dump(self._chunks, f)
