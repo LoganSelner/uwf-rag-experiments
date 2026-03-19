@@ -37,11 +37,11 @@ class TestComponentRegistry:
     def test_get_missing_lists_available(
         self, clean_registry: ComponentRegistry
     ) -> None:
-        @clean_registry.register("chunking", "recursive")
+        @clean_registry.register("chunking", "recursive_langchain")
         class Rec:
             pass
 
-        with pytest.raises(KeyError, match="recursive"):
+        with pytest.raises(KeyError, match="recursive_langchain"):
             clean_registry.get("chunking", "bogus")
 
     def test_duplicate_registration_raises(
@@ -104,8 +104,11 @@ class TestRegistrationInventory:
     def test_ingest_pdf(self) -> None:
         assert registry.is_registered("ingest", "pdf")
 
-    def test_chunking_recursive(self) -> None:
-        assert registry.is_registered("chunking", "recursive")
+    def test_chunking_recursive_langchain(self) -> None:
+        assert registry.is_registered("chunking", "recursive_langchain")
+
+    def test_chunking_recursive_custom(self) -> None:
+        assert registry.is_registered("chunking", "recursive_custom")
 
     def test_embedding_huggingface(self) -> None:
         assert registry.is_registered("embedding", "huggingface")

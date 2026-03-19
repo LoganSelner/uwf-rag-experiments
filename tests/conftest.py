@@ -132,7 +132,7 @@ def minimal_config_dict(fixtures_dir: Path) -> dict:
                 }
             ],
             "chunking": {
-                "type": "recursive",
+                "type": "recursive_langchain",
                 "params": {"chunk_size": 256, "chunk_overlap": 25},
             },
             "embedding": {

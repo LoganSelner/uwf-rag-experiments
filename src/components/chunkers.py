@@ -14,13 +14,73 @@ from core.registry import registry
 from core.types import Chunk, Document
 
 
-@registry.register("chunking", "recursive")
-class RecursiveChunker(BaseChunker):
-    """Recursive character text splitter.
+def _make_chunk_id(
+    content: str,
+    metadata: dict[str, Any],
+    index: int,
+) -> str:
+    """Generate a deterministic chunk ID from content and position."""
+    source = metadata.get("source_path", "")
+    page = metadata.get("page_number", 0)
+    key = f"{source}:{page}:{index}:{content[:64]}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+@registry.register("chunking", "recursive_langchain")
+class LangChainRecursiveChunker(BaseChunker):
+    """LangChain-backed recursive character text splitter.
+
+    Wraps ``langchain_text_splitters.RecursiveCharacterTextSplitter``.
+    Produces the same ``Chunk`` type as the custom implementation.
+
+    Config params:
+        chunk_size: Target chunk size in characters (default: 512).
+        chunk_overlap: Overlap between chunks (default: 50).
+        separators: List of separator strings (default: LangChain's default).
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+        kwargs: dict[str, Any] = {
+            "chunk_size": self.config.get("chunk_size", 512),
+            "chunk_overlap": self.config.get("chunk_overlap", 50),
+        }
+        separators = self.config.get("separators")
+        if separators is not None:
+            kwargs["separators"] = separators
+
+        self._splitter = RecursiveCharacterTextSplitter(
+            keep_separator=False,
+            **kwargs,
+        )
+
+    def chunk(self, documents: list[Document]) -> list[Chunk]:
+        chunks: list[Chunk] = []
+        for doc in documents:
+            lc_docs = self._splitter.create_documents(
+                [doc.content],
+                metadatas=[doc.metadata],
+            )
+            for i, lc_doc in enumerate(lc_docs):
+                chunk_id = _make_chunk_id(lc_doc.page_content, lc_doc.metadata, i)
+                chunks.append(
+                    Chunk(
+                        content=lc_doc.page_content,
+                        chunk_id=chunk_id,
+                        metadata={**lc_doc.metadata, "chunk_index": i},
+                    )
+                )
+        return chunks
+
+
+@registry.register("chunking", "recursive_custom")
+class CustomRecursiveChunker(BaseChunker):
+    """Custom recursive character text splitter.
 
     Splits text using a hierarchy of separators, falling back to
     finer-grained splits when chunks exceed the target size.
-    Mirrors LangChain's RecursiveCharacterTextSplitter logic.
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
@@ -37,7 +97,7 @@ class RecursiveChunker(BaseChunker):
             texts = self._split_text(doc.content, self._separators)
             merged = self._merge_splits(texts)
             for i, text in enumerate(merged):
-                chunk_id = self._make_chunk_id(text, doc.metadata, i)
+                chunk_id = _make_chunk_id(text, doc.metadata, i)
                 chunks.append(
                     Chunk(
                         content=text,
@@ -117,15 +177,3 @@ class RecursiveChunker(BaseChunker):
             merged.append("".join(current_parts))
 
         return merged
-
-    @staticmethod
-    def _make_chunk_id(
-        content: str,
-        metadata: dict[str, Any],
-        index: int,
-    ) -> str:
-        """Generate a deterministic chunk ID from content and position."""
-        source = metadata.get("source_path", "")
-        page = metadata.get("page_number", 0)
-        key = f"{source}:{page}:{index}:{content[:64]}"
-        return hashlib.sha256(key.encode()).hexdigest()[:16]

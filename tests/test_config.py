@@ -91,8 +91,10 @@ class TestLoadYamlWithInheritance:
 
 class TestComponentConfig:
     def test_from_dict(self) -> None:
-        cfg = ComponentConfig.from_dict({"type": "recursive", "params": {"k": 5}})
-        assert cfg.type == "recursive"
+        cfg = ComponentConfig.from_dict(
+            {"type": "recursive_langchain", "params": {"k": 5}}
+        )
+        assert cfg.type == "recursive_langchain"
         assert cfg.params == {"k": 5}
 
     def test_from_none(self) -> None:
@@ -115,7 +117,7 @@ class TestExperimentConfig:
         cfg = ExperimentConfig.from_dict(minimal_config_dict)
         assert cfg.name == "test_baseline"
         assert cfg.pipeline_mode == "linear"
-        assert cfg.indexing.chunking.type == "recursive"
+        assert cfg.indexing.chunking.type == "recursive_langchain"
         assert cfg.query.retrieval.top_k_final == 3
 
     def test_defaults(self) -> None:
@@ -128,7 +130,7 @@ class TestExperimentConfig:
     def test_from_yaml(self, fixtures_dir: Path) -> None:
         cfg = ExperimentConfig.from_yaml(fixtures_dir / "base.yaml")
         assert cfg.name == "baseline"
-        assert cfg.indexing.chunking.type == "recursive"
+        assert cfg.indexing.chunking.type == "recursive_langchain"
 
 
 # -----------------------------------------------------------------------
@@ -233,7 +235,7 @@ class TestValidateConfig:
             "pipeline_mode": "linear",
             "indexing": {
                 "sources": [{"name": "s", "path": "", "ingest": {"type": "pdf"}}],
-                "chunking": {"type": "recursive"},
+                "chunking": {"type": "recursive_langchain"},
                 "embedding": {"type": "huggingface"},
                 "vectorstore": {"type": "faiss"},
             },
@@ -266,7 +268,7 @@ class TestValidateConfig:
     def test_error_lists_available_types(self) -> None:
         cfg = self._make_valid_config()
         cfg.indexing.chunking.type = "bogus"
-        with pytest.raises(ConfigValidationError, match="recursive"):
+        with pytest.raises(ConfigValidationError, match="recursive_langchain"):
             validate_config(cfg, registry)
 
     def test_top_k_constraint(self) -> None:

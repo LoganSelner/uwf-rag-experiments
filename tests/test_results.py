@@ -18,7 +18,7 @@ def _make_config() -> ExperimentConfig:
             "pipeline_mode": "linear",
             "indexing": {
                 "sources": [{"name": "s", "path": "/f", "ingest": {"type": "pdf"}}],
-                "chunking": {"type": "recursive"},
+                "chunking": {"type": "recursive_langchain"},
                 "embedding": {"type": "huggingface"},
                 "vectorstore": {"type": "faiss"},
             },
