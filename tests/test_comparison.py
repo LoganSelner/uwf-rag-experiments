@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from compare import format_comparison_table, resolve_metric_name
 import pytest
 import yaml
 
@@ -12,11 +13,9 @@ from evaluation.comparison import (
     _flatten_dict,
     compare_experiments,
     diff_configs,
-    format_comparison_table,
     load_config,
     load_per_sample_scores,
     load_summary,
-    resolve_metric_name,
     sort_rows,
 )
 
@@ -259,3 +258,26 @@ class TestLoadPerSampleScores:
         # No run_1.jsonl
         rows = load_per_sample_scores([d], metrics=["faithfulness"])
         assert rows == []
+
+    def test_corrupted_jsonl_line_skipped(self, tmp_path: Path) -> None:
+        d = tmp_path / "exp"
+        _write_summary(d, "exp", {})
+        good = json.dumps(
+            {
+                "id": "1",
+                "input": {"query": "Q?", "reference": "R"},
+                "output": {"response": "A", "retrieved_contexts": []},
+                "scores": {"faithfulness": 0.8},
+            }
+        )
+        good2 = json.dumps(
+            {
+                "id": "2",
+                "input": {"query": "Q2?", "reference": "R2"},
+                "output": {"response": "A2", "retrieved_contexts": []},
+                "scores": {"faithfulness": 0.9},
+            }
+        )
+        (d / "run_1.jsonl").write_text(good + "\nNOT VALID JSON\n" + good2 + "\n")
+        rows = load_per_sample_scores([d], metrics=["faithfulness"])
+        assert len(rows) == 2
