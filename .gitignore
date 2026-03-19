@@ -21,13 +21,16 @@ coverage.xml
 
 # --- RAG experiment artifacts ---
 data/indexes/*
-!data/indexes/.gitignore
 
 # --- Data (never commit proprietary university data) ---
-data/raw/
-data/sources/
-data/queries/
-data/datasets/
+data/raw/*
+!data/raw/.gitignore
+data/sources/*
+!data/sources/.gitignore
+!data/sources/README.md
+data/queries/*
+data/datasets/*
+!data/datasets/README.md
 
 # --- IDE ---
 .idea/
