@@ -342,12 +342,6 @@ class TestValidateConfig:
         with pytest.raises(ConfigValidationError, match="sources is empty"):
             validate_config(cfg, registry)
 
-    def test_source_path_not_found(self, tmp_path: Path) -> None:
-        cfg = self._make_valid_config()
-        cfg.indexing.sources[0].path = str(tmp_path / "nonexistent.pdf")
-        with pytest.raises(ConfigValidationError, match="file not found"):
-            validate_config(cfg, registry)
-
     def test_generation_llm_model_name_empty(self) -> None:
         cfg = self._make_valid_config()
         cfg.query.generation_llm.model_name = ""

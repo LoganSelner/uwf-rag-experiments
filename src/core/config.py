@@ -526,10 +526,6 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
             "ingest",
             f"indexing.sources[{i}].ingest.type",
         )
-        if source.path and not Path(source.path).exists():
-            errors.append(
-                f"indexing.sources[{i}].path: file not found: '{source.path}'"
-            )
     _check_registered(
         errors,
         registry,
