@@ -79,8 +79,9 @@ Key dependency boundaries:
 
 - `evaluation/evaluator.py` depends on `core.types.Queryable` (a
   Protocol), not on any pipeline class. It receives a pipeline as
-  a duck-typed object. This means the evaluator works identically
-  for `QueryPipeline`, `AgentPipeline`, and test mocks.
+  a duck-typed object. This means the evaluator is designed to work
+  identically for `QueryPipeline`, `AgentPipeline` (once
+  implemented), and test mocks.
 
 - `pipeline/rag.py` does not import from `evaluation/`. The
   experiment orchestration (build pipeline → evaluate → save)
@@ -216,8 +217,10 @@ When `evaluation.mode: "retrieval_only"`, the pipeline skips
 generator and prompt template construction entirely. `run()`
 returns a `GenerationResult` with empty `answer` and populated
 `retrieved_chunks`. The evaluator computes only retriever metrics
-(context_precision, context_entity_recall). This is fast and
-free — no LLM calls.
+(context_precision, context_entity_recall). This skips the
+generation LLM entirely, but the evaluator LLM is still invoked
+— RAGAS metrics like context_precision require an LLM judge.
+Faster and cheaper than full mode, not free.
 
 ---
 
