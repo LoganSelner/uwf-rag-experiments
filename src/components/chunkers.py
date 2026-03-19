@@ -51,7 +51,10 @@ class LangChainRecursiveChunker(BaseChunker):
         if separators is not None:
             kwargs["separators"] = separators
 
-        self._splitter = RecursiveCharacterTextSplitter(**kwargs)
+        self._splitter = RecursiveCharacterTextSplitter(
+            keep_separator=False,
+            **kwargs,
+        )
 
     def chunk(self, documents: list[Document]) -> list[Chunk]:
         chunks: list[Chunk] = []
