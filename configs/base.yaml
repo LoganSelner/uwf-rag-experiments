@@ -50,7 +50,7 @@ query:
 
   generation_llm:
     provider: "ollama"
-    model_name: "qwen2.5:14b"
+    model_name: "qwen2.5:32b"
     temperature: 0.0
 
   prompt:
@@ -79,5 +79,5 @@ evaluation:
   num_runs: 3
   evaluator_llm:
     provider: "ollama"
-    model_name: "qwen2.5:14b"
+    model_name: "qwen2.5:32b"
     temperature: 0.0
