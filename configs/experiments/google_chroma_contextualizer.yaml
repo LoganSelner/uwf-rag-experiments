@@ -1,0 +1,55 @@
+# Full Google experiment.
+#
+# Uses the Google components added on this branch:
+#   - Google Gemini embeddings
+#   - Chroma vector store
+#   - contextualizer query transform powered by Gemini
+#   - Gemini answer generation
+#
+# The evaluator stays fixed to local qwen3:32b so the judge is consistent
+# across experiments.
+#
+# Prerequisites:
+#   1. Set GOOGLE_API_KEY in .env or your shell environment
+#   2. Ensure Ollama is running locally with qwen3:32b available for evaluation
+#
+# Usage:
+#   python scripts/run_experiment.py configs/experiments/google_chroma_contextualizer.yaml -v
+
+extends: ../base.yaml
+
+name: "google_chroma_contextualizer"
+description: "Google embeddings + Chroma + Gemini contextualizer + Gemini generation"
+
+indexing:
+  embedding:
+    type: "google"
+    params:
+      model_name: "gemini-embedding-001"
+      batch_size: 100
+      task_type_document: "RETRIEVAL_DOCUMENT"
+      task_type_query: "RETRIEVAL_QUERY"
+
+  vectorstore:
+    type: "chroma"
+    params:
+      metric: "cosine"
+      collection_name: "uwf_google_chunks"
+
+query:
+  query_transform:
+    type: "contextualizer"
+    params:
+      generator_type: "google"
+      llm:
+        model_name: "gemini-2.5-flash"
+        temperature: 0.0
+
+  generation:
+    type: "google"
+
+  generation_llm:
+    provider: "google"
+    model_name: "gemini-2.5-flash"
+    temperature: 0.0
+    max_tokens: 1024

@@ -1,0 +1,16 @@
+# Local Chroma baseline.
+#
+# Changes only the vector store from FAISS to Chroma while keeping the rest
+# of the local baseline fixed.
+
+extends: ../base.yaml
+
+name: "hf_chroma_baseline"
+description: "Local baseline with HuggingFace embeddings and Chroma vector store"
+
+indexing:
+  vectorstore:
+    type: "chroma"
+    params:
+      metric: "cosine"
+      collection_name: "uwf_hf_chunks"

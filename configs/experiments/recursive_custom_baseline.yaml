@@ -1,0 +1,17 @@
+# Custom chunking ablation.
+#
+# Swaps only the chunker so chunking can be compared independently from
+# retrieval, vector store, and generation changes.
+
+extends: ../base.yaml
+
+name: "recursive_custom_baseline"
+description: "Local baseline with the custom recursive chunker"
+
+indexing:
+  chunking:
+    type: "recursive_custom"
+    params:
+      chunk_size: 512
+      chunk_overlap: 50
+      separators: ["\n\n", "\n", ". ", " ", ""]

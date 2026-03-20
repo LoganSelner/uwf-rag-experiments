@@ -1,0 +1,42 @@
+# Retrieval-only Google index experiment.
+#
+# Useful for isolating indexing quality without adding answer-generation
+# variance. Query-time generation is disabled by evaluation mode.
+#
+# Prerequisites:
+#   1. Set GOOGLE_API_KEY in .env or your shell environment
+#
+# Usage:
+#   python scripts/run_experiment.py configs/experiments/google_chroma_retrieval_only.yaml -v
+
+extends: ../base.yaml
+
+name: "google_chroma_retrieval_only"
+description: "Retrieval-only evaluation with Google embeddings and Chroma"
+
+indexing:
+  embedding:
+    type: "google"
+    params:
+      model_name: "gemini-embedding-001"
+      batch_size: 100
+      task_type_document: "RETRIEVAL_DOCUMENT"
+      task_type_query: "RETRIEVAL_QUERY"
+
+  vectorstore:
+    type: "chroma"
+    params:
+      metric: "cosine"
+      collection_name: "uwf_google_chunks"
+
+query:
+  generation:
+    type: ""
+
+  generation_llm:
+    provider: ""
+    model_name: ""
+    temperature: 0.0
+
+evaluation:
+  mode: "retrieval_only"
