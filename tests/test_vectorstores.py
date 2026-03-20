@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
 import uuid
 
 import numpy as np
@@ -261,6 +262,57 @@ class TestChromaVectorStore:
         results = store.search([0.1] * 8, top_k=5)
         scores = [r.score for r in results]
         assert scores == sorted(scores, reverse=True)
+
+    def test_add_splits_upserts_by_max_batch_size(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        chunks = _make_embedded_chunks(7)
+        expected_ids = [chunk.chunk.chunk_id for chunk in chunks]
+
+        store._client.get_max_batch_size = MagicMock(return_value=3)  # type: ignore[method-assign]
+        store._collection.upsert = MagicMock(wraps=store._collection.upsert)  # type: ignore[method-assign]
+
+        store.add(chunks)
+
+        assert store._collection.upsert.call_count == 3
+        batch_sizes = [
+            len(call.kwargs["ids"]) for call in store._collection.upsert.call_args_list
+        ]
+        assert batch_sizes == [3, 3, 1]
+        seen_ids = [
+            chunk_id
+            for call in store._collection.upsert.call_args_list
+            for chunk_id in call.kwargs["ids"]
+        ]
+        assert seen_ids == expected_ids
+
+    @patch("chromadb.PersistentClient")
+    def test_save_splits_upserts_by_max_batch_size(
+        self, mock_persistent_cls: MagicMock, tmp_path: str
+    ) -> None:
+        store = _unique_chroma(metric="cosine")
+        chunks = _make_embedded_chunks(7)
+        expected_ids = [chunk.chunk.chunk_id for chunk in chunks]
+        store.add(chunks)
+
+        mock_persistent = MagicMock()
+        mock_persistent.get_max_batch_size.return_value = 3
+        mock_collection = MagicMock()
+        mock_persistent.get_or_create_collection.return_value = mock_collection
+        mock_persistent_cls.return_value = mock_persistent
+
+        store.save(str(tmp_path / "chroma_save"))
+
+        assert mock_collection.upsert.call_count == 3
+        batch_sizes = [
+            len(call.kwargs["ids"]) for call in mock_collection.upsert.call_args_list
+        ]
+        assert batch_sizes == [3, 3, 1]
+        seen_ids = [
+            chunk_id
+            for call in mock_collection.upsert.call_args_list
+            for chunk_id in call.kwargs["ids"]
+        ]
+        assert seen_ids == expected_ids
 
     def test_invalid_metric_raises(self) -> None:
         with pytest.raises(ValueError, match="metric must be one of"):

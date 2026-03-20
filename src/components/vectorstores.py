@@ -241,12 +241,15 @@ class ChromaVectorStore(BaseVectorStore):
         documents = [ec.chunk.content for ec in chunks]
         metadatas = [self._sanitize_metadata(ec.chunk.metadata) for ec in chunks]
 
-        self._collection.upsert(
-            ids=ids,
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=metadatas,
-        )
+        batch_size = self._client.get_max_batch_size()
+        for start in range(0, len(ids), batch_size):
+            end = start + batch_size
+            self._collection.upsert(
+                ids=ids[start:end],
+                embeddings=embeddings[start:end],
+                documents=documents[start:end],
+                metadatas=metadatas[start:end],
+            )
 
     def search(
         self,
@@ -312,12 +315,15 @@ class ChromaVectorStore(BaseVectorStore):
             metadata={"hnsw:space": self._metric},
         )
         if data["ids"]:
-            pcol.upsert(
-                ids=data["ids"],
-                embeddings=data["embeddings"],
-                documents=data["documents"],
-                metadatas=data["metadatas"],
-            )
+            batch_size = persistent.get_max_batch_size()
+            for start in range(0, len(data["ids"]), batch_size):
+                end = start + batch_size
+                pcol.upsert(
+                    ids=data["ids"][start:end],
+                    embeddings=data["embeddings"][start:end],
+                    documents=data["documents"][start:end],
+                    metadatas=data["metadatas"][start:end],
+                )
         logger.info(
             "Saved ChromaDB collection to %s (%d vectors)",
             path,
