@@ -115,6 +115,29 @@ class TestContextualizerQueryTransformer:
         call_args = qt._generator.generate.call_args[0][0]
         assert call_args[0]["content"] == custom_prompt
 
+    @patch("components.query_transforms.registry")
+    def test_generator_receives_extra_params(self, mock_registry: MagicMock) -> None:
+        mock_cls = _mock_generator_cls()
+        mock_registry.get.return_value = mock_cls
+
+        ContextualizerQueryTransformer(
+            {
+                "generator_type": "edenai",
+                "system_prompt": "Custom prompt.",
+                "sub_provider": "openai",
+                "base_url": "http://custom:8080",
+                "llm": {"model_name": "gpt-4", "temperature": 0.5},
+            }
+        )
+
+        mock_cls.assert_called_once_with(
+            config={
+                "sub_provider": "openai",
+                "base_url": "http://custom:8080",
+                "llm": {"model_name": "gpt-4", "temperature": 0.5},
+            }
+        )
+
     def test_missing_generator_type_raises(self) -> None:
         with pytest.raises(ValueError, match="generator_type"):
             ContextualizerQueryTransformer({"llm": {"model_name": "m"}})

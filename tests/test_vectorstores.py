@@ -297,7 +297,7 @@ class TestChromaVectorStore:
         mock_persistent = MagicMock()
         mock_persistent.get_max_batch_size.return_value = 3
         mock_collection = MagicMock()
-        mock_persistent.get_or_create_collection.return_value = mock_collection
+        mock_persistent.create_collection.return_value = mock_collection
         mock_persistent_cls.return_value = mock_persistent
 
         store.save(str(tmp_path / "chroma_save"))
@@ -313,6 +313,47 @@ class TestChromaVectorStore:
             for chunk_id in call.kwargs["ids"]
         ]
         assert seen_ids == expected_ids
+
+    @patch("chromadb.PersistentClient")
+    def test_save_deletes_existing_collection_before_creating(
+        self, mock_persistent_cls: MagicMock, tmp_path: str
+    ) -> None:
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(2))
+
+        mock_persistent = MagicMock()
+        mock_persistent.create_collection.return_value = MagicMock()
+        mock_persistent_cls.return_value = mock_persistent
+
+        store.save(str(tmp_path / "chroma_save"))
+
+        mock_persistent.delete_collection.assert_called_once_with(
+            name=store._collection_name
+        )
+        mock_persistent.create_collection.assert_called_once()
+
+    @patch("chromadb.PersistentClient")
+    def test_save_handles_missing_collection_on_first_save(
+        self, mock_persistent_cls: MagicMock, tmp_path: str
+    ) -> None:
+        import chromadb.errors
+
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(2))
+
+        mock_persistent = MagicMock()
+        mock_persistent.delete_collection.side_effect = chromadb.errors.NotFoundError(
+            "not found"
+        )
+        mock_persistent.get_max_batch_size.return_value = 5000
+        mock_collection = MagicMock()
+        mock_persistent.create_collection.return_value = mock_collection
+        mock_persistent_cls.return_value = mock_persistent
+
+        store.save(str(tmp_path / "chroma_save"))
+
+        mock_persistent.create_collection.assert_called_once()
+        assert mock_collection.upsert.call_count == 1
 
     def test_invalid_metric_raises(self) -> None:
         with pytest.raises(ValueError, match="metric must be one of"):

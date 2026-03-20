@@ -49,9 +49,12 @@ class ContextualizerQueryTransformer(BaseQueryTransformer):
                 "query_transform.params.generator_type in YAML."
             )
 
-        llm_config = self.config.get("llm", {})
+        # Pass through all config except query-transform-specific keys,
+        # so generator-specific params (e.g. sub_provider, base_url) are preserved.
+        _QT_KEYS = {"generator_type", "system_prompt"}
+        gen_config = {k: v for k, v in self.config.items() if k not in _QT_KEYS}
         gen_cls = registry.get("generation", generator_type)
-        self._generator = gen_cls(config={"llm": llm_config})
+        self._generator = gen_cls(config=gen_config)
 
         self._system_prompt: str = self.config.get(
             "system_prompt", _DEFAULT_SYSTEM_PROMPT

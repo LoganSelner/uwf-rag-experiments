@@ -310,7 +310,13 @@ class ChromaVectorStore(BaseVectorStore):
         )
 
         persistent = chromadb.PersistentClient(path=str(path))
-        pcol = persistent.get_or_create_collection(
+        # Delete any pre-existing collection so stale chunks from a prior
+        # save do not persist alongside the current data.
+        try:
+            persistent.delete_collection(name=self._collection_name)
+        except chromadb.errors.NotFoundError:
+            pass
+        pcol = persistent.create_collection(
             name=self._collection_name,
             metadata={"hnsw:space": self._metric},
         )
