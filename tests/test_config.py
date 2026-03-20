@@ -174,6 +174,26 @@ class TestSpecificConfigs:
         cfg = EvaluationConfig.from_dict(None)
         assert "faithfulness" in cfg.metrics
         assert cfg.num_runs == 3
+        assert cfg.run_config.timeout == 600
+        assert cfg.run_config.max_retries == 2
+        assert cfg.run_config.max_wait == 60
+        assert cfg.run_config.max_workers == 2
+
+    def test_evaluation_config_run_config_override(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {
+                "run_config": {
+                    "timeout": 900,
+                    "max_retries": 3,
+                    "max_wait": 45,
+                    "max_workers": 2,
+                }
+            }
+        )
+        assert cfg.run_config.timeout == 900
+        assert cfg.run_config.max_retries == 3
+        assert cfg.run_config.max_wait == 45
+        assert cfg.run_config.max_workers == 2
 
     def test_indexing_config_sources(self) -> None:
         cfg = IndexingConfig.from_dict(
@@ -360,4 +380,20 @@ class TestValidateConfig:
         cfg = self._make_valid_config()
         cfg.query.retrieval.top_k_final = -1
         with pytest.raises(ConfigValidationError, match="top_k_final must be > 0"):
+            validate_config(cfg, registry)
+
+    def test_evaluation_run_config_timeout_must_be_positive(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.run_config.timeout = 0
+        with pytest.raises(
+            ConfigValidationError, match=r"evaluation\.run_config\.timeout"
+        ):
+            validate_config(cfg, registry)
+
+    def test_evaluation_run_config_max_workers_must_be_positive(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.run_config.max_workers = 0
+        with pytest.raises(
+            ConfigValidationError, match=r"evaluation\.run_config\.max_workers"
+        ):
             validate_config(cfg, registry)
