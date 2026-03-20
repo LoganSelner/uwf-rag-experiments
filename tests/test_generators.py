@@ -1,4 +1,4 @@
-"""Tests for src/components/generators.py — Ollama and EdenAI generators."""
+"""Tests for src/components/generators.py — Ollama, Google, and EdenAI generators."""
 
 from __future__ import annotations
 
@@ -6,33 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from components.generators import OllamaGenerator, _is_retryable
+from components.generators import GoogleGenerator, OllamaGenerator
 from core.types import GenerationResult
-
-# -----------------------------------------------------------------------
-# _is_retryable
-# -----------------------------------------------------------------------
-
-
-class TestIsRetryable:
-    def test_network_error_retryable(self) -> None:
-        assert _is_retryable(OSError("Connection refused")) is True
-
-    def test_runtime_error_retryable(self) -> None:
-        assert _is_retryable(RuntimeError("500 Internal Server Error")) is True
-
-    def test_type_error_not_retryable(self) -> None:
-        assert _is_retryable(TypeError("bad type")) is False
-
-    def test_value_error_not_retryable(self) -> None:
-        assert _is_retryable(ValueError("bad value")) is False
-
-    def test_key_error_not_retryable(self) -> None:
-        assert _is_retryable(KeyError("missing")) is False
-
-    def test_attribute_error_not_retryable(self) -> None:
-        assert _is_retryable(AttributeError("no attr")) is False
-
 
 # -----------------------------------------------------------------------
 # OllamaGenerator
@@ -111,6 +86,156 @@ class TestOllamaGenerator:
             llm={"model_name": "m", "temperature": 0.0, "max_tokens": 256}
         )
         assert gen._max_tokens == 256
+
+
+# -----------------------------------------------------------------------
+# GoogleGenerator
+# -----------------------------------------------------------------------
+
+
+class TestGoogleGenerator:
+    def _make_generator(self, **overrides: object) -> GoogleGenerator:
+        config: dict = {
+            "llm": {"model_name": "gemini-2.0-flash", "temperature": 0.0},
+            **overrides,
+        }
+        return GoogleGenerator(config)
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_config_defaults(self, mock_client_cls: MagicMock) -> None:
+        gen = GoogleGenerator()
+        assert gen._model == ""
+        assert gen._temperature == 0.0
+        assert gen._max_tokens is None
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_string_prompt(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.text = "The answer is 42."
+        mock_response.usage_metadata = None
+        mock_client.models.generate_content.return_value = mock_response
+
+        gen = self._make_generator()
+        result = gen.generate("What is the answer?")
+
+        assert isinstance(result, GenerationResult)
+        assert result.answer == "The answer is 42."
+        # String prompt should produce a single user content part
+        call_args = mock_client.models.generate_content.call_args
+        contents = call_args.kwargs["contents"]
+        assert len(contents) == 1
+        assert contents[0].role == "user"
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_message_list_prompt(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.text = "Response"
+        mock_response.usage_metadata = None
+        mock_client.models.generate_content.return_value = mock_response
+
+        gen = self._make_generator()
+        messages = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello!"},
+            {"role": "user", "content": "How are you?"},
+        ]
+        gen.generate(messages)
+
+        call_args = mock_client.models.generate_content.call_args
+        contents = call_args.kwargs["contents"]
+        assert len(contents) == 3
+        # "assistant" should be mapped to "model"
+        assert contents[1].role == "model"
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_system_instruction_extracted(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.text = "Response"
+        mock_response.usage_metadata = None
+        mock_client.models.generate_content.return_value = mock_response
+
+        gen = self._make_generator()
+        messages = [
+            {"role": "system", "content": "Be helpful."},
+            {"role": "user", "content": "Hi"},
+        ]
+        gen.generate(messages)
+
+        call_args = mock_client.models.generate_content.call_args
+        contents = call_args.kwargs["contents"]
+        # System message should NOT be in contents
+        assert len(contents) == 1
+        assert contents[0].role == "user"
+        # System instruction should be in config
+        config = call_args.kwargs["config"]
+        assert config.system_instruction == "Be helpful."
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_metadata_populated(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.text = "ans"
+        mock_usage = MagicMock()
+        mock_usage.prompt_token_count = 10
+        mock_usage.candidates_token_count = 20
+        mock_response.usage_metadata = mock_usage
+        mock_client.models.generate_content.return_value = mock_response
+
+        gen = self._make_generator()
+        result = gen.generate("Q?")
+
+        assert result.metadata["model"] == "gemini-2.0-flash"
+        assert result.metadata["provider"] == "google"
+        assert result.metadata["prompt_tokens"] == 10
+        assert result.metadata["completion_tokens"] == 20
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_api_error_raises_runtime(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.side_effect = OSError("Connection refused")
+
+        gen = self._make_generator()
+        with pytest.raises(RuntimeError, match="Google API call failed"):
+            gen.generate("Q?")
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "", "GEMINI_API_KEY": ""}, clear=False)
+    @patch("google.genai.Client")
+    def test_missing_api_key_raises(self, mock_client_cls: MagicMock) -> None:
+        with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+            GoogleGenerator()
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=False)
+    @patch("google.genai.Client")
+    def test_max_tokens_passed(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.text = "ans"
+        mock_response.usage_metadata = None
+        mock_client.models.generate_content.return_value = mock_response
+
+        gen = self._make_generator(
+            llm={"model_name": "m", "temperature": 0.0, "max_tokens": 256}
+        )
+        gen.generate("Q?")
+
+        call_args = mock_client.models.generate_content.call_args
+        config = call_args.kwargs["config"]
+        assert config.max_output_tokens == 256
 
 
 # -----------------------------------------------------------------------

@@ -1,11 +1,18 @@
 # Base experiment config — all experiments inherit from this.
 #
-# This defines the default baseline: recursive_langchain chunking, bge-m3
-# embeddings, FAISS vectorstore, dense retrieval, Ollama generation.
-# Experiment configs override only the variables they're testing.
+# This is the canonical local baseline:
+#   - recursive_langchain chunking
+#   - BAAI/bge-m3 embeddings
+#   - FAISS vector store
+#   - dense retrieval
+#   - passthrough query transform
+#   - Ollama qwen3:32b generation
+#   - Ollama qwen3:32b evaluation judge
+#
+# Experiment configs should override only the variables they are testing.
 
 name: "baseline"
-description: "Default baseline configuration"
+description: "Local baseline: bge-m3 + FAISS + qwen3:32b"
 pipeline_mode: "linear"
 
 indexing:
@@ -50,8 +57,9 @@ query:
 
   generation_llm:
     provider: "ollama"
-    model_name: "qwen2.5:32b"
+    model_name: "qwen3:32b"
     temperature: 0.0
+    max_tokens: 1024
 
   prompt:
     type: "chat"
@@ -79,5 +87,5 @@ evaluation:
   num_runs: 3
   evaluator_llm:
     provider: "ollama"
-    model_name: "qwen2.5:32b"
+    model_name: "qwen3:32b"
     temperature: 0.0

@@ -1,12 +1,22 @@
-"""Tests for src/components/vectorstores.py — FAISS vector store."""
+"""Tests for src/components/vectorstores.py — FAISS and Chroma vector stores."""
 
 from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+import uuid
 
 import numpy as np
 import pytest
 
-from components.vectorstores import FAISSVectorStore
+from components.vectorstores import ChromaVectorStore, FAISSVectorStore
 from core.types import Chunk, EmbeddedChunk, RetrievedChunk
+
+
+def _unique_chroma(**overrides: object) -> ChromaVectorStore:
+    """Create a ChromaVectorStore with a unique collection name to avoid
+    in-process state leaking between tests."""
+    config: dict = {"collection_name": f"test_{uuid.uuid4().hex[:12]}", **overrides}
+    return ChromaVectorStore(config)
 
 
 def _make_embedded_chunks(n: int, dim: int = 8) -> list[EmbeddedChunk]:
@@ -151,3 +161,200 @@ class TestFAISSVectorStore:
     def test_invalid_metric_raises(self) -> None:
         with pytest.raises(ValueError, match="metric must be one of"):
             FAISSVectorStore({"metric": "invalid"})
+
+
+# -----------------------------------------------------------------------
+# ChromaVectorStore
+# -----------------------------------------------------------------------
+
+
+class TestChromaVectorStore:
+    def test_add_and_search_basic(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        chunks = _make_embedded_chunks(5)
+        store.add(chunks)
+        results = store.search(chunks[0].embedding, top_k=3)
+        assert len(results) == 3
+        assert all(isinstance(r, RetrievedChunk) for r in results)
+
+    def test_search_empty_store(self) -> None:
+        store = _unique_chroma()
+        results = store.search([0.1] * 8, top_k=3)
+        assert results == []
+
+    def test_search_top_k_limits_results(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(10))
+        results = store.search([0.1] * 8, top_k=2)
+        assert len(results) == 2
+
+    def test_search_top_k_exceeds_total(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(3))
+        results = store.search([0.1] * 8, top_k=10)
+        assert len(results) == 3
+
+    def test_cosine_metric_scores(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(5))
+        results = store.search([0.1] * 8, top_k=5)
+        for r in results:
+            assert isinstance(r.score, float)
+
+    def test_l2_metric_constructor(self) -> None:
+        store = _unique_chroma(metric="l2")
+        store.add(_make_embedded_chunks(3))
+        results = store.search([0.1] * 8, top_k=2)
+        assert len(results) == 2
+
+    def test_filtered_search_matches(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(5))
+        results = store.search([0.1] * 8, top_k=5, filters={"page_number": 1})
+        assert all(r.chunk.metadata["page_number"] == 1 for r in results)
+
+    def test_filtered_search_no_match(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(5))
+        results = store.search([0.1] * 8, top_k=5, filters={"page_number": 999})
+        assert results == []
+
+    def test_add_empty_list_noop(self) -> None:
+        store = _unique_chroma()
+        store.add([])  # should not crash
+
+    def test_save_and_load_roundtrip(self, tmp_path: str) -> None:
+        col_name = f"test_{uuid.uuid4().hex[:12]}"
+        store = ChromaVectorStore({"metric": "cosine", "collection_name": col_name})
+        chunks = _make_embedded_chunks(5)
+        store.add(chunks)
+
+        save_dir = str(tmp_path) + "/chroma_save"
+        store.save(save_dir)
+        loaded = ChromaVectorStore({"metric": "cosine", "collection_name": col_name})
+        loaded.load(save_dir)
+
+        results = loaded.search(chunks[0].embedding, top_k=3)
+        assert len(results) == 3
+        assert results[0].chunk.chunk_id == chunks[0].chunk.chunk_id
+
+    def test_add_incremental(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        batch1 = _make_embedded_chunks(3)
+        batch2 = []
+        rng = np.random.default_rng(99)
+        for i in range(2):
+            c = Chunk(
+                content=f"Extra {i}",
+                chunk_id=f"extra_{i}",
+                metadata={"source_name": "test", "page_number": i + 10},
+            )
+            vec = rng.standard_normal(8).tolist()
+            batch2.append(EmbeddedChunk(chunk=c, embedding=vec))
+        store.add(batch1)
+        store.add(batch2)
+        results = store.search([0.1] * 8, top_k=10)
+        assert len(results) == 5
+
+    def test_score_ordering(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(10))
+        results = store.search([0.1] * 8, top_k=5)
+        scores = [r.score for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_add_splits_upserts_by_max_batch_size(self) -> None:
+        store = _unique_chroma(metric="cosine")
+        chunks = _make_embedded_chunks(7)
+        expected_ids = [chunk.chunk.chunk_id for chunk in chunks]
+
+        store._client.get_max_batch_size = MagicMock(return_value=3)  # type: ignore[method-assign]
+        store._collection.upsert = MagicMock(wraps=store._collection.upsert)  # type: ignore[method-assign]
+
+        store.add(chunks)
+
+        assert store._collection.upsert.call_count == 3
+        batch_sizes = [
+            len(call.kwargs["ids"]) for call in store._collection.upsert.call_args_list
+        ]
+        assert batch_sizes == [3, 3, 1]
+        seen_ids = [
+            chunk_id
+            for call in store._collection.upsert.call_args_list
+            for chunk_id in call.kwargs["ids"]
+        ]
+        assert seen_ids == expected_ids
+
+    @patch("chromadb.PersistentClient")
+    def test_save_splits_upserts_by_max_batch_size(
+        self, mock_persistent_cls: MagicMock, tmp_path: str
+    ) -> None:
+        store = _unique_chroma(metric="cosine")
+        chunks = _make_embedded_chunks(7)
+        expected_ids = [chunk.chunk.chunk_id for chunk in chunks]
+        store.add(chunks)
+
+        mock_persistent = MagicMock()
+        mock_persistent.get_max_batch_size.return_value = 3
+        mock_collection = MagicMock()
+        mock_persistent.create_collection.return_value = mock_collection
+        mock_persistent_cls.return_value = mock_persistent
+
+        store.save(str(tmp_path / "chroma_save"))
+
+        assert mock_collection.upsert.call_count == 3
+        batch_sizes = [
+            len(call.kwargs["ids"]) for call in mock_collection.upsert.call_args_list
+        ]
+        assert batch_sizes == [3, 3, 1]
+        seen_ids = [
+            chunk_id
+            for call in mock_collection.upsert.call_args_list
+            for chunk_id in call.kwargs["ids"]
+        ]
+        assert seen_ids == expected_ids
+
+    @patch("chromadb.PersistentClient")
+    def test_save_deletes_existing_collection_before_creating(
+        self, mock_persistent_cls: MagicMock, tmp_path: str
+    ) -> None:
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(2))
+
+        mock_persistent = MagicMock()
+        mock_persistent.create_collection.return_value = MagicMock()
+        mock_persistent_cls.return_value = mock_persistent
+
+        store.save(str(tmp_path / "chroma_save"))
+
+        mock_persistent.delete_collection.assert_called_once_with(
+            name=store._collection_name
+        )
+        mock_persistent.create_collection.assert_called_once()
+
+    @patch("chromadb.PersistentClient")
+    def test_save_handles_missing_collection_on_first_save(
+        self, mock_persistent_cls: MagicMock, tmp_path: str
+    ) -> None:
+        import chromadb.errors
+
+        store = _unique_chroma(metric="cosine")
+        store.add(_make_embedded_chunks(2))
+
+        mock_persistent = MagicMock()
+        mock_persistent.delete_collection.side_effect = chromadb.errors.NotFoundError(
+            "not found"
+        )
+        mock_persistent.get_max_batch_size.return_value = 5000
+        mock_collection = MagicMock()
+        mock_persistent.create_collection.return_value = mock_collection
+        mock_persistent_cls.return_value = mock_persistent
+
+        store.save(str(tmp_path / "chroma_save"))
+
+        mock_persistent.create_collection.assert_called_once()
+        assert mock_collection.upsert.call_count == 1
+
+    def test_invalid_metric_raises(self) -> None:
+        with pytest.raises(ValueError, match="metric must be one of"):
+            ChromaVectorStore({"metric": "invalid"})
