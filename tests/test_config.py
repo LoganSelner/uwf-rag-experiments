@@ -195,6 +195,15 @@ class TestSpecificConfigs:
         assert cfg.run_config.max_wait == 45
         assert cfg.run_config.max_workers == 2
 
+    def test_evaluation_config_run_config_partial_override_preserves_defaults(
+        self,
+    ) -> None:
+        cfg = EvaluationConfig.from_dict({"run_config": {"timeout": 900}})
+        assert cfg.run_config.timeout == 900
+        assert cfg.run_config.max_retries == 2
+        assert cfg.run_config.max_wait == 60
+        assert cfg.run_config.max_workers == 2
+
     def test_indexing_config_sources(self) -> None:
         cfg = IndexingConfig.from_dict(
             {

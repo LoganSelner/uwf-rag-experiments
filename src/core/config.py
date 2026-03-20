@@ -222,7 +222,7 @@ class EvalRunConfig:
             timeout=data.get("timeout", 600),
             max_retries=data.get("max_retries", 2),
             max_wait=data.get("max_wait", 60),
-            max_workers=data.get("max_workers", 1),
+            max_workers=data.get("max_workers", 2),
         )
 
 
