@@ -201,6 +201,32 @@ class MemoryConfig:
 
 
 # ---------------------------------------------------------------------------
+# Evaluation run config
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EvalRunConfig:
+    """Execution settings for the RAGAS evaluator."""
+
+    timeout: int = 600
+    max_retries: int = 2
+    max_wait: int = 60
+    max_workers: int = 2
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> EvalRunConfig:
+        if not data:
+            return cls()
+        return cls(
+            timeout=data.get("timeout", 600),
+            max_retries=data.get("max_retries", 2),
+            max_wait=data.get("max_wait", 60),
+            max_workers=data.get("max_workers", 2),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Source config (per-document ingest settings)
 # ---------------------------------------------------------------------------
 
@@ -381,6 +407,7 @@ class EvaluationConfig:
         ]
     )
     num_runs: int = 3
+    run_config: EvalRunConfig = field(default_factory=EvalRunConfig)
     evaluator_llm: LLMConfig = field(default_factory=LLMConfig)
 
     @classmethod
@@ -408,6 +435,7 @@ class EvaluationConfig:
                 ],
             ),
             num_runs=data.get("num_runs", 3),
+            run_config=EvalRunConfig.from_dict(data.get("run_config")),
             evaluator_llm=LLMConfig.from_dict(data.get("evaluator_llm")),
         )
 
@@ -517,6 +545,28 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
     # --- Indexing components (always validated) ---
     if not config.indexing.sources:
         errors.append("indexing.sources is empty — at least one source is required")
+
+    # --- Evaluation run config ---
+    if config.evaluation.run_config.timeout <= 0:
+        errors.append(
+            f"evaluation.run_config.timeout must be > 0 "
+            f"(got {config.evaluation.run_config.timeout})"
+        )
+    if config.evaluation.run_config.max_workers <= 0:
+        errors.append(
+            f"evaluation.run_config.max_workers must be > 0 "
+            f"(got {config.evaluation.run_config.max_workers})"
+        )
+    if config.evaluation.run_config.max_wait <= 0:
+        errors.append(
+            f"evaluation.run_config.max_wait must be > 0 "
+            f"(got {config.evaluation.run_config.max_wait})"
+        )
+    if config.evaluation.run_config.max_retries < 0:
+        errors.append(
+            f"evaluation.run_config.max_retries must be >= 0 "
+            f"(got {config.evaluation.run_config.max_retries})"
+        )
 
     for i, source in enumerate(config.indexing.sources):
         _check_registered(

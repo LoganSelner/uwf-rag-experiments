@@ -73,6 +73,27 @@ class TestActiveMetrics:
         assert "faithfulness" not in metrics
 
 
+class TestMakeRunConfig:
+    def test_uses_evaluation_run_config_settings(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {
+                "run_config": {
+                    "timeout": 900,
+                    "max_retries": 3,
+                    "max_wait": 45,
+                    "max_workers": 2,
+                }
+            }
+        )
+        evaluator = Evaluator(cfg)
+        run_config = evaluator._make_run_config()
+
+        assert run_config.timeout == 900
+        assert run_config.max_retries == 3
+        assert run_config.max_wait == 45
+        assert run_config.max_workers == 2
+
+
 # -----------------------------------------------------------------------
 # Evaluator._aggregate_metrics
 # -----------------------------------------------------------------------

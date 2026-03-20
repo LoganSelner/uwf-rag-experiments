@@ -251,7 +251,7 @@ class Evaluator:
             per_sample_scores: one dict per sample with individual
             metric scores.  NaN values are converted to None.
         """
-        from ragas import EvaluationDataset, RunConfig, evaluate
+        from ragas import EvaluationDataset, evaluate
         from ragas.dataset_schema import SingleTurnSample
 
         metric_map = _build_metric_map()
@@ -273,7 +273,7 @@ class Evaluator:
         ]
 
         eval_kwargs: dict[str, Any] = {
-            "run_config": RunConfig(timeout=300),
+            "run_config": self._make_run_config(),
         }
 
         if (
@@ -321,6 +321,18 @@ class Evaluator:
             per_sample.append(sample_scores)
 
         return result_dict, per_sample
+
+    def _make_run_config(self) -> Any:
+        """Build a RAGAS RunConfig from evaluation settings."""
+        from ragas import RunConfig
+
+        cfg = self._config.run_config
+        return RunConfig(
+            timeout=cfg.timeout,
+            max_retries=cfg.max_retries,
+            max_wait=cfg.max_wait,
+            max_workers=cfg.max_workers,
+        )
 
     def _build_evaluator_llm(self) -> Any:
         """Build a RAGAS-compatible LLM from config.
