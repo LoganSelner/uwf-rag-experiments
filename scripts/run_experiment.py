@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 import sys
 
+from dotenv import load_dotenv
+
 # Add src/ to path for bare imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -62,6 +64,10 @@ def main() -> None:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    # Load environment variables from .env before any component
+    # needs them (API keys, etc.).
+    load_dotenv()
 
     # Load and validate config — catches typos and constraint
     # violations before any heavyweight work (model loading, etc.).

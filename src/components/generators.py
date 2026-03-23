@@ -132,9 +132,6 @@ class GoogleGenerator(BaseGenerator):
         self._temperature: float = llm.get("temperature", 0.0)
         self._max_tokens: int | None = llm.get("max_tokens")
 
-        from dotenv import load_dotenv
-
-        load_dotenv()
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get(
             "GEMINI_API_KEY", ""
         )
@@ -243,9 +240,6 @@ class EdenAIGenerator(BaseGenerator):
                 "Set it via generation.params.sub_provider in YAML."
             )
 
-        from dotenv import load_dotenv
-
-        load_dotenv()
         api_key = os.environ.get("EDENAI_API_KEY", "")
         if not api_key:
             raise ValueError(
