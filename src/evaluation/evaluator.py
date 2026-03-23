@@ -356,12 +356,10 @@ class Evaluator:
         if llm_config.provider == "edenai":
             import os
 
-            from dotenv import load_dotenv
             from langchain_community.chat_models.edenai import (
                 ChatEdenAI,
             )
 
-            load_dotenv()
             api_key = os.environ.get("EDENAI_API_KEY", "")
             if not api_key:
                 raise ValueError(
