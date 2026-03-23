@@ -3,7 +3,7 @@
 > Forward-looking plan for the argobot-bench experimentation framework.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 >
-> **Last updated:** 2026-03-19
+> **Last updated:** 2026-03-23
 
 ---
 
@@ -89,16 +89,20 @@ behind `BaseEmbedder`), vectorstore (`faiss-cpu` behind
 
 ### Infrastructure Completed
 
-- Config system with YAML inheritance, index fingerprinting,
-  upfront validation
+- Config system with YAML inheritance, cycle detection, index
+  fingerprinting, and upfront validation
 - Linear query pipeline with prompt → generator wiring
 - Index caching by SHA-256 fingerprint
 - RAGAS evaluation with multi-run aggregation (mean ± std)
+- Configurable RAGAS execution settings (`EvalRunConfig`:
+  timeout, retries, workers)
 - Experiment result saving (summary.json + config.yaml + JSONL)
 - Cross-experiment comparison with config diffing
 - CI pipeline (ruff + mypy + pytest), pre-commit, Makefile
 - Agent pipeline stub (raises `NotImplementedError`)
 - Git SHA tracking for reproducibility
+- Centralized `.env` loading at application boundary
+  (`scripts/run_experiment.py`)
 
 ---
 
@@ -177,9 +181,13 @@ and further evaluation are planned.
 ## 5. Replication Configs
 
 These YAML configs recreate each version using our framework.
-Components marked *(new)* require implementation.
+Components marked *(Phase 3B)* or *(Phase 4A)* require
+implementation in the corresponding phase. All v1 components
+are implemented.
 
 ### v1 Config
+
+All components available now. Ready to run.
 
 ```yaml
 pipeline_mode: "linear"
@@ -199,6 +207,9 @@ indexing:
 query:
   query_transform:
     type: "contextualizer"
+    params:
+      generator_type: "google"
+      llm: { model_name: "gemini-1.0-pro", temperature: 0.0 }
   retrieval:
     type: "dense"
     top_k_retrieve: 3
@@ -221,6 +232,9 @@ evaluation:
 
 ### v2 Config
 
+Requires Phase 3B (OpenAI/EdenAI embedder, tools) and
+Phase 4A (agent pipeline).
+
 ```yaml
 pipeline_mode: "agent"
 indexing:
@@ -232,10 +246,13 @@ indexing:
     type: "recursive_langchain"
     params: { chunk_size: 1200, chunk_overlap: 200 }
   embedding:
-    type: "openai"                             # (new)
+    type: "openai"                             # (Phase 3B)
     params: { model_name: "text-embedding-ada-002" }
+    # Alternative for EdenAI users:
+    # type: "edenai"                           # (Phase 3B)
+    # params: { provider: "openai" }
   vectorstore:
-    type: "chroma"                             # (new)
+    type: "chroma"
 agent:
   mode: "single"
   llm:
@@ -252,8 +269,8 @@ agent:
         type: "chat"
         use_chain_of_thought: true
   tools:
-    - { name: "web_search", type: "tool", tool: "serper_search" }  # (new)
-    - { name: "email", type: "tool", tool: "gmail_mock" }          # (new)
+    - { name: "web_search", type: "tool", tool: "serper_search" }  # (Phase 3B)
+    - { name: "email", type: "tool", tool: "gmail_mock" }          # (Phase 3B)
 evaluation:
   dataset: "data/datasets/18q_handbook.jsonl"
 ```
@@ -293,9 +310,11 @@ be run before. Phases are ordered by research value.
       explaining expected file formats and placement
 - [x] Update `.gitignore` to track directory READMEs while
       ignoring contents
-- [x] Move presentation concerns (`METRIC_SHORT_NAMES`,
-      `format_comparison_table`, `resolve_metric_name`) from
-      `src/evaluation/comparison.py` to `scripts/compare.py`
+- [x] Evaluated moving presentation concerns from
+      `src/evaluation/comparison.py` to `scripts/compare.py`;
+      decided to keep current separation — the library module
+      provides both data access and formatting for multiple
+      consumers (CLI, notebooks, future tools)
 - [x] Add LangChain-backed chunker as `"recursive_langchain"`;
       custom kept as `"recursive_custom"` for A/B comparison
 
@@ -315,6 +334,44 @@ reproduce the paper's RAGAS scores.
 **Milestone:** Can run `configs/experiments/v1_replication.yaml`
 and compare scores against the paper's Table 2.
 
+### Evaluator Improvements (before Phase 3B)
+
+Goal: Complete the evaluator's provider support and add a
+dedicated evaluation embedder so cross-experiment comparisons
+use a consistent measurement instrument.
+
+| # | Item | Details |
+|---|------|---------|
+| E1 | Add `"google"` provider to `_build_evaluator_llm()` | Uses `langchain-google-genai` `ChatGoogleGenerativeAI`. Completes the Google stack — experiments can run 100% Google with no Ollama dependency. |
+| E2 | Add required `evaluator_embedding` config to `EvaluationConfig` | A `ComponentConfig` block (type + params) that builds a dedicated embedder for RAGAS via the registry. Decouples evaluation embeddings from pipeline embeddings. |
+| E3 | Build evaluator embedder from registry in `Evaluator` | Replace the current `embedder=` passthrough with registry-based construction from `evaluator_embedding` config. The evaluator builds its own embedder instance, independent of the pipeline. |
+| E4 | Add evaluator provider validation to `validate_config()` | Check that `evaluator_llm.provider` is one of the supported values (`"ollama"`, `"edenai"`, `"google"`) and that `evaluator_embedding.type` is registered. |
+
+**Why a required evaluator embedder:** RAGAS uses embeddings for
+metrics like `answer_similarity` and `answer_relevancy`. When
+comparing experiments that use different pipeline embedders
+(bge-m3 vs ada-002 vs Google embeddings), a fixed evaluation
+embedder eliminates a confounding variable. Every experiment is
+measured with the same yardstick.
+
+**Config shape:**
+
+```yaml
+evaluation:
+  evaluator_llm:
+    provider: "ollama"
+    model_name: "qwen3:32b"
+  evaluator_embedding:
+    type: "huggingface"
+    params:
+      model_name: "BAAI/bge-m3"
+      normalize: true
+```
+
+**Milestone:** All current providers (Ollama, EdenAI, Google)
+are supported for evaluation LLM. Evaluation embeddings are
+explicitly configured and consistent across experiments.
+
 ### Phase 3B — v2 Component Prerequisites
 
 Goal: Build the tools and model integrations v2 needs, testable
@@ -323,9 +380,16 @@ independently before the agent loop is implemented.
 | # | Component | Registry | Interface | Library |
 |---|-----------|----------|-----------|---------|
 | 6 | OpenAI embeddings | `openai` | `BaseEmbedder` | `openai` |
-| 7 | OpenAI generator | `openai` | `BaseGenerator` | `openai` |
-| 8 | Serper web search tool | `serper_search` | `BaseTool` | `requests` |
-| 9 | Gmail mock tool | `gmail_mock` | `BaseTool` | Custom (logs, no real send) |
+| 7 | EdenAI embeddings | `edenai` | `BaseEmbedder` | `langchain-community` `EdenAiEmbeddings` |
+| 8 | OpenAI generator | `openai` | `BaseGenerator` | `openai` |
+| 9 | Serper web search tool | `serper_search` | `BaseTool` | `requests` |
+| 10 | Gmail mock tool | `gmail_mock` | `BaseTool` | Custom (logs, no real send) |
+
+The EdenAI embedder provides access to OpenAI embeddings
+(and other providers) through the EdenAI gateway. Users
+with direct OpenAI API keys use the `"openai"` embedder;
+users with only an EdenAI key use `"edenai"` with
+`provider: "openai"` to get the same ada-002 vectors.
 
 **Milestone:** All v2 model/tool components are registered,
 tested, and usable in linear pipeline experiments. OpenAI
@@ -339,10 +403,10 @@ All work within the existing linear pipeline.
 
 | # | Component | Registry | Interface | Library |
 |---|-----------|----------|-----------|---------|
-| 10 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` CrossEncoder |
-| 11 | HyDE query transformer | `hyde` | `BaseQueryTransformer` | Custom (LLM generates hypothetical doc) |
-| 12 | Multi-query transformer | `multi_query` | `BaseQueryTransformer` | Custom (LLM generates N query variants) |
-| 13 | Semantic chunker | `semantic` | `BaseChunker` | `langchain-experimental` SemanticChunker |
+| 11 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` CrossEncoder |
+| 12 | HyDE query transformer | `hyde` | `BaseQueryTransformer` | Custom (LLM generates hypothetical doc) |
+| 13 | Multi-query transformer | `multi_query` | `BaseQueryTransformer` | Custom (LLM generates N query variants) |
+| 14 | Semantic chunker | `semantic` | `BaseChunker` | `langchain-experimental` SemanticChunker |
 
 **Milestone:** Can run a matrix of experiments: baseline ×
 {with/without reranker} × {passthrough/HyDE/multi-query} ×
@@ -356,8 +420,8 @@ Goal: Implement the ReAct loop in `AgentPipeline` for
 
 | # | Component | Location | Notes |
 |---|-----------|----------|-------|
-| 14 | ReAct agent loop | `pipeline/agent.py` | Single LLM decides tool → executes → observes → decides again |
-| 15 | RAG tool wrapper | `pipeline/agent.py` or `components/tools.py` | Wraps a mini QueryPipeline as a tool |
+| 15 | ReAct agent loop | `pipeline/agent.py` | Single LLM decides tool → executes → observes → decides again |
+| 16 | RAG tool wrapper | `pipeline/agent.py` or `components/tools.py` | Wraps a mini QueryPipeline as a tool |
 
 The agent receives a query, decides which tool to use (RAG,
 web search, email), executes it, observes the result, and either
@@ -380,8 +444,8 @@ Support v3 comparison.
 
 | # | Component | Location | Notes |
 |---|-----------|----------|-------|
-| 16 | Supervisor routing | `pipeline/agent.py` | LLM-based routing to specialized agents |
-| 17 | Agent roster management | `pipeline/agent.py` | Per-agent QueryPipelines with source filters |
+| 17 | Supervisor routing | `pipeline/agent.py` | LLM-based routing to specialized agents |
+| 18 | Agent roster management | `pipeline/agent.py` | Per-agent QueryPipelines with source filters |
 
 The supervisor uses its own LLM (`agent.supervisor.llm`) to
 decide which agent handles each query. Each agent has its own
@@ -398,11 +462,11 @@ Goal: Research extensions beyond replication.
 
 | # | Component | Notes |
 |---|-----------|-------|
-| 18 | BM25 retriever | `rank-bm25`, for hybrid dense+sparse retrieval |
-| 19 | Hybrid retriever | Combines dense + BM25 with score fusion |
-| 20 | ColBERT reranker | Late interaction model |
-| 21 | Multi-turn session evaluator | Exercises memory across ordered turn sequences |
-| 22 | Additional embedding models | nomic-embed, GTE, OpenAI ada-002 variants |
+| 19 | BM25 retriever | `rank-bm25`, for hybrid dense+sparse retrieval |
+| 20 | Hybrid retriever | Combines dense + BM25 with score fusion |
+| 21 | ColBERT reranker | Late interaction model |
+| 22 | Multi-turn session evaluator | Exercises memory across ordered turn sequences |
+| 23 | Additional embedding models | nomic-embed, GTE, OpenAI ada-002 variants |
 
 ---
 
@@ -473,6 +537,9 @@ to its config location. All are independently isolatable.
 | Metric selection | `evaluation.metrics` |
 | Number of runs | `evaluation.num_runs` |
 | Evaluator LLM | `evaluation.evaluator_llm` |
+| Evaluator embedding | `evaluation.evaluator_embedding` |
+| Eval timeout | `evaluation.run_config.timeout` |
+| Eval workers | `evaluation.run_config.max_workers` |
 
 ---
 
@@ -540,7 +607,7 @@ during rapid iteration.
 
 ## 9. Dependencies by Phase
 
-### Current (Phases 1–2)
+### Current (Phases 1–3A)
 
 ```
 pyyaml                    Config loading
@@ -552,17 +619,18 @@ ragas                     Evaluation metrics (pinned 0.4.x)
 datasets                  RAGAS transitive dependency
 python-dotenv             API key management
 rich                      CLI table rendering
-langchain-community       EdenAI LLM wrapper
+langchain-community       EdenAI LLM/embeddings wrapper
 langchain-ollama          Ollama LLM wrapper
 tenacity                  Retry logic for API calls
-```
-
-### Phase 3A additions
-
-```
-chromadb                  Alternative vectorstore
-google-genai              Gemini + Google embeddings
+chromadb                  ChromaDB vectorstore
+google-genai              Gemini generation + Google embeddings
 langchain-text-splitters  LangChain recursive chunker
+```
+
+### Evaluator improvements additions
+
+```
+langchain-google-genai    Google evaluator LLM (ChatGoogleGenerativeAI)
 ```
 
 ### Phase 3B additions
