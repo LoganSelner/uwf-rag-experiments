@@ -6,7 +6,7 @@
 extends: ../base.yaml
 
 name: "hf_faiss_contextualizer"
-description: "Local baseline plus qwen3:32b contextualizer query transform"
+description: "Local baseline plus qwen3:14b contextualizer query transform"
 
 query:
   query_transform:
@@ -14,5 +14,5 @@ query:
     params:
       generator_type: "ollama"
       llm:
-        model_name: "qwen3:32b"
+        model_name: "qwen3:14b"
         temperature: 0.0

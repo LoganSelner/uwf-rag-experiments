@@ -6,12 +6,12 @@
 #   - contextualizer query transform powered by Gemini
 #   - Gemini answer generation
 #
-# The evaluator stays fixed to local qwen3:32b so the judge is consistent
+# The evaluator stays fixed to local qwen3:14b so the judge is consistent
 # across experiments.
 #
 # Prerequisites:
 #   1. Set GOOGLE_API_KEY in .env or your shell environment
-#   2. Ensure Ollama is running locally with qwen3:32b available for evaluation
+#   2. Ensure Ollama is running locally with qwen3:14b available for evaluation
 #
 # Usage:
 #   python scripts/run_experiment.py configs/experiments/google_chroma_contextualizer.yaml -v
