@@ -109,13 +109,14 @@ src/
 │   ├── base.py           Abstract base classes (read-only contract)
 │   ├── defaults.py       Passthrough/no-op defaults (always available)
 │   ├── ingestors.py      PDFIngestor (PyMuPDF)
-│   ├── chunkers.py       RecursiveChunker
-│   ├── embedders.py      HuggingFaceEmbedder (sentence-transformers)
-│   ├── vectorstores.py   FAISSVectorStore
+│   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker
+│   ├── embedders.py      HuggingFaceEmbedder, GoogleEmbedder
+│   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
 │   ├── retrievers.py     DenseRetriever
-│   ├── generators.py     OllamaGenerator, EdenAIGenerator
+│   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator
 │   ├── prompts.py        ChatPromptTemplate
-│   ├── rerankers.py      (stub — Phase 3)
+│   ├── query_transforms.py  ContextualizerQueryTransformer
+│   ├── rerankers.py      (stub — Phase 3C)
 │   ├── tools.py          (stub — Phase 4)
 │   └── __init__.py       Imports all implementation files → triggers registration
 │
@@ -132,8 +133,7 @@ src/
 
 configs/
 ├── base.yaml              Default baseline (all experiments inherit)
-└── experiments/
-    └── edenai_baseline.yaml   Example: overrides generation to use Eden AI
+└── experiments/            Per-experiment overrides (inherit from base)
 
 scripts/
 ├── run_experiment.py      CLI entry point for running experiments
@@ -286,7 +286,8 @@ ExperimentConfig
 └── EvaluationConfig
     ├── dataset, mode, num_runs
     ├── metrics, retrieval_only_metrics
-    └── evaluator_llm: LLMConfig
+    ├── evaluator_llm: LLMConfig
+    └── run_config: EvalRunConfig    timeout, retries, workers
 ```
 
 ### Dedicated vs Generic Config Types
@@ -297,6 +298,7 @@ ExperimentConfig
 | `PromptConfig` | `system_template`, `use_chain_of_thought`, `citation_style` are each independently testable. |
 | `LLMConfig` | Reused by generator, query transformer, reranker, evaluator, supervisor. Stable shared structure. |
 | `ComponentConfig` | For stages where params are implementation-specific and vary widely (chunkers, embedders, vectorstores). Passed to the implementation as `config: dict`. |
+| `EvalRunConfig` | `timeout`, `max_retries`, `max_wait`, `max_workers` for the RAGAS evaluator. Differs between local and cloud setups. |
 
 ### Inheritance
 
@@ -331,9 +333,12 @@ prompt template, LLM model) never re-index.
 construction (called in `scripts/run_experiment.py`). It checks:
 
 - Every component type referenced in config is registered
-- `top_k_final <= top_k_retrieve`
+- `top_k_final <= top_k_retrieve` and both are positive
 - `pipeline_mode: "agent"` has agents or tools defined
-- `evaluation.mode: "full"` has a generation type set
+- `evaluation.mode: "full"` has a generation type and model name
+- `generation_llm.model_name` is non-empty when generation needed
+- `indexing.sources` is non-empty
+- `EvalRunConfig` values are positive (timeout, workers, wait)
 - Evaluation dataset file exists on disk
 
 All errors are collected into a list and raised as a single
@@ -393,14 +398,19 @@ metadata, and truncates.
 | Category | Name | Class | File |
 |----------|------|-------|------|
 | `ingest` | `pdf` | `PDFIngestor` | `ingestors.py` |
-| `chunking` | `recursive` | `RecursiveChunker` | `chunkers.py` |
+| `chunking` | `recursive_langchain` | `LangChainRecursiveChunker` | `chunkers.py` |
+| `chunking` | `recursive_custom` | `CustomRecursiveChunker` | `chunkers.py` |
 | `embedding` | `huggingface` | `HuggingFaceEmbedder` | `embedders.py` |
+| `embedding` | `google` | `GoogleEmbedder` | `embedders.py` |
 | `vectorstore` | `faiss` | `FAISSVectorStore` | `vectorstores.py` |
+| `vectorstore` | `chroma` | `ChromaVectorStore` | `vectorstores.py` |
 | `retrieval` | `dense` | `DenseRetriever` | `retrievers.py` |
 | `generation` | `ollama` | `OllamaGenerator` | `generators.py` |
 | `generation` | `edenai` | `EdenAIGenerator` | `generators.py` |
+| `generation` | `google` | `GoogleGenerator` | `generators.py` |
 | `prompts` | `chat` | `ChatPromptTemplate` | `prompts.py` |
 | `query_transform` | `passthrough` | `PassthroughQueryTransformer` | `defaults.py` |
+| `query_transform` | `contextualizer` | `ContextualizerQueryTransformer` | `query_transforms.py` |
 | `reranking` | `none` | `NoOpReranker` | `defaults.py` |
 | `memory` | `none` | `NoMemory` | `defaults.py` |
 | `memory` | `buffer_window` | `BufferWindowMemory` | `defaults.py` |
@@ -481,16 +491,23 @@ and cached via `@functools.cache`. The pipeline's embedder is
 reused for RAGAS through an `_EmbedderAdapter` that implements the
 LangChain Embeddings interface — avoids loading a second model.
 
-**Evaluator LLM:** RAGAS needs an LLM judge. Configured via
-`evaluator_llm` in the config. Supports Ollama (local) and EdenAI
-(cloud) providers. Built through `_build_evaluator_llm()` which
-returns a `LangchainLLMWrapper`.
+**Evaluator LLM:** RAGAS needs an LLM judge for most metrics
+(faithfulness, answer_correctness, context_precision, etc.).
+Configured via `evaluator_llm` in the config. Currently supports
+Ollama (local) and EdenAI (cloud) providers. Built through
+`_build_evaluator_llm()` which returns a `LangchainLLMWrapper`.
+
+**Run config:** `EvalRunConfig` controls RAGAS execution settings:
+`timeout` (seconds per evaluation call), `max_retries`,
+`max_wait` (backoff ceiling), `max_workers` (parallel evaluation
+threads). These differ between local Ollama (longer timeout, fewer
+workers) and cloud API (shorter timeout, more workers) setups.
 
 **Aggregation:** Per-metric mean and standard deviation across
-runs. NaN values (RAGAS returns these when the LLM judge fails to
-parse) are filtered before averaging. Metric keys are collected
-from all runs (not just the first), handling the case where
-different runs produce different metric sets.
+runs. NaN and None values (RAGAS returns these when the LLM judge
+fails to parse) are filtered before averaging. Metric keys are
+collected from all runs (not just the first), handling the case
+where different runs produce different metric sets.
 
 ### Results (`evaluation/results.py`)
 
