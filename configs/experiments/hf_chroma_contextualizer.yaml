@@ -1,13 +1,13 @@
 # Local Chroma + contextualizer stack.
 #
 # Combines the two most meaningful local changes relative to the baseline:
-# Chroma for storage/filtering and a qwen3:32b contextualizer for follow-up
+# Chroma for storage/filtering and a qwen3:14b contextualizer for follow-up
 # query rewriting.
 
 extends: ../base.yaml
 
 name: "hf_chroma_contextualizer"
-description: "HuggingFace embeddings + Chroma + qwen3:32b contextualizer"
+description: "HuggingFace embeddings + Chroma + qwen3:14b contextualizer"
 
 indexing:
   vectorstore:
@@ -22,5 +22,5 @@ query:
     params:
       generator_type: "ollama"
       llm:
-        model_name: "qwen3:32b"
+        model_name: "qwen3:14b"
         temperature: 0.0

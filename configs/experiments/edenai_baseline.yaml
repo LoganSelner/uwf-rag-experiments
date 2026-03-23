@@ -2,7 +2,7 @@
 #
 # Keeps the local indexing / retrieval baseline from base.yaml, swaps only the
 # answer generator to Eden AI, and keeps the evaluator fixed to local
-# qwen3:32b for fairer cross-experiment comparisons.
+# qwen3:14b for fairer cross-experiment comparisons.
 #
 # Prerequisites:
 #   1. Set EDENAI_API_KEY in .env or your shell environment
@@ -13,7 +13,7 @@
 extends: ../base.yaml
 
 name: "edenai_baseline"
-description: "Baseline retrieval stack with Eden AI generation and qwen3:32b evaluation"
+description: "Baseline retrieval stack with Eden AI generation and qwen3:14b evaluation"
 
 query:
   generation:

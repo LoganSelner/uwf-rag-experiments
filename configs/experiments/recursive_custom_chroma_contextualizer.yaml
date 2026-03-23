@@ -1,12 +1,12 @@
 # Strongest all-local variant.
 #
 # Combines the custom chunker, Chroma, and contextualized query rewriting
-# while keeping generation and evaluation fixed to qwen3:32b.
+# while keeping generation and evaluation fixed to qwen3:14b.
 
 extends: ../base.yaml
 
 name: "recursive_custom_chroma_contextualizer"
-description: "Custom chunking + Chroma + qwen3:32b contextualizer"
+description: "Custom chunking + Chroma + qwen3:14b contextualizer"
 
 indexing:
   chunking:
@@ -28,5 +28,5 @@ query:
     params:
       generator_type: "ollama"
       llm:
-        model_name: "qwen3:32b"
+        model_name: "qwen3:14b"
         temperature: 0.0

@@ -6,13 +6,13 @@
 #   - FAISS vector store
 #   - dense retrieval
 #   - passthrough query transform
-#   - Ollama qwen3:32b generation
-#   - Ollama qwen3:32b evaluation judge
+#   - Ollama qwen3:14b generation
+#   - Ollama qwen3:14b evaluation judge
 #
 # Experiment configs should override only the variables they are testing.
 
 name: "baseline"
-description: "Local baseline: bge-m3 + FAISS + qwen3:32b"
+description: "Local baseline: bge-m3 + FAISS + qwen3:14b"
 pipeline_mode: "linear"
 
 indexing:
@@ -54,10 +54,12 @@ query:
 
   generation:
     type: "ollama"
+    params:
+      base_url: "http://172.30.32.1:11434"
 
   generation_llm:
     provider: "ollama"
-    model_name: "qwen3:32b"
+    model_name: "qwen3:14b"
     temperature: 0.0
     max_tokens: 1024
 
@@ -85,7 +87,12 @@ evaluation:
     - "context_precision"
     - "context_entity_recall"
   num_runs: 3
+  run_config:
+    timeout: 1200
+    max_retries: 10
+    max_wait: 60
+    max_workers: 2
   evaluator_llm:
     provider: "ollama"
-    model_name: "qwen3:32b"
+    model_name: "qwen3:14b"
     temperature: 0.0
