@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -256,3 +256,147 @@ class TestComputeMetrics:
 
         assert per_sample[0]["faithfulness"] is None
         assert per_sample[1]["faithfulness"] == 0.9
+
+
+# -----------------------------------------------------------------------
+# Evaluator._build_evaluator_llm
+# -----------------------------------------------------------------------
+
+
+class TestBuildEvaluatorLLM:
+    """Tests for _build_evaluator_llm() provider dispatch."""
+
+    def _make_evaluator(self, provider: str, model: str = "test-model") -> Evaluator:
+        cfg = EvaluationConfig.from_dict(
+            {
+                "evaluator_llm": {
+                    "provider": provider,
+                    "model_name": model,
+                    "temperature": 0.0,
+                    "max_tokens": 512,
+                },
+            }
+        )
+        return Evaluator(cfg)
+
+    @patch("ragas.llms.base.LangchainLLMWrapper", autospec=False)
+    @patch("langchain_google_genai.ChatGoogleGenerativeAI", autospec=False)
+    def test_google_provider_returns_wrapper(
+        self, mock_chat_cls: MagicMock, mock_wrapper_cls: MagicMock
+    ) -> None:
+        mock_wrapper_cls.return_value = "wrapped"
+        with patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}):
+            evaluator = self._make_evaluator("google", "gemini-2.0-flash")
+            result = evaluator._build_evaluator_llm()
+        mock_chat_cls.assert_called_once_with(
+            model="gemini-2.0-flash",
+            temperature=0.0,
+            max_output_tokens=512,
+            google_api_key="fake-key",
+        )
+        assert result == "wrapped"
+
+    def test_google_provider_missing_api_key_raises(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            evaluator = self._make_evaluator("google")
+            with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+                evaluator._build_evaluator_llm()
+
+    @patch("ragas.llms.base.LangchainLLMWrapper", autospec=False)
+    @patch("langchain_ollama.OllamaLLM", autospec=False)
+    def test_ollama_provider_returns_wrapper(
+        self, mock_ollama_cls: MagicMock, mock_wrapper_cls: MagicMock
+    ) -> None:
+        mock_wrapper_cls.return_value = "wrapped"
+        evaluator = self._make_evaluator("ollama", "qwen3:14b")
+        result = evaluator._build_evaluator_llm()
+        mock_ollama_cls.assert_called_once_with(
+            model="qwen3:14b",
+            temperature=0.0,
+        )
+        assert result == "wrapped"
+
+    @patch("ragas.llms.base.LangchainLLMWrapper", autospec=False)
+    @patch(
+        "langchain_community.chat_models.edenai.ChatEdenAI",
+        autospec=False,
+    )
+    def test_edenai_provider_returns_wrapper(
+        self, mock_edenai_cls: MagicMock, mock_wrapper_cls: MagicMock
+    ) -> None:
+        mock_wrapper_cls.return_value = "wrapped"
+        with patch.dict("os.environ", {"EDENAI_API_KEY": "fake-key"}):
+            evaluator = self._make_evaluator("edenai", "gpt-4")
+            result = evaluator._build_evaluator_llm()
+        mock_edenai_cls.assert_called_once()
+        assert result == "wrapped"
+
+    def test_unsupported_provider_raises(self) -> None:
+        evaluator = self._make_evaluator("bogus")
+        with pytest.raises(ValueError, match="Unsupported"):
+            evaluator._build_evaluator_llm()
+
+
+# -----------------------------------------------------------------------
+# Evaluator embedder from registry (E3)
+# -----------------------------------------------------------------------
+
+
+class TestBuildEvaluatorEmbedder:
+    """Tests for evaluator building its own embedder from config."""
+
+    def test_evaluate_builds_embedder_from_config(self) -> None:
+        """Evaluator constructs embedder via registry from evaluator_embedding."""
+        cfg = EvaluationConfig.from_dict(
+            {
+                "dataset": "dummy.jsonl",
+                "evaluator_embedding": {
+                    "type": "huggingface",
+                    "params": {"model_name": "test-model"},
+                },
+            }
+        )
+        evaluator = Evaluator(cfg)
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_query.return_value = [0.1, 0.2]
+        mock_cls = MagicMock(return_value=mock_embedder)
+
+        with (
+            patch("evaluation.evaluator.registry") as mock_registry,
+            patch("evaluation.evaluator._load_dataset", return_value=[]),
+            patch.object(evaluator, "_run_once", return_value=[]),
+            patch.object(evaluator, "_aggregate_metrics", return_value={}),
+        ):
+            mock_registry.get.return_value = mock_cls
+            evaluator.evaluate(MagicMock(), experiment_name="test")
+
+        mock_registry.get.assert_called_once_with("embedding", "huggingface")
+        mock_cls.assert_called_once_with(config={"model_name": "test-model"})
+        assert evaluator._embedder_adapter is not None
+
+    def test_evaluate_skips_embedder_when_type_empty(self) -> None:
+        """No embedder built when evaluator_embedding.type is empty."""
+        cfg = EvaluationConfig.from_dict(
+            {
+                "dataset": "dummy.jsonl",
+                "evaluator_embedding": {"type": ""},
+            }
+        )
+        evaluator = Evaluator(cfg)
+
+        with (
+            patch("evaluation.evaluator._load_dataset", return_value=[]),
+            patch.object(evaluator, "_run_once", return_value=[]),
+            patch.object(evaluator, "_aggregate_metrics", return_value={}),
+        ):
+            evaluator.evaluate(MagicMock(), experiment_name="test")
+
+        assert evaluator._embedder_adapter is None
+
+    def test_evaluate_no_embedder_parameter(self) -> None:
+        """Regression guard: evaluate() must not accept an embedder parameter."""
+        import inspect
+
+        sig = inspect.signature(Evaluator.evaluate)
+        assert "embedder" not in sig.parameters

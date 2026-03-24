@@ -20,6 +20,7 @@ dependencies = [
     "langchain-text-splitters>=0.3",
     "langchain-community>=0.4,<1",   # ChatEdenAI LLM wrapper
     "langchain-ollama>=0.3",          # OllamaLLM (replaces deprecated langchain_community.llms.Ollama)
+    "langchain-google-genai>=2.0",    # ChatGoogleGenerativeAI for evaluator LLM
     "tenacity>=8",
     "google-genai>=1.0",
     "chromadb>=0.5",
@@ -113,6 +114,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["google", "google.genai", "google.genai.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain_google_genai", "langchain_google_genai.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

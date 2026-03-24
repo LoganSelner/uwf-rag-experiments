@@ -215,6 +215,23 @@ class TestSpecificConfigs:
         assert len(cfg.sources) == 1
         assert cfg.sources[0].name == "doc1"
 
+    def test_evaluation_config_evaluator_embedding(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {
+                "evaluator_embedding": {
+                    "type": "huggingface",
+                    "params": {"model_name": "BAAI/bge-m3", "normalize": True},
+                }
+            }
+        )
+        assert cfg.evaluator_embedding.type == "huggingface"
+        assert cfg.evaluator_embedding.params["model_name"] == "BAAI/bge-m3"
+
+    def test_evaluation_config_evaluator_embedding_defaults_empty(self) -> None:
+        cfg = EvaluationConfig.from_dict(None)
+        assert cfg.evaluator_embedding.type == ""
+        assert cfg.evaluator_embedding.params == {}
+
     def test_agent_config_nested(self) -> None:
         cfg = AgentConfig.from_dict(
             {
@@ -274,7 +291,11 @@ class TestValidateConfig:
                 "generation_llm": {"model_name": "test-model"},
                 "prompt": {"type": "chat"},
             },
-            "evaluation": {"dataset": "", "mode": "full"},
+            "evaluation": {
+                "dataset": "",
+                "mode": "full",
+                "evaluator_embedding": {"type": "huggingface"},
+            },
         }
         for key, value in overrides.items():
             parts = key.split(".")
@@ -406,3 +427,40 @@ class TestValidateConfig:
             ConfigValidationError, match=r"evaluation\.run_config\.max_workers"
         ):
             validate_config(cfg, registry)
+
+    def test_unsupported_evaluator_llm_provider(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.evaluator_llm.provider = "openai"
+        with pytest.raises(ConfigValidationError, match="not supported"):
+            validate_config(cfg, registry)
+
+    def test_supported_evaluator_llm_providers_pass(self) -> None:
+        for provider in ("ollama", "edenai", "google"):
+            cfg = self._make_valid_config()
+            cfg.evaluation.evaluator_llm.provider = provider
+            validate_config(cfg, registry)  # should not raise
+
+    def test_empty_evaluator_llm_provider_passes(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.evaluator_llm.provider = ""
+        validate_config(cfg, registry)  # should not raise
+
+    def test_evaluator_embedding_type_empty_raises(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.evaluator_embedding.type = ""
+        with pytest.raises(
+            ConfigValidationError,
+            match=r"evaluation\.evaluator_embedding\.type is empty",
+        ):
+            validate_config(cfg, registry)
+
+    def test_evaluator_embedding_type_unregistered_raises(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.evaluator_embedding.type = "bogus_embedder"
+        with pytest.raises(ConfigValidationError, match="bogus_embedder"):
+            validate_config(cfg, registry)
+
+    def test_evaluator_embedding_type_registered_passes(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.evaluator_embedding.type = "huggingface"
+        validate_config(cfg, registry)  # should not raise
