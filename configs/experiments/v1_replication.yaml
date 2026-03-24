@@ -1,0 +1,92 @@
+# v1 Replication — Retrieval-based ARGObot (ACMSE 2025, Section 3.1)
+#
+# Recreates the published R-ARGObot configuration:
+#   - Google Generative AI embeddings (models/embedding-001)
+#   - ChromaDB vectorstore
+#   - LangChain recursive chunking (1200 tokens, 200 overlap)
+#   - Contextualizer query transform (Gemini 1.0 Pro)
+#   - Gemini 1.0 Pro generation
+#   - Top-3 retrieval
+#   - Verbatim citation prompt strategy
+#
+# Published scores (18q dataset, 3 runs):
+#   Ans.Corr: 0.815 | Ctx.Prec: 0.883 | Faith.: 0.906 | CER: 0.291 | Ans.Rel: 0.867
+#
+# Prerequisites:
+#   1. Place the Student Handbook PDF at data/sources/student_handbook.pdf
+#   2. Place the 18-question dataset at data/datasets/18q_handbook.jsonl
+#   3. Set GOOGLE_API_KEY in .env or your shell environment
+#   4. Ensure Ollama is running with qwen3:14b for the evaluator LLM
+#
+# Usage:
+#   python scripts/run_experiment.py configs/experiments/v1_replication.yaml -v
+
+extends: ../base.yaml
+
+name: "v1_replication"
+description: "ACMSE v1 replication: Google embedding-001 + Chroma + Gemini 1.0 Pro"
+
+indexing:
+  sources:
+    - name: "student_handbook"
+      path: "data/sources/student_handbook.pdf"
+      ingest:
+        type: "pdf"
+
+  chunking:
+    type: "recursive_langchain"
+    params:
+      chunk_size: 1200
+      chunk_overlap: 200
+
+  embedding:
+    type: "google"
+    params:
+      model_name: "models/embedding-001"
+      task_type_document: "RETRIEVAL_DOCUMENT"
+      task_type_query: "RETRIEVAL_QUERY"
+
+  vectorstore:
+    type: "chroma"
+    params:
+      metric: "cosine"
+      collection_name: "v1_handbook_chunks"
+
+query:
+  query_transform:
+    type: "contextualizer"
+    params:
+      generator_type: "google"
+      llm:
+        model_name: "gemini-1.0-pro"
+        temperature: 0.0
+
+  retrieval:
+    type: "dense"
+    top_k_retrieve: 3
+    top_k_final: 3
+
+  reranking:
+    type: "none"
+
+  generation:
+    type: "google"
+
+  generation_llm:
+    provider: "google"
+    model_name: "gemini-1.0-pro"
+    temperature: 0.0
+    max_tokens: 1024
+
+  prompt:
+    type: "chat"
+    system_template: |
+      Answer using ONLY verbatim quotes from the provided context.
+      Include the citation source for each quote.
+      If the context does not contain the answer, say "I don't know".
+    context_format: "numbered"
+    use_chain_of_thought: false
+    citation_style: "verbatim"
+
+evaluation:
+  dataset: "data/datasets/18q_handbook.jsonl"

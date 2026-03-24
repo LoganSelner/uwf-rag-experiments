@@ -537,9 +537,14 @@ The experiment directory is cleared and recreated on each save
 `num_runs`).
 
 `summary.json` includes a curated `config_snapshot` with the key
-experimental variables at a glance (chunk_size, embedding_model,
-retrieval_type, generation_model, evaluator_embedding_type, etc.)
-— not the full config (which lives in `config.yaml`).
+experimental variables at a glance — not the full config (which
+lives in `config.yaml`). Snapshot fields: `name`, `description`,
+`pipeline_mode`, `evaluation_mode`, `index_fingerprint`,
+`chunking_type`, `chunk_size`, `chunk_overlap`, `embedding_type`,
+`embedding_model`, `vectorstore_type`, `query_transform_type`,
+`retrieval_type`, `top_k_retrieve`, `top_k_final`,
+`reranking_type`, `generation_type`, `generation_model`,
+`evaluator_embedding_type`.
 
 ### Comparison (`evaluation/comparison.py`)
 
