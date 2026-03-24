@@ -54,6 +54,26 @@ class TestSaveExperiment:
         # config_snapshot is built from config, not from result
         assert summary["config_snapshot"]["name"] == "test_exp"
 
+    def test_config_snapshot_fields(self, tmp_path: Path) -> None:
+        config = _make_config()
+        result = ExperimentResult(experiment_name="test_exp", metrics={})
+        save_experiment(config, result, tmp_path)
+
+        summary = json.loads((tmp_path / "test_exp" / "summary.json").read_text())
+        snap = summary["config_snapshot"]
+
+        assert snap["pipeline_mode"] == "linear"
+        assert snap["chunking_type"] == "recursive_langchain"
+        assert snap["embedding_type"] == "huggingface"
+        assert snap["vectorstore_type"] == "faiss"
+        assert snap["query_transform_type"] == "passthrough"
+        assert snap["retrieval_type"] == "dense"
+        assert snap["top_k_retrieve"] == 10
+        assert snap["top_k_final"] == 5
+        assert snap["reranking_type"] == "none"
+        assert snap["generation_type"] == "ollama"
+        assert snap["generation_model"] == "m"
+
     def test_saves_config_yaml(self, tmp_path: Path) -> None:
         config = _make_config()
         result = ExperimentResult(experiment_name="test_exp", metrics={})

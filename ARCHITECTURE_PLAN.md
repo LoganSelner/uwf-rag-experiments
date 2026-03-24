@@ -187,7 +187,8 @@ are implemented.
 
 ### v1 Config
 
-All components available now. Ready to run.
+All components available now. Config at
+`configs/experiments/v1_replication.yaml`.
 
 ```yaml
 pipeline_mode: "linear"
