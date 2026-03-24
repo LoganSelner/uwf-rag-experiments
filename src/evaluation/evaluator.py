@@ -73,27 +73,40 @@ def _build_metric_map() -> dict[str, Any]:
     }
 
 
-class _EmbedderAdapter:
-    """Adapts a BaseEmbedder to the LangChain Embeddings interface.
+def _wrap_embedder_for_ragas(embedder: Any) -> Any:
+    """Wrap a ``BaseEmbedder`` as a RAGAS-native ``BaseRagasEmbedding``.
 
     Bridges the evaluator's dedicated embedding model (built from
-    ``evaluator_embedding`` config) to the interface RAGAS expects.
+    ``evaluator_embedding`` config via the component registry) to the
+    interface that RAGAS ``evaluate()`` expects.
+
+    The class is defined inside the function so the ``ragas.embeddings``
+    import stays deferred (consistent with all other RAGAS imports in
+    this module).
     """
+    from ragas.embeddings import BaseRagasEmbedding
 
-    def __init__(self, embedder: Any) -> None:
-        self._embedder = embedder
+    class _EmbedderAdapter(BaseRagasEmbedding):
+        def __init__(self, base_embedder: Any) -> None:
+            super().__init__()
+            self._embedder = base_embedder
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self._embedder.embed_query(text) for text in texts]
+        def embed_text(self, text: str, **kwargs: Any) -> list[float]:
+            return self._embedder.embed_query(text)
 
-    def embed_query(self, text: str) -> list[float]:
-        return self._embedder.embed_query(text)
+        async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
+            return self._embedder.embed_query(text)
 
-    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self.embed_documents(texts)
+        # Legacy LangChain interface — RAGAS 0.4.x metrics like
+        # answer_relevancy still call embed_query/embed_documents
+        # internally instead of the modern embed_text/embed_texts API.
+        def embed_query(self, text: str) -> list[float]:
+            return self._embedder.embed_query(text)
 
-    async def aembed_query(self, text: str) -> list[float]:
-        return self.embed_query(text)
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            return [self._embedder.embed_query(t) for t in texts]
+
+    return _EmbedderAdapter(embedder)
 
 
 class Evaluator:
@@ -139,13 +152,9 @@ class Evaluator:
         # Build dedicated evaluation embedder from config.
         eval_emb_cfg = self._config.evaluator_embedding
         if eval_emb_cfg.type:
-            from ragas.embeddings.base import LangchainEmbeddingsWrapper
-
             embedder_cls = registry.get("embedding", eval_emb_cfg.type)
             embedder_instance = embedder_cls(config=eval_emb_cfg.params)
-            self._embedder_adapter = LangchainEmbeddingsWrapper(
-                _EmbedderAdapter(embedder_instance)  # type: ignore[arg-type]
-            )
+            self._embedder_adapter = _wrap_embedder_for_ragas(embedder_instance)
 
         logger.info(
             "Starting evaluation: %d questions, %d runs, mode=%s",

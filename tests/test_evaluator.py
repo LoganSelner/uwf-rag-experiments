@@ -184,22 +184,42 @@ class TestAggregateMetrics:
 
 
 class TestEmbedderAdapter:
-    def test_embed_query(self) -> None:
-        from evaluation.evaluator import _EmbedderAdapter
+    def test_embed_text(self) -> None:
+        from evaluation.evaluator import _wrap_embedder_for_ragas
 
         mock_embedder = MagicMock()
         mock_embedder.embed_query.return_value = [0.1, 0.2, 0.3]
-        adapter = _EmbedderAdapter(mock_embedder)
+        adapter = _wrap_embedder_for_ragas(mock_embedder)
+        result = adapter.embed_text("test")
+        assert result == [0.1, 0.2, 0.3]
+        mock_embedder.embed_query.assert_called_once_with("test")
+
+    def test_embed_texts(self) -> None:
+        from evaluation.evaluator import _wrap_embedder_for_ragas
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_query.side_effect = [[0.1], [0.2]]
+        adapter = _wrap_embedder_for_ragas(mock_embedder)
+        result = adapter.embed_texts(["a", "b"])
+        assert result == [[0.1], [0.2]]
+        assert mock_embedder.embed_query.call_count == 2
+
+    def test_legacy_embed_query(self) -> None:
+        from evaluation.evaluator import _wrap_embedder_for_ragas
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_query.return_value = [0.1, 0.2, 0.3]
+        adapter = _wrap_embedder_for_ragas(mock_embedder)
         result = adapter.embed_query("test")
         assert result == [0.1, 0.2, 0.3]
         mock_embedder.embed_query.assert_called_once_with("test")
 
-    def test_embed_documents(self) -> None:
-        from evaluation.evaluator import _EmbedderAdapter
+    def test_legacy_embed_documents(self) -> None:
+        from evaluation.evaluator import _wrap_embedder_for_ragas
 
         mock_embedder = MagicMock()
         mock_embedder.embed_query.side_effect = [[0.1], [0.2]]
-        adapter = _EmbedderAdapter(mock_embedder)
+        adapter = _wrap_embedder_for_ragas(mock_embedder)
         result = adapter.embed_documents(["a", "b"])
         assert result == [[0.1], [0.2]]
         assert mock_embedder.embed_query.call_count == 2

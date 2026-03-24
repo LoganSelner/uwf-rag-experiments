@@ -496,8 +496,9 @@ and cached via `@functools.cache`.
 independent of the pipeline. This ensures all experiments are
 measured with the same embedding model regardless of which
 pipeline embedder is used — eliminating a confounding variable
-in cross-experiment comparisons. The embedder is adapted to the
-LangChain Embeddings interface via `_EmbedderAdapter`.
+in cross-experiment comparisons. The embedder is adapted to
+RAGAS's `BaseRagasEmbedding` interface via
+`_wrap_embedder_for_ragas()`.
 
 **Evaluator LLM:** RAGAS needs an LLM judge for most metrics
 (faithfulness, answer_correctness, context_precision, etc.).
