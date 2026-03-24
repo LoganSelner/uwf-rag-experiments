@@ -16,6 +16,7 @@ import statistics
 from typing import Any
 
 from core.config import EvaluationConfig
+from core.registry import registry
 from core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
 
 logger = logging.getLogger(__name__)
@@ -72,27 +73,40 @@ def _build_metric_map() -> dict[str, Any]:
     }
 
 
-class _EmbedderAdapter:
-    """Adapts a BaseEmbedder to the LangChain Embeddings interface.
+def _wrap_embedder_for_ragas(embedder: Any) -> Any:
+    """Wrap a ``BaseEmbedder`` as a RAGAS-native ``BaseRagasEmbedding``.
 
-    This allows reusing the pipeline's already-loaded embedding model
-    for RAGAS evaluation without extra API calls or downloads.
+    Bridges the evaluator's dedicated embedding model (built from
+    ``evaluator_embedding`` config via the component registry) to the
+    interface that RAGAS ``evaluate()`` expects.
+
+    The class is defined inside the function so the ``ragas.embeddings``
+    import stays deferred (consistent with all other RAGAS imports in
+    this module).
     """
+    from ragas.embeddings import BaseRagasEmbedding
 
-    def __init__(self, embedder: Any) -> None:
-        self._embedder = embedder
+    class _EmbedderAdapter(BaseRagasEmbedding):
+        def __init__(self, base_embedder: Any) -> None:
+            super().__init__()
+            self._embedder = base_embedder
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self._embedder.embed_query(text) for text in texts]
+        def embed_text(self, text: str, **kwargs: Any) -> list[float]:
+            return self._embedder.embed_query(text)
 
-    def embed_query(self, text: str) -> list[float]:
-        return self._embedder.embed_query(text)
+        async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
+            return self._embedder.embed_query(text)
 
-    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self.embed_documents(texts)
+        # Legacy LangChain interface — RAGAS 0.4.x metrics like
+        # answer_relevancy still call embed_query/embed_documents
+        # internally instead of the modern embed_text/embed_texts API.
+        def embed_query(self, text: str) -> list[float]:
+            return self._embedder.embed_query(text)
 
-    async def aembed_query(self, text: str) -> list[float]:
-        return self.embed_query(text)
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            return [self._embedder.embed_query(t) for t in texts]
+
+    return _EmbedderAdapter(embedder)
 
 
 class Evaluator:
@@ -117,16 +131,16 @@ class Evaluator:
         self,
         pipeline: Queryable,
         *,
-        embedder: Any = None,
         experiment_name: str = "",
     ) -> ExperimentResult:
         """Run the full evaluation: multi-run execution + aggregation.
 
+        The evaluator builds its own embedder from ``evaluator_embedding``
+        config via the component registry, ensuring all experiments are
+        measured with a consistent embedding model.
+
         Args:
             pipeline: Anything satisfying the Queryable protocol.
-            embedder: Optional embedder to reuse for RAGAS (avoids
-                extra model loads). Pass the pipeline's embedder if
-                available.
             experiment_name: Label for this experiment (used in results).
 
         Returns:
@@ -135,14 +149,12 @@ class Evaluator:
         dataset = _load_dataset(self._config.dataset)
         num_runs = self._config.num_runs
 
-        # Reuse the caller's embedder for RAGAS (avoids extra API
-        # calls — the HuggingFace model is already loaded in memory).
-        if embedder is not None:
-            from ragas.embeddings.base import LangchainEmbeddingsWrapper
-
-            self._embedder_adapter = LangchainEmbeddingsWrapper(
-                _EmbedderAdapter(embedder)  # type: ignore[arg-type]
-            )
+        # Build dedicated evaluation embedder from config.
+        eval_emb_cfg = self._config.evaluator_embedding
+        if eval_emb_cfg.type:
+            embedder_cls = registry.get("embedding", eval_emb_cfg.type)
+            embedder_instance = embedder_cls(config=eval_emb_cfg.params)
+            self._embedder_adapter = _wrap_embedder_for_ragas(embedder_instance)
 
         logger.info(
             "Starting evaluation: %d questions, %d runs, mode=%s",
@@ -378,10 +390,33 @@ class Evaluator:
                 )
             )
 
+        if llm_config.provider == "google":
+            import os
+
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get(
+                "GEMINI_API_KEY", ""
+            )
+            if not api_key:
+                raise ValueError(
+                    "GOOGLE_API_KEY or GEMINI_API_KEY environment variable is "
+                    "required for Google evaluator LLM."
+                )
+
+            return LangchainLLMWrapper(
+                ChatGoogleGenerativeAI(
+                    model=llm_config.model_name,
+                    temperature=llm_config.temperature,
+                    max_output_tokens=llm_config.max_tokens or 1024,
+                    google_api_key=api_key,
+                )
+            )
+
         raise ValueError(
             f"Unsupported evaluator LLM provider: "
             f"'{llm_config.provider}'. "
-            f"Supported: 'ollama', 'edenai'."
+            f"Supported: 'ollama', 'edenai', 'google'."
         )
 
     @staticmethod

@@ -50,6 +50,7 @@ def _build_config_snapshot(config: ExperimentConfig) -> dict[str, Any]:
         "reranking_type": config.query.reranking.type or "none",
         "generation_model": config.query.generation_llm.model_name,
         "top_k_final": config.query.retrieval.top_k_final,
+        "evaluator_embedding_type": config.evaluation.evaluator_embedding.type,
     }
 
 

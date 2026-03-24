@@ -334,18 +334,18 @@ reproduce the paper's RAGAS scores.
 **Milestone:** Can run `configs/experiments/v1_replication.yaml`
 and compare scores against the paper's Table 2.
 
-### Evaluator Improvements (before Phase 3B)
+### Evaluator Improvements (before Phase 3B) — COMPLETED
 
 Goal: Complete the evaluator's provider support and add a
 dedicated evaluation embedder so cross-experiment comparisons
 use a consistent measurement instrument.
 
-| # | Item | Details |
-|---|------|---------|
-| E1 | Add `"google"` provider to `_build_evaluator_llm()` | Uses `langchain-google-genai` `ChatGoogleGenerativeAI`. Completes the Google stack — experiments can run 100% Google with no Ollama dependency. |
-| E2 | Add required `evaluator_embedding` config to `EvaluationConfig` | A `ComponentConfig` block (type + params) that builds a dedicated embedder for RAGAS via the registry. Decouples evaluation embeddings from pipeline embeddings. |
-| E3 | Build evaluator embedder from registry in `Evaluator` | Replace the current `embedder=` passthrough with registry-based construction from `evaluator_embedding` config. The evaluator builds its own embedder instance, independent of the pipeline. |
-| E4 | Add evaluator provider validation to `validate_config()` | Check that `evaluator_llm.provider` is one of the supported values (`"ollama"`, `"edenai"`, `"google"`) and that `evaluator_embedding.type` is registered. |
+| # | Item | Details | Status |
+|---|------|---------|--------|
+| E1 | Add `"google"` provider to `_build_evaluator_llm()` | Uses `langchain-google-genai` `ChatGoogleGenerativeAI`. Completes the Google stack — experiments can run 100% Google with no Ollama dependency. | Done |
+| E2 | Add required `evaluator_embedding` config to `EvaluationConfig` | A `ComponentConfig` block (type + params) that builds a dedicated embedder for RAGAS via the registry. Decouples evaluation embeddings from pipeline embeddings. | Done |
+| E3 | Build evaluator embedder from registry in `Evaluator` | Replace the current `embedder=` passthrough with registry-based construction from `evaluator_embedding` config. The evaluator builds its own embedder instance, independent of the pipeline. | Done |
+| E4 | Add evaluator provider validation to `validate_config()` | Check that `evaluator_llm.provider` is one of the supported values (`"ollama"`, `"edenai"`, `"google"`) and that `evaluator_embedding.type` is registered. | Done |
 
 **Why a required evaluator embedder:** RAGAS uses embeddings for
 metrics like `answer_similarity` and `answer_relevancy`. When

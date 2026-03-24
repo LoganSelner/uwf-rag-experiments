@@ -409,6 +409,7 @@ class EvaluationConfig:
     num_runs: int = 3
     run_config: EvalRunConfig = field(default_factory=EvalRunConfig)
     evaluator_llm: LLMConfig = field(default_factory=LLMConfig)
+    evaluator_embedding: ComponentConfig = field(default_factory=ComponentConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> EvaluationConfig:
@@ -437,6 +438,9 @@ class EvaluationConfig:
             num_runs=data.get("num_runs", 3),
             run_config=EvalRunConfig.from_dict(data.get("run_config")),
             evaluator_llm=LLMConfig.from_dict(data.get("evaluator_llm")),
+            evaluator_embedding=ComponentConfig.from_dict(
+                data.get("evaluator_embedding")
+            ),
         )
 
 
@@ -526,6 +530,11 @@ class ConfigValidationError(Exception):
         )
 
 
+_SUPPORTED_EVAL_LLM_PROVIDERS: frozenset[str] = frozenset(
+    {"ollama", "edenai", "google"}
+)
+
+
 def validate_config(config: ExperimentConfig, registry: Any) -> None:
     """Validate an ExperimentConfig against the component registry.
 
@@ -566,6 +575,29 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
         errors.append(
             f"evaluation.run_config.max_retries must be >= 0 "
             f"(got {config.evaluation.run_config.max_retries})"
+        )
+
+    # --- Evaluator provider + embedding ---
+    eval_llm = config.evaluation.evaluator_llm
+    if eval_llm.provider and eval_llm.provider not in _SUPPORTED_EVAL_LLM_PROVIDERS:
+        errors.append(
+            f"evaluation.evaluator_llm.provider: '{eval_llm.provider}' is not "
+            f"supported. Supported: {sorted(_SUPPORTED_EVAL_LLM_PROVIDERS)}"
+        )
+
+    eval_emb = config.evaluation.evaluator_embedding
+    if eval_emb.type:
+        _check_registered(
+            errors,
+            registry,
+            eval_emb.type,
+            "embedding",
+            "evaluation.evaluator_embedding.type",
+        )
+    else:
+        errors.append(
+            "evaluation.evaluator_embedding.type is empty — "
+            "a dedicated evaluation embedder is required for consistent measurement"
         )
 
     for i, source in enumerate(config.indexing.sources):

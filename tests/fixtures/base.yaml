@@ -57,3 +57,7 @@ evaluation:
   dataset: "data/datasets/testHB_dataset.jsonl"
   mode: "full"
   num_runs: 3
+  evaluator_embedding:
+    type: "huggingface"
+    params:
+      model_name: "BAAI/bge-m3"

@@ -152,6 +152,7 @@ def minimal_config_dict(fixtures_dir: Path) -> dict:
             "dataset": "test_dataset.jsonl",
             "mode": "full",
             "num_runs": 1,
+            "evaluator_embedding": {"type": "huggingface"},
         },
     }
 

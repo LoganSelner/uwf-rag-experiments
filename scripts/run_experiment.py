@@ -82,12 +82,11 @@ def main() -> None:
     # Build pipeline
     rag = RAGPipeline.from_config(config, no_cache=args.no_cache)
 
-    # Run evaluation — pass embedder explicitly so the evaluator can
-    # reuse the already-loaded model for RAGAS without importing pipeline internals.
+    # Run evaluation — the evaluator builds its own embedder from
+    # evaluator_embedding config for consistent cross-experiment measurement.
     evaluator = Evaluator(config.evaluation)
     experiment_result = evaluator.evaluate(
         rag,
-        embedder=rag.index_artifact.embedder,
         experiment_name=config.name,
     )
 

@@ -96,3 +96,8 @@ evaluation:
     provider: "ollama"
     model_name: "qwen3:14b"
     temperature: 0.0
+  evaluator_embedding:
+    type: "huggingface"
+    params:
+      model_name: "BAAI/bge-m3"
+      normalize: true

@@ -287,6 +287,7 @@ ExperimentConfig
     ├── dataset, mode, num_runs
     ├── metrics, retrieval_only_metrics
     ├── evaluator_llm: LLMConfig
+    ├── evaluator_embedding: ComponentConfig
     └── run_config: EvalRunConfig    timeout, retries, workers
 ```
 
@@ -339,6 +340,8 @@ construction (called in `scripts/run_experiment.py`). It checks:
 - `generation_llm.model_name` is non-empty when generation needed
 - `indexing.sources` is non-empty
 - `EvalRunConfig` values are positive (timeout, workers, wait)
+- `evaluator_llm.provider` is one of `{ollama, edenai, google}` (or empty)
+- `evaluator_embedding.type` is registered in the `embedding` category
 - Evaluation dataset file exists on disk
 
 All errors are collected into a list and raised as a single
@@ -478,24 +481,31 @@ Satisfies the `Queryable` protocol.
 
 `Evaluator(config)` wraps the RAGAS evaluation library.
 
-`evaluate(pipeline, embedder, experiment_name)` runs the
-pipeline against every question in the dataset, `num_runs` times.
-Failed queries are logged and skipped (one bad response doesn't
-crash the run). Returns an `ExperimentResult` with aggregated and
-per-run metrics.
+`evaluate(pipeline, experiment_name)` runs the pipeline against
+every question in the dataset, `num_runs` times. Failed queries
+are logged and skipped (one bad response doesn't crash the run).
+Returns an `ExperimentResult` with aggregated and per-run metrics.
 
 **RAGAS integration:** Uses the RAGAS 0.4.x API
 (`EvaluationDataset`, `SingleTurnSample`, private metric
 submodules to avoid deprecation warnings). Metrics are built once
-and cached via `@functools.cache`. The pipeline's embedder is
-reused for RAGAS through an `_EmbedderAdapter` that implements the
-LangChain Embeddings interface — avoids loading a second model.
+and cached via `@functools.cache`.
+
+**Evaluator embedder:** The evaluator builds its own embedder from
+`evaluator_embedding` config via the component registry,
+independent of the pipeline. This ensures all experiments are
+measured with the same embedding model regardless of which
+pipeline embedder is used — eliminating a confounding variable
+in cross-experiment comparisons. The embedder is adapted to
+RAGAS's `BaseRagasEmbedding` interface via
+`_wrap_embedder_for_ragas()`.
 
 **Evaluator LLM:** RAGAS needs an LLM judge for most metrics
 (faithfulness, answer_correctness, context_precision, etc.).
-Configured via `evaluator_llm` in the config. Currently supports
-Ollama (local) and EdenAI (cloud) providers. Built through
-`_build_evaluator_llm()` which returns a `LangchainLLMWrapper`.
+Configured via `evaluator_llm` in the config. Supports Ollama
+(local), EdenAI (cloud), and Google (cloud) providers. Built
+through `_build_evaluator_llm()` which returns a
+`LangchainLLMWrapper`.
 
 **Run config:** `EvalRunConfig` controls RAGAS execution settings:
 `timeout` (seconds per evaluation call), `max_retries`,
@@ -528,8 +538,8 @@ The experiment directory is cleared and recreated on each save
 
 `summary.json` includes a curated `config_snapshot` with the key
 experimental variables at a glance (chunk_size, embedding_model,
-retrieval_type, generation_model, etc.) — not the full config
-(which lives in `config.yaml`).
+retrieval_type, generation_model, evaluator_embedding_type, etc.)
+— not the full config (which lives in `config.yaml`).
 
 ### Comparison (`evaluation/comparison.py`)
 
@@ -588,7 +598,8 @@ scripts/run_experiment.py
     │   └── QueryPipeline.from_config
     │       └── wire retriever ← vectorstore + embedder
     │
-    ├── Evaluator.evaluate(rag, embedder)
+    ├── Evaluator.evaluate(rag)
+    │   ├── build evaluator embedder from config (via registry)
     │   ├── for each run:
     │   │   ├── for each question: rag.query() → EvalSample
     │   │   └── RAGAS evaluate → per-sample scores
