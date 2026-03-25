@@ -1,4 +1,4 @@
-# Architecture Plan
+# Roadmap
 
 > Forward-looking plan for the argobot-bench experimentation framework.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
