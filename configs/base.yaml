@@ -54,8 +54,6 @@ query:
 
   generation:
     type: "ollama"
-    params:
-      base_url: "http://172.30.32.1:11434"
 
   generation_llm:
     provider: "ollama"
