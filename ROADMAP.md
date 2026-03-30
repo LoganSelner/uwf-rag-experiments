@@ -3,7 +3,7 @@
 > Forward-looking plan for the argobot-bench experimentation framework.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 >
-> **Last updated:** 2026-03-23
+> **Last updated:** 2026-03-30
 
 ---
 
@@ -65,7 +65,7 @@ behind `BaseEmbedder`), vectorstore (`faiss-cpu` behind
 
 ## 3. What Exists Today
 
-### Completed (Phases 1–2)
+### Completed (Phases 1–3B)
 
 | Category | Component | Registry Name | Notes |
 |----------|-----------|---------------|-------|
@@ -74,12 +74,15 @@ behind `BaseEmbedder`), vectorstore (`faiss-cpu` behind
 | Chunking | `LangChainRecursiveChunker` | `recursive_langchain` | `langchain-text-splitters` wrapper |
 | Embedding | `HuggingFaceEmbedder` | `huggingface` | sentence-transformers, bge-m3 default |
 | Embedding | `GoogleEmbedder` | `google` | `google-genai` SDK, gemini-embedding-001 default |
+| Embedding | `OpenAIEmbedder` | `openai` | `openai` SDK, ada-002 default |
+| Embedding | `EdenAIEmbedder` | `edenai` | `langchain-community` EdenAiEmbeddings gateway |
 | Vectorstore | `FAISSVectorStore` | `faiss` | Cosine + L2, metadata post-filtering |
 | Vectorstore | `ChromaVectorStore` | `chroma` | ChromaDB, native metadata filtering |
 | Retrieval | `DenseRetriever` | `dense` | Single-vector similarity search |
 | Generation | `OllamaGenerator` | `ollama` | Local LLM via Ollama |
 | Generation | `EdenAIGenerator` | `edenai` | Cloud LLM via Eden AI gateway |
 | Generation | `GoogleGenerator` | `google` | Gemini via `google-genai` SDK |
+| Generation | `OpenAIGenerator` | `openai` | OpenAI chat completions via `openai` SDK |
 | Prompts | `ChatPromptTemplate` | `chat` | Numbered/plain context, CoT, citations |
 | Query Transform | `PassthroughQueryTransformer` | `passthrough` | Returns query unchanged |
 | Query Transform | `ContextualizerQueryTransformer` | `contextualizer` | LLM reformulation with history |
@@ -233,8 +236,8 @@ evaluation:
 
 ### v2 Config
 
-Requires Phase 3B (OpenAI/EdenAI embedder, tools) and
-Phase 4A (agent pipeline).
+Requires Phase 3B (OpenAI/EdenAI embedder — done) and
+Phase 4A (agent pipeline, tools).
 
 ```yaml
 pipeline_mode: "agent"
@@ -247,10 +250,10 @@ indexing:
     type: "recursive_langchain"
     params: { chunk_size: 1200, chunk_overlap: 200 }
   embedding:
-    type: "openai"                             # (Phase 3B)
+    type: "openai"
     params: { model_name: "text-embedding-ada-002" }
     # Alternative for EdenAI users:
-    # type: "edenai"                           # (Phase 3B)
+    # type: "edenai"
     # params: { provider: "openai" }
   vectorstore:
     type: "chroma"
@@ -270,8 +273,8 @@ agent:
         type: "chat"
         use_chain_of_thought: true
   tools:
-    - { name: "web_search", type: "tool", tool: "serper_search" }  # (Phase 3B)
-    - { name: "email", type: "tool", tool: "gmail_mock" }          # (Phase 3B)
+    - { name: "web_search", type: "tool", tool: "serper_search" }  # (Phase 4A)
+    - { name: "email", type: "tool", tool: "gmail_mock" }          # (Phase 4A)
 evaluation:
   dataset: "data/datasets/18q_handbook.jsonl"
 ```
@@ -373,18 +376,19 @@ evaluation:
 are supported for evaluation LLM. Evaluation embeddings are
 explicitly configured and consistent across experiments.
 
-### Phase 3B — v2 Component Prerequisites
+### Phase 3B — v2 Model Integrations — COMPLETED
 
-Goal: Build the tools and model integrations v2 needs, testable
-independently before the agent loop is implemented.
+Goal: Build the model integrations v2 needs, testable
+independently before the agent loop is implemented. Tool
+components (Serper web search, Gmail mock) are deferred to
+Phase 4A where they are exercised by the agent loop.
 
-| # | Component | Registry | Interface | Library |
-|---|-----------|----------|-----------|---------|
-| 6 | OpenAI embeddings | `openai` | `BaseEmbedder` | `openai` |
-| 7 | EdenAI embeddings | `edenai` | `BaseEmbedder` | `langchain-community` `EdenAiEmbeddings` |
-| 8 | OpenAI generator | `openai` | `BaseGenerator` | `openai` |
-| 9 | Serper web search tool | `serper_search` | `BaseTool` | `requests` |
-| 10 | Gmail mock tool | `gmail_mock` | `BaseTool` | Custom (logs, no real send) |
+| # | Component | Registry | Interface | Library | Status |
+|---|-----------|----------|-----------|---------|--------|
+| 6 | OpenAI embeddings | `openai` | `BaseEmbedder` | `openai` | Done |
+| 7 | EdenAI embeddings | `edenai` | `BaseEmbedder` | `langchain-community` `EdenAiEmbeddings` | Done |
+| 8 | OpenAI generator | `openai` | `BaseGenerator` | `openai` | Done |
+| 9 | OpenAI evaluator LLM | — | `_build_evaluator_llm()` | `langchain-openai` `ChatOpenAI` | Done |
 
 The EdenAI embedder provides access to OpenAI embeddings
 (and other providers) through the EdenAI gateway. Users
@@ -392,10 +396,11 @@ with direct OpenAI API keys use the `"openai"` embedder;
 users with only an EdenAI key use `"edenai"` with
 `provider: "openai"` to get the same ada-002 vectors.
 
-**Milestone:** All v2 model/tool components are registered,
+**Milestone:** All v2 model components are registered,
 tested, and usable in linear pipeline experiments. OpenAI
 embeddings + generator can run via the linear pipeline for
-standalone quality benchmarking.
+standalone quality benchmarking. OpenAI is also available
+as an evaluator LLM provider.
 
 ### Phase 3C — Experimentation Components
 
@@ -417,12 +422,15 @@ table.
 ### Phase 4A — Single-Agent Pipeline
 
 Goal: Implement the ReAct loop in `AgentPipeline` for
-`mode: "single"`. Replicate v2.
+`mode: "single"`. Replicate v2. Includes tool components
+deferred from Phase 3B.
 
 | # | Component | Location | Notes |
 |---|-----------|----------|-------|
 | 15 | ReAct agent loop | `pipeline/agent.py` | Single LLM decides tool → executes → observes → decides again |
 | 16 | RAG tool wrapper | `pipeline/agent.py` or `components/tools.py` | Wraps a mini QueryPipeline as a tool |
+| 17 | Serper web search tool | `components/tools.py` | `serper_search` registry, `BaseTool`, Serper API via `requests` |
+| 18 | Gmail mock tool | `components/tools.py` | `gmail_mock` registry, `BaseTool`, custom (logs, no real send) |
 
 The agent receives a query, decides which tool to use (RAG,
 web search, email), executes it, observes the result, and either
@@ -445,8 +453,8 @@ Support v3 comparison.
 
 | # | Component | Location | Notes |
 |---|-----------|----------|-------|
-| 17 | Supervisor routing | `pipeline/agent.py` | LLM-based routing to specialized agents |
-| 18 | Agent roster management | `pipeline/agent.py` | Per-agent QueryPipelines with source filters |
+| 19 | Supervisor routing | `pipeline/agent.py` | LLM-based routing to specialized agents |
+| 20 | Agent roster management | `pipeline/agent.py` | Per-agent QueryPipelines with source filters |
 
 The supervisor uses its own LLM (`agent.supervisor.llm`) to
 decide which agent handles each query. Each agent has its own
@@ -463,11 +471,11 @@ Goal: Research extensions beyond replication.
 
 | # | Component | Notes |
 |---|-----------|-------|
-| 19 | BM25 retriever | `rank-bm25`, for hybrid dense+sparse retrieval |
-| 20 | Hybrid retriever | Combines dense + BM25 with score fusion |
-| 21 | ColBERT reranker | Late interaction model |
-| 22 | Multi-turn session evaluator | Exercises memory across ordered turn sequences |
-| 23 | Additional embedding models | nomic-embed, GTE, OpenAI ada-002 variants |
+| 21 | BM25 retriever | `rank-bm25`, for hybrid dense+sparse retrieval |
+| 22 | Hybrid retriever | Combines dense + BM25 with score fusion |
+| 23 | ColBERT reranker | Late interaction model |
+| 24 | Multi-turn session evaluator | Exercises memory across ordered turn sequences |
+| 25 | Additional embedding models | nomic-embed, GTE, OpenAI ada-002 variants |
 
 ---
 
@@ -638,6 +646,7 @@ langchain-google-genai    Google evaluator LLM (ChatGoogleGenerativeAI)
 
 ```
 openai                    OpenAI embeddings + generation
+langchain-openai          OpenAI evaluator LLM (ChatOpenAI)
 ```
 
 ### Phase 3C additions
