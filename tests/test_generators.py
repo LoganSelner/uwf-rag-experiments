@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from components.generators import GoogleGenerator, OllamaGenerator
+from components.generators import GoogleGenerator, OllamaGenerator, OpenAIGenerator
 from core.types import GenerationResult
 
 # -----------------------------------------------------------------------
@@ -263,3 +263,127 @@ class TestEdenAIGeneratorInit:
                     "sub_provider": "openai",
                 }
             )
+
+
+# -----------------------------------------------------------------------
+# OpenAIGenerator
+# -----------------------------------------------------------------------
+
+
+class TestOpenAIGenerator:
+    def _make_generator(self, **overrides: object) -> OpenAIGenerator:
+        config: dict = {
+            "llm": {"model_name": "gpt-4o", "temperature": 0.0},
+            **overrides,
+        }
+        return OpenAIGenerator(config)
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_config_defaults(self, mock_client_cls: MagicMock) -> None:
+        gen = OpenAIGenerator()
+        assert gen._model == ""
+        assert gen._temperature == 0.0
+        assert gen._max_tokens is None
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_string_prompt(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "The answer is 42."
+        mock_response.usage = None
+        mock_client.chat.completions.create.return_value = mock_response
+
+        gen = self._make_generator()
+        result = gen.generate("What is the answer?")
+
+        assert isinstance(result, GenerationResult)
+        assert result.answer == "The answer is 42."
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["messages"] == [
+            {"role": "user", "content": "What is the answer?"}
+        ]
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_message_list_prompt(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Response"
+        mock_response.usage = None
+        mock_client.chat.completions.create.return_value = mock_response
+
+        gen = self._make_generator()
+        messages = [
+            {"role": "system", "content": "Be helpful."},
+            {"role": "user", "content": "Hi"},
+        ]
+        gen.generate(messages)
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["messages"] == messages
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_metadata_populated(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "ans"
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 10
+        mock_usage.completion_tokens = 20
+        mock_usage.total_tokens = 30
+        mock_response.usage = mock_usage
+        mock_client.chat.completions.create.return_value = mock_response
+
+        gen = self._make_generator()
+        result = gen.generate("Q?")
+
+        assert result.metadata["model"] == "gpt-4o"
+        assert result.metadata["provider"] == "openai"
+        assert result.metadata["prompt_tokens"] == 10
+        assert result.metadata["completion_tokens"] == 20
+        assert result.metadata["total_tokens"] == 30
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_api_error_raises_runtime(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = OSError("Connection refused")
+
+        gen = self._make_generator()
+        with pytest.raises(RuntimeError, match="OpenAI API call failed"):
+            gen.generate("Q?")
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": ""}, clear=False)
+    @patch("openai.OpenAI")
+    def test_missing_api_key_raises(self, mock_client_cls: MagicMock) -> None:
+        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+            OpenAIGenerator()
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_max_tokens_passed(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "ans"
+        mock_response.usage = None
+        mock_client.chat.completions.create.return_value = mock_response
+
+        gen = self._make_generator(
+            llm={"model_name": "m", "temperature": 0.0, "max_tokens": 256}
+        )
+        gen.generate("Q?")
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["max_tokens"] == 256

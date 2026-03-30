@@ -24,6 +24,8 @@ dependencies = [
     "tenacity>=8",
     "google-genai>=1.0",
     "chromadb>=0.5",
+    "openai>=1.0",                    # OpenAI embeddings + generation (SDK direct)
+    "langchain-openai>=0.3",          # OpenAI evaluator LLM (ChatOpenAI for RAGAS)
 ]
 
 [dependency-groups]
@@ -118,6 +120,14 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["langchain_google_genai", "langchain_google_genai.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["openai", "openai.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain_openai", "langchain_openai.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -430,12 +430,12 @@ class TestValidateConfig:
 
     def test_unsupported_evaluator_llm_provider(self) -> None:
         cfg = self._make_valid_config()
-        cfg.evaluation.evaluator_llm.provider = "openai"
+        cfg.evaluation.evaluator_llm.provider = "anthropic"
         with pytest.raises(ConfigValidationError, match="not supported"):
             validate_config(cfg, registry)
 
     def test_supported_evaluator_llm_providers_pass(self) -> None:
-        for provider in ("ollama", "edenai", "google"):
+        for provider in ("ollama", "edenai", "google", "openai"):
             cfg = self._make_valid_config()
             cfg.evaluation.evaluator_llm.provider = provider
             validate_config(cfg, registry)  # should not raise

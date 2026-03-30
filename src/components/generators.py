@@ -307,3 +307,77 @@ class EdenAIGenerator(BaseGenerator):
                 "sub_provider": self._sub_provider,
             },
         )
+
+
+@registry.register("generation", "openai")
+class OpenAIGenerator(BaseGenerator):
+    """Generates answers using OpenAI's chat completion API.
+
+    Uses the ``openai`` SDK directly.
+
+    Config params:
+        llm.model_name: OpenAI model (e.g. "gpt-4o", "gpt-3.5-turbo")
+        llm.temperature: Sampling temperature (default: 0.0)
+        llm.max_tokens: Max tokens to generate (optional)
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        llm = self.config.get("llm", {})
+        self._model: str = llm.get("model_name", "")
+        self._temperature: float = llm.get("temperature", 0.0)
+        self._max_tokens: int | None = llm.get("max_tokens")
+
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "OPENAI_API_KEY environment variable is required. "
+                "Set it in .env or your shell environment."
+            )
+
+        import openai
+
+        self._client: Any = openai.OpenAI(api_key=api_key)
+
+    def generate(self, prompt: str | list[dict[str, str]]) -> GenerationResult:
+        """Call OpenAI's chat completion API and return a GenerationResult."""
+        if isinstance(prompt, str):
+            messages = [{"role": "user", "content": prompt}]
+        else:
+            messages = prompt
+
+        try:
+            response = self._call_api(messages)
+        except Exception as e:
+            raise RuntimeError(
+                f"OpenAI API call failed (model={self._model}): {e}"
+            ) from e
+
+        answer = response.choices[0].message.content or ""
+
+        metadata: dict[str, Any] = {
+            "model": self._model,
+            "provider": "openai",
+        }
+        if response.usage:
+            metadata["prompt_tokens"] = response.usage.prompt_tokens
+            metadata["completion_tokens"] = response.usage.completion_tokens
+            metadata["total_tokens"] = response.usage.total_tokens
+
+        return GenerationResult(
+            query="",  # Pipeline fills this in
+            answer=answer,
+            metadata=metadata,
+        )
+
+    @_retry_decorator
+    def _call_api(self, messages: list[dict[str, str]]) -> Any:
+        """Call OpenAI chat completions with automatic retry."""
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": self._temperature,
+        }
+        if self._max_tokens is not None:
+            kwargs["max_tokens"] = self._max_tokens
+        return self._client.chat.completions.create(**kwargs)

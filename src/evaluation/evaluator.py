@@ -413,10 +413,31 @@ class Evaluator:
                 )
             )
 
+        if llm_config.provider == "openai":
+            import os
+
+            from langchain_openai import ChatOpenAI
+
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if not api_key:
+                raise ValueError(
+                    "OPENAI_API_KEY environment variable is required "
+                    "for OpenAI evaluator LLM."
+                )
+
+            return LangchainLLMWrapper(
+                ChatOpenAI(
+                    model=llm_config.model_name,
+                    temperature=llm_config.temperature,
+                    max_tokens=llm_config.max_tokens or 1024,  # type: ignore[call-arg]
+                    api_key=api_key,  # type: ignore[arg-type]
+                )
+            )
+
         raise ValueError(
             f"Unsupported evaluator LLM provider: "
             f"'{llm_config.provider}'. "
-            f"Supported: 'ollama', 'edenai', 'google'."
+            f"Supported: 'ollama', 'edenai', 'google', 'openai'."
         )
 
     @staticmethod

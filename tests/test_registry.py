@@ -122,6 +122,12 @@ class TestRegistrationInventory:
     def test_embedding_google(self) -> None:
         assert registry.is_registered("embedding", "google")
 
+    def test_embedding_openai(self) -> None:
+        assert registry.is_registered("embedding", "openai")
+
+    def test_embedding_edenai(self) -> None:
+        assert registry.is_registered("embedding", "edenai")
+
     # Query
     def test_retrieval_dense(self) -> None:
         assert registry.is_registered("retrieval", "dense")
@@ -134,6 +140,9 @@ class TestRegistrationInventory:
 
     def test_generation_google(self) -> None:
         assert registry.is_registered("generation", "google")
+
+    def test_generation_openai(self) -> None:
+        assert registry.is_registered("generation", "openai")
 
     def test_prompts_chat(self) -> None:
         assert registry.is_registered("prompts", "chat")

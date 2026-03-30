@@ -142,3 +142,134 @@ class GoogleEmbedder(BaseEmbedder):
             contents=texts,
             config={"task_type": task_type},
         )
+
+
+@registry.register("embedding", "openai")
+class OpenAIEmbedder(BaseEmbedder):
+    """Embeds text using OpenAI's embedding API.
+
+    Uses the ``openai`` SDK directly.
+
+    Config params:
+        model_name: Embedding model (default: "text-embedding-ada-002").
+        batch_size: Texts per API call (default: 100).
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self._model_name: str = self.config.get("model_name", "text-embedding-ada-002")
+        self._batch_size: int = self.config.get("batch_size", 100)
+
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "OPENAI_API_KEY environment variable is required. "
+                "Set it in .env or your shell environment."
+            )
+
+        import openai
+
+        self._client: Any = openai.OpenAI(api_key=api_key)
+
+    def embed_chunks(self, chunks: list[Chunk]) -> list[EmbeddedChunk]:
+        if not chunks:
+            return []
+
+        texts = [c.content for c in chunks]
+        all_embeddings: list[list[float]] = []
+
+        for i in range(0, len(texts), self._batch_size):
+            batch = texts[i : i + self._batch_size]
+            result = self._embed_with_retry(batch)
+            batch_embeddings = sorted(result.data, key=lambda e: e.index)
+            all_embeddings.extend(e.embedding for e in batch_embeddings)
+
+        return [
+            EmbeddedChunk(chunk=chunk, embedding=emb)
+            for chunk, emb in zip(chunks, all_embeddings, strict=True)
+        ]
+
+    def embed_query(self, query: str) -> list[float]:
+        result = self._embed_with_retry([query])
+        return result.data[0].embedding
+
+    @_retry_decorator
+    def _embed_with_retry(self, texts: list[str]) -> Any:
+        """Call the OpenAI embedding API with automatic retry."""
+        return self._client.embeddings.create(
+            model=self._model_name,
+            input=texts,
+        )
+
+
+@registry.register("embedding", "edenai")
+class EdenAIEmbedder(BaseEmbedder):
+    """Embeds text using Eden AI's embedding gateway.
+
+    Wraps ``langchain-community``'s ``EdenAiEmbeddings``.
+    Routes to a sub-provider (e.g. ``"openai"``) so a single
+    Eden AI key can access multiple embedding backends.
+
+    Config params:
+        provider: Sub-provider name (e.g. "openai") — required.
+        model_name: Model name forwarded to the sub-provider
+            (default: "text-embedding-ada-002").
+        batch_size: Texts per API call (default: 100).
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self._provider: str = self.config.get("provider", "")
+        if not self._provider:
+            raise ValueError(
+                "EdenAIEmbedder requires 'provider' in config "
+                "(e.g. 'openai'). "
+                "Set it via embedding.params.provider in YAML."
+            )
+        self._model_name: str = self.config.get("model_name", "text-embedding-ada-002")
+        self._batch_size: int = self.config.get("batch_size", 100)
+
+        api_key = os.environ.get("EDENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "EDENAI_API_KEY environment variable is required. "
+                "Set it in .env or your shell environment."
+            )
+
+        from langchain_community.embeddings.edenai import EdenAiEmbeddings
+
+        self._client: Any = EdenAiEmbeddings(
+            provider=self._provider,
+            model=self._model_name,
+            edenai_api_key=api_key,  # type: ignore[arg-type]
+        )
+
+    def embed_chunks(self, chunks: list[Chunk]) -> list[EmbeddedChunk]:
+        if not chunks:
+            return []
+
+        texts = [c.content for c in chunks]
+        all_embeddings: list[list[float]] = []
+
+        for i in range(0, len(texts), self._batch_size):
+            batch = texts[i : i + self._batch_size]
+            result = self._embed_documents_with_retry(batch)
+            all_embeddings.extend(result)
+
+        return [
+            EmbeddedChunk(chunk=chunk, embedding=emb)
+            for chunk, emb in zip(chunks, all_embeddings, strict=True)
+        ]
+
+    def embed_query(self, query: str) -> list[float]:
+        return self._embed_query_with_retry(query)
+
+    @_retry_decorator
+    def _embed_documents_with_retry(self, texts: list[str]) -> list[list[float]]:
+        """Call Eden AI embedding API for documents with retry."""
+        return self._client.embed_documents(texts)
+
+    @_retry_decorator
+    def _embed_query_with_retry(self, text: str) -> list[float]:
+        """Call Eden AI embedding API for a query with retry."""
+        return self._client.embed_query(text)
