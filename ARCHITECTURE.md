@@ -1,7 +1,7 @@
 # Architecture
 
 > Documents the system as built. For planned work, see
-> [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md).
+> [ROADMAP.md](ROADMAP.md).
 
 This codebase is an experiment harness that measures how different
 RAG component choices affect RAGAS evaluation metrics for an

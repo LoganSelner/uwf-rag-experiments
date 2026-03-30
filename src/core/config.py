@@ -29,7 +29,7 @@ import yaml
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge *override* into *base*.
 
-    Rules (from ARCHITECTURE_PLAN.md §6.4):
+    Rules (from ROADMAP.md §6.4):
     - Nested dicts: merge recursively (override only specified keys)
     - Lists: full replacement (override provides the entire list)
     - Scalars: override replaces base

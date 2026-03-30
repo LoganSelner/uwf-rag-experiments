@@ -8,5 +8,5 @@ Planned implementations:
 - ColBERT reranker
 - Cohere reranker (API-based)
 
-See ARCHITECTURE_PLAN.md Section 13, Phase 3.
+See ROADMAP.md Section 13, Phase 3.
 """

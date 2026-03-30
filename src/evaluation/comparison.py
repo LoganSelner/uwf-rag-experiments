@@ -1,7 +1,7 @@
 """Cross-experiment comparison utility.
 
 Loads multiple experiment summaries and produces comparison tables
-matching the ACMSE paper format (Table 2). See ARCHITECTURE_PLAN.md
+matching the ACMSE paper format (Table 2). See ROADMAP.md
 Section 9.6.
 
 Supports three tiers of comparison (following MLflow/W&B patterns):

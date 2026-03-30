@@ -2,7 +2,7 @@
 
 This module establishes the AgentPipeline class location and interface.
 Implementation will be added in a future branch (Phase 4 of the
-architecture plan). See ARCHITECTURE_PLAN.md Sections 4.2 and 8.3.
+architecture plan). See ROADMAP.md Sections 4.2 and 8.3.
 
 The AgentPipeline will support:
 - Single-agent mode (v2): One LLM in a ReAct loop choosing tools
@@ -22,7 +22,7 @@ class AgentPipeline:
     """Agent-based pipeline (single-agent or multi-agent).
 
     NOT YET IMPLEMENTED. This stub establishes the file location
-    and class interface. See ARCHITECTURE_PLAN.md Section 8.3.
+    and class interface. See ROADMAP.md Section 8.3.
     """
 
     def __init__(
@@ -32,7 +32,7 @@ class AgentPipeline:
     ) -> None:
         raise NotImplementedError(
             "AgentPipeline is not yet implemented. "
-            "This is planned for Phase 4. See ARCHITECTURE_PLAN.md."
+            "This is planned for Phase 4. See ROADMAP.md."
         )
 
     def run(self, query: str) -> GenerationResult:

@@ -7,5 +7,5 @@ Planned implementations:
 - Web search tool (Serper/Tavily API)
 - Gmail tool (or mock)
 
-See ARCHITECTURE_PLAN.md Section 13, Phase 4.
+See ROADMAP.md Section 13, Phase 4.
 """
