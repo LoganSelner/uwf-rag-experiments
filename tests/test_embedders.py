@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from components.embedders import GoogleEmbedder, HuggingFaceEmbedder
+from components.embedders import (
+    EdenAIEmbedder,
+    GoogleEmbedder,
+    HuggingFaceEmbedder,
+    OpenAIEmbedder,
+)
 from core.types import Chunk, EmbeddedChunk
 
 
@@ -243,3 +248,223 @@ class TestGoogleEmbedder:
         result = embedder.embed_chunks([])
 
         assert result == []
+
+
+# -----------------------------------------------------------------------
+# OpenAIEmbedder
+# -----------------------------------------------------------------------
+
+
+def _mock_openai_embed_result(embeddings: list[list[float]]) -> MagicMock:
+    """Create a mock result from client.embeddings.create()."""
+    result = MagicMock()
+    data = []
+    for i, emb in enumerate(embeddings):
+        item = MagicMock()
+        item.index = i
+        item.embedding = emb
+        data.append(item)
+    result.data = data
+    return result
+
+
+class TestOpenAIEmbedder:
+    """Tests for OpenAIEmbedder — all API calls are mocked."""
+
+    def _make_embedder(self, **config_overrides: object) -> OpenAIEmbedder:
+        config: dict = {**config_overrides}
+        return OpenAIEmbedder(config)
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_embed_query_returns_list_of_floats(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.embeddings.create.return_value = _mock_openai_embed_result(
+            [[0.1, 0.2, 0.3]]
+        )
+
+        embedder = self._make_embedder()
+        result = embedder.embed_query("hello")
+
+        assert result == [0.1, 0.2, 0.3]
+        assert all(isinstance(v, float) for v in result)
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_embed_chunks_returns_embedded_chunks(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.embeddings.create.return_value = _mock_openai_embed_result(
+            [[0.1, 0.2], [0.3, 0.4]]
+        )
+
+        embedder = self._make_embedder()
+        chunks = _make_chunks(2)
+        result = embedder.embed_chunks(chunks)
+
+        assert len(result) == 2
+        assert all(isinstance(ec, EmbeddedChunk) for ec in result)
+        assert result[0].chunk is chunks[0]
+        assert result[0].embedding == [0.1, 0.2]
+        assert result[1].embedding == [0.3, 0.4]
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_embed_chunks_empty_list(self, mock_client_cls: MagicMock) -> None:
+        embedder = self._make_embedder()
+        result = embedder.embed_chunks([])
+
+        assert result == []
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_default_model_name(self, mock_client_cls: MagicMock) -> None:
+        embedder = self._make_embedder()
+        assert embedder._model_name == "text-embedding-ada-002"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_custom_model_name(self, mock_client_cls: MagicMock) -> None:
+        embedder = self._make_embedder(model_name="text-embedding-3-small")
+        assert embedder._model_name == "text-embedding-3-small"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": ""}, clear=False)
+    @patch("openai.OpenAI")
+    def test_missing_api_key_raises(self, mock_client_cls: MagicMock) -> None:
+        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+            OpenAIEmbedder()
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_batching(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        # Two batches: first returns 2 embeddings, second returns 1
+        mock_client.embeddings.create.side_effect = [
+            _mock_openai_embed_result([[0.1], [0.2]]),
+            _mock_openai_embed_result([[0.3]]),
+        ]
+
+        embedder = self._make_embedder(batch_size=2)
+        chunks = _make_chunks(3)
+        result = embedder.embed_chunks(chunks)
+
+        assert len(result) == 3
+        assert mock_client.embeddings.create.call_count == 2
+        assert result[0].embedding == [0.1]
+        assert result[1].embedding == [0.2]
+        assert result[2].embedding == [0.3]
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("openai.OpenAI")
+    def test_embed_query_uses_configured_model(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.embeddings.create.return_value = _mock_openai_embed_result([[1.0]])
+
+        embedder = self._make_embedder(model_name="text-embedding-3-small")
+        embedder.embed_query("test")
+
+        call_kwargs = mock_client.embeddings.create.call_args
+        assert call_kwargs.kwargs["model"] == "text-embedding-3-small"
+
+
+# -----------------------------------------------------------------------
+# EdenAIEmbedder
+# -----------------------------------------------------------------------
+
+
+class TestEdenAIEmbedder:
+    """Tests for EdenAIEmbedder — all API calls are mocked."""
+
+    def _make_embedder(self, **config_overrides: object) -> EdenAIEmbedder:
+        config: dict = {"provider": "openai", **config_overrides}
+        return EdenAIEmbedder(config)
+
+    @patch.dict("os.environ", {"EDENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("langchain_community.embeddings.edenai.EdenAiEmbeddings")
+    def test_embed_query_returns_list_of_floats(self, mock_emb_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_emb_cls.return_value = mock_client
+        mock_client.embed_query.return_value = [0.1, 0.2, 0.3]
+
+        embedder = self._make_embedder()
+        result = embedder.embed_query("hello")
+
+        assert result == [0.1, 0.2, 0.3]
+        assert all(isinstance(v, float) for v in result)
+
+    @patch.dict("os.environ", {"EDENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("langchain_community.embeddings.edenai.EdenAiEmbeddings")
+    def test_embed_chunks_returns_embedded_chunks(
+        self, mock_emb_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_emb_cls.return_value = mock_client
+        mock_client.embed_documents.return_value = [[0.1, 0.2], [0.3, 0.4]]
+
+        embedder = self._make_embedder()
+        chunks = _make_chunks(2)
+        result = embedder.embed_chunks(chunks)
+
+        assert len(result) == 2
+        assert all(isinstance(ec, EmbeddedChunk) for ec in result)
+        assert result[0].chunk is chunks[0]
+        assert result[0].embedding == [0.1, 0.2]
+        assert result[1].embedding == [0.3, 0.4]
+
+    @patch.dict("os.environ", {"EDENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("langchain_community.embeddings.edenai.EdenAiEmbeddings")
+    def test_embed_chunks_empty_list(self, mock_emb_cls: MagicMock) -> None:
+        embedder = self._make_embedder()
+        result = embedder.embed_chunks([])
+
+        assert result == []
+
+    @patch.dict("os.environ", {"EDENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("langchain_community.embeddings.edenai.EdenAiEmbeddings")
+    def test_default_model_name(self, mock_emb_cls: MagicMock) -> None:
+        embedder = self._make_embedder()
+        assert embedder._model_name == "text-embedding-ada-002"
+
+    @patch.dict("os.environ", {"EDENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("langchain_community.embeddings.edenai.EdenAiEmbeddings")
+    def test_custom_model_name(self, mock_emb_cls: MagicMock) -> None:
+        embedder = self._make_embedder(model_name="custom-model")
+        assert embedder._model_name == "custom-model"
+
+    @patch.dict("os.environ", {"EDENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("langchain_community.embeddings.edenai.EdenAiEmbeddings")
+    def test_missing_provider_raises(self, mock_emb_cls: MagicMock) -> None:
+        with pytest.raises(ValueError, match="provider"):
+            EdenAIEmbedder()
+
+    @patch.dict("os.environ", {"EDENAI_API_KEY": ""}, clear=False)
+    @patch("langchain_community.embeddings.edenai.EdenAiEmbeddings")
+    def test_missing_api_key_raises(self, mock_emb_cls: MagicMock) -> None:
+        with pytest.raises(ValueError, match="EDENAI_API_KEY"):
+            EdenAIEmbedder({"provider": "openai"})
+
+    @patch.dict("os.environ", {"EDENAI_API_KEY": "fake-key"}, clear=False)
+    @patch("langchain_community.embeddings.edenai.EdenAiEmbeddings")
+    def test_batching(self, mock_emb_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_emb_cls.return_value = mock_client
+        mock_client.embed_documents.side_effect = [
+            [[0.1], [0.2]],
+            [[0.3]],
+        ]
+
+        embedder = self._make_embedder(batch_size=2)
+        chunks = _make_chunks(3)
+        result = embedder.embed_chunks(chunks)
+
+        assert len(result) == 3
+        assert mock_client.embed_documents.call_count == 2
