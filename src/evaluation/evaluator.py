@@ -3,7 +3,7 @@
 Runs the pipeline against an evaluation dataset, computes RAGAS metrics,
 and aggregates results across multiple runs for statistical significance.
 
-See ARCHITECTURE_PLAN.md Section 9 for full specification.
+See ROADMAP.md Section 9 for full specification.
 """
 
 from __future__ import annotations

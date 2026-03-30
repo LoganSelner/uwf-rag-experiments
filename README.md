@@ -6,7 +6,7 @@ This is a research tool, not a production chatbot. Change one variable at a time
 
 ## Research Context
 
-ARGObot is an AI academic advising chatbot developed at UWF's Department of Computer Science. The published paper ([ACMSE 2025](https://doi.org/10.1145/3696673.3723065)) compared a retrieval-based implementation (Gemini 1.0 Pro + ChromaDB) against an agent-based implementation (GPT-4 + ReAct loop). Both versions showed low Context Entity Recall (~0.27–0.29), motivating systematic experimentation with alternative RAG components.
+ARGObot is an AI academic advising chatbot developed at the University of West Florida (UWF). The published paper ([ACMSE 2025](https://doi.org/10.1145/3696673.3723065)) compared a retrieval-based implementation (Gemini 1.0 Pro + ChromaDB) against an agent-based implementation (GPT-4 + ReAct loop). Both versions showed low Context Entity Recall (~0.27–0.29), motivating systematic experimentation with alternative RAG components.
 
 This framework enables that experimentation by isolating every variable behind a YAML config parameter, caching indexes to avoid redundant embedding, and running RAGAS evaluation with statistical aggregation across multiple runs.
 
