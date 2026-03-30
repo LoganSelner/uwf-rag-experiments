@@ -531,7 +531,7 @@ class ConfigValidationError(Exception):
 
 
 _SUPPORTED_EVAL_LLM_PROVIDERS: frozenset[str] = frozenset(
-    {"ollama", "edenai", "google"}
+    {"ollama", "edenai", "google", "openai"}
 )
 
 

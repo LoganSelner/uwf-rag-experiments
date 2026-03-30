@@ -351,6 +351,29 @@ class TestBuildEvaluatorLLM:
         mock_edenai_cls.assert_called_once()
         assert result == "wrapped"
 
+    @patch("ragas.llms.base.LangchainLLMWrapper", autospec=False)
+    @patch("langchain_openai.ChatOpenAI", autospec=False)
+    def test_openai_provider_returns_wrapper(
+        self, mock_chat_cls: MagicMock, mock_wrapper_cls: MagicMock
+    ) -> None:
+        mock_wrapper_cls.return_value = "wrapped"
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}):
+            evaluator = self._make_evaluator("openai", "gpt-4o")
+            result = evaluator._build_evaluator_llm()
+        mock_chat_cls.assert_called_once_with(
+            model="gpt-4o",
+            temperature=0.0,
+            max_tokens=512,
+            api_key="fake-key",
+        )
+        assert result == "wrapped"
+
+    def test_openai_provider_missing_api_key_raises(self) -> None:
+        with patch.dict("os.environ", {"OPENAI_API_KEY": ""}, clear=False):
+            evaluator = self._make_evaluator("openai")
+            with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+                evaluator._build_evaluator_llm()
+
     def test_unsupported_provider_raises(self) -> None:
         evaluator = self._make_evaluator("bogus")
         with pytest.raises(ValueError, match="Unsupported"):
