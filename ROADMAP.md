@@ -404,36 +404,19 @@ as an evaluator LLM provider.
 
 ### Phase 3C — Reranking & Evaluation Standardization
 
-Goal: Add the cross-encoder reranker — the single highest-impact
-retrieval improvement available — and standardize the evaluator
-LLM for all experiments going forward.
+Goal: Add a cross-encoder reranker and standardize the evaluator
+stack for formal experiments.
 
 #### Evaluator LLM Standardization
 
-All formal experiment runs will use **GPT-4o-mini via EdenAI**
+All formal experiment runs will use **GPT-4.1 via EdenAI**
 as the evaluator LLM judge. Ollama remains available for local
 smoke testing and development iteration, but published results
-should use GPT-4o-mini for cross-experiment comparability.
+should use GPT-4.1 for cross-experiment comparability.
 
-Rationale:
-- RAGAS's own documentation and tutorials use GPT-4o-mini —
-  the internal prompt structures are tested against it, minimizing
-  parsing failures
-- 10–15× cheaper than GPT-4o, making multi-config × multi-run
-  experiments feasible without budget anxiety
-- Its failure mode (consistently lenient) preserves experiment
-  *ranking* even if absolute scores are slightly inflated —
-  for relative comparisons ("is config A better than config B?"),
-  this is the right tradeoff
-- The RAGAS team's "Evaluating the Evaluators" study (August 2025)
-  found smaller distilled models behave unpredictably under
-  optimization, but GPT-4o-mini with default RAGAS prompts
-  achieves 75.6–86.9% alignment with human experts
-
-The evaluator embedding remains **BAAI/bge-m3** via HuggingFace.
-This is inherited from `base.yaml` by all experiment configs and
-must not be overridden — it is the fixed measurement instrument
-across all experiments.
+The evaluator embedding is fixed to **text-embedding-3-small**
+via EdenAI and must not be overridden — it is the fixed
+measurement instrument across all experiments.
 
 Config for formal runs (override in experiment YAML or base):
 
@@ -441,14 +424,14 @@ Config for formal runs (override in experiment YAML or base):
 evaluation:
   evaluator_llm:
     provider: "edenai"
-    model_name: "gpt-4o-mini"
+    model_name: "gpt-4.1"
     params:
       sub_provider: "openai"
   evaluator_embedding:
-    type: "huggingface"
+    type: "edenai"
     params:
-      model_name: "BAAI/bge-m3"
-      normalize: true
+      provider: "openai"
+      model_name: "text-embedding-3-small"
 ```
 
 #### Cross-Encoder Reranker
@@ -459,20 +442,8 @@ evaluation:
 
 **Primary model: `Alibaba-NLP/gte-reranker-modernbert-base`**
 
-Selection based on the AIMultiple reranker benchmark (February
-2026, 300 queries, 100 candidates each):
-- 149M parameters — runs efficiently on GPU, feasible on CPU
-- Matches the 1.2B nemotron-rerank-1b on Hit@1 (83.00%)
-- Built on ModernBERT architecture (8192 token context)
-- Apache 2.0 license
-- Available via `sentence-transformers` `CrossEncoder` API —
-  consistent with existing `HuggingFaceEmbedder` wrapper pattern
-
-The benchmark also found that all top rerankers converge around
-87–88% Hit@10, and that this ceiling comes from the retriever,
-not the reranker. This validates the experiment plan: measure
-reranking impact first, then invest in retriever improvements
-(chunking, embedding) with the reranker locked in.
+Selected for its compact size, 8192-token context, Apache 2.0
+license, and straightforward `CrossEncoder` integration.
 
 Config params:
 - `model_name`: HuggingFace model ID
@@ -485,9 +456,9 @@ installed) includes the `CrossEncoder` class, and the locked
 `transformers` 4.57.6 supports ModernBERT (requires ≥4.48.0).
 
 **Milestone:** Can run baseline vs reranked experiments and
-measure the effect of reranking on all RAGAS metrics, especially
-CER. Evaluator LLM is standardized for all formal comparison
-runs.
+measure the effect of reranking on all RAGAS metrics.
+Evaluator LLM and embedding are standardized for all formal
+comparison runs.
 
 ### Phase 3D — Query Transforms & Chunking Strategies
 
@@ -760,9 +731,9 @@ rank-bm25                 BM25 retrieval for hybrid search
 
 The core experiments, organized by what each isolates.
 
-**Evaluator standard:** All formal comparison runs use GPT-4o-mini
-via EdenAI as the evaluator LLM and BAAI/bge-m3 as the evaluator
-embedding. See Phase 3C for rationale.
+**Evaluator standard:** All formal comparison runs use GPT-4.1
+via EdenAI as the evaluator LLM and text-embedding-3-small via
+EdenAI as the evaluator embedding. See Phase 3C for rationale.
 
 ### Replication Experiments
 
