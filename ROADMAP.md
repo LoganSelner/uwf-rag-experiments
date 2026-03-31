@@ -3,7 +3,7 @@
 > Forward-looking plan for the argobot-bench experimentation framework.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 >
-> **Last updated:** 2026-03-30
+> **Last updated:** 2026-03-31
 
 ---
 
@@ -402,19 +402,106 @@ embeddings + generator can run via the linear pipeline for
 standalone quality benchmarking. OpenAI is also available
 as an evaluator LLM provider.
 
-### Phase 3C — Experimentation Components
+### Phase 3C — Reranking & Evaluation Standardization
 
-Goal: Add the knobs that let us try to beat the paper's scores.
-All work within the existing linear pipeline.
+Goal: Add the cross-encoder reranker — the single highest-impact
+retrieval improvement available — and standardize the evaluator
+LLM for all experiments going forward.
+
+#### Evaluator LLM Standardization
+
+All formal experiment runs will use **GPT-4o-mini via EdenAI**
+as the evaluator LLM judge. Ollama remains available for local
+smoke testing and development iteration, but published results
+should use GPT-4o-mini for cross-experiment comparability.
+
+Rationale:
+- RAGAS's own documentation and tutorials use GPT-4o-mini —
+  the internal prompt structures are tested against it, minimizing
+  parsing failures
+- 10–15× cheaper than GPT-4o, making multi-config × multi-run
+  experiments feasible without budget anxiety
+- Its failure mode (consistently lenient) preserves experiment
+  *ranking* even if absolute scores are slightly inflated —
+  for relative comparisons ("is config A better than config B?"),
+  this is the right tradeoff
+- The RAGAS team's "Evaluating the Evaluators" study (August 2025)
+  found smaller distilled models behave unpredictably under
+  optimization, but GPT-4o-mini with default RAGAS prompts
+  achieves 75.6–86.9% alignment with human experts
+
+The evaluator embedding remains **BAAI/bge-m3** via HuggingFace.
+This is inherited from `base.yaml` by all experiment configs and
+must not be overridden — it is the fixed measurement instrument
+across all experiments.
+
+Config for formal runs (override in experiment YAML or base):
+
+```yaml
+evaluation:
+  evaluator_llm:
+    provider: "edenai"
+    model_name: "gpt-4o-mini"
+    params:
+      sub_provider: "openai"
+  evaluator_embedding:
+    type: "huggingface"
+    params:
+      model_name: "BAAI/bge-m3"
+      normalize: true
+```
+
+#### Cross-Encoder Reranker
 
 | # | Component | Registry | Interface | Library |
 |---|-----------|----------|-----------|---------|
-| 11 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` CrossEncoder |
+| 11 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` `CrossEncoder` |
+
+**Primary model: `Alibaba-NLP/gte-reranker-modernbert-base`**
+
+Selection based on the AIMultiple reranker benchmark (February
+2026, 300 queries, 100 candidates each):
+- 149M parameters — runs efficiently on GPU, feasible on CPU
+- Matches the 1.2B nemotron-rerank-1b on Hit@1 (83.00%)
+- Built on ModernBERT architecture (8192 token context)
+- Apache 2.0 license
+- Available via `sentence-transformers` `CrossEncoder` API —
+  consistent with existing `HuggingFaceEmbedder` wrapper pattern
+
+The benchmark also found that all top rerankers converge around
+87–88% Hit@10, and that this ceiling comes from the retriever,
+not the reranker. This validates the experiment plan: measure
+reranking impact first, then invest in retriever improvements
+(chunking, embedding) with the reranker locked in.
+
+Config params:
+- `model_name`: HuggingFace model ID
+  (default: `Alibaba-NLP/gte-reranker-modernbert-base`)
+- `device`: `"cuda"`, `"cpu"`, or `null` for auto-detect
+- `batch_size`: Pairs per forward pass (default: 32)
+
+No new dependencies required — `sentence-transformers>=3` (already
+installed) includes the `CrossEncoder` class, and the locked
+`transformers` 4.57.6 supports ModernBERT (requires ≥4.48.0).
+
+**Milestone:** Can run baseline vs reranked experiments and
+measure the effect of reranking on all RAGAS metrics, especially
+CER. Evaluator LLM is standardized for all formal comparison
+runs.
+
+### Phase 3D — Query Transforms & Chunking Strategies
+
+Goal: Add remaining experimentation knobs. All work within the
+existing linear pipeline. Deferred until Phase 3C results are
+analyzed.
+
+| # | Component | Registry | Interface | Library |
+|---|-----------|----------|-----------|---------|
 | 12 | HyDE query transformer | `hyde` | `BaseQueryTransformer` | Custom (LLM generates hypothetical doc) |
 | 13 | Multi-query transformer | `multi_query` | `BaseQueryTransformer` | Custom (LLM generates N query variants) |
 | 14 | Semantic chunker | `semantic` | `BaseChunker` | `langchain-experimental` SemanticChunker |
 
-**Milestone:** Can run a matrix of experiments: baseline ×
+**Milestone:** Can run a full experiment matrix: baseline ×
 {with/without reranker} × {passthrough/HyDE/multi-query} ×
 {recursive/semantic chunking} and compare all results in one
 table.
@@ -651,6 +738,12 @@ langchain-openai          OpenAI evaluator LLM (ChatOpenAI)
 
 ### Phase 3C additions
 
+No new dependencies. The cross-encoder reranker uses
+`sentence-transformers` `CrossEncoder` (already installed).
+The locked `transformers` 4.57.6 supports ModernBERT.
+
+### Phase 3D additions
+
 ```
 langchain-experimental    Semantic chunker
 ```
@@ -667,6 +760,10 @@ rank-bm25                 BM25 retrieval for hybrid search
 
 The core experiments, organized by what each isolates.
 
+**Evaluator standard:** All formal comparison runs use GPT-4o-mini
+via EdenAI as the evaluator LLM and BAAI/bge-m3 as the evaluator
+embedding. See Phase 3C for rationale.
+
 ### Replication Experiments
 
 | Experiment | What It Tests | Requires |
@@ -674,6 +771,15 @@ The core experiments, organized by what each isolates.
 | `v1_replication` | Reproduce paper Table 2, R-ARGObot row | Phase 3A |
 | `v2_replication` | Reproduce paper Table 2, A-ARGObot row | Phase 4A |
 | `v1_vs_v2_controlled` | Agent vs linear with identical indexing | Phase 4A |
+
+### Reranker Experiments (Phase 3C)
+
+| Experiment | What It Tests | Baseline |
+|-----------|---------------|----------|
+| `reranker_cross_encoder` | Effect of cross-encoder reranking on all metrics | `baseline` (reranking: none) |
+| `reranker_cross_encoder_topk_3` | Reranking with tight final selection (top_k_final=3) | `reranker_cross_encoder` |
+| `reranker_cross_encoder_topk_10` | Reranking with wider candidate pool (top_k_retrieve=20, top_k_final=10) | `reranker_cross_encoder` |
+| `reranker_cross_encoder_chroma` | Reranking with Chroma vectorstore | `reranker_cross_encoder` |
 
 ### Component Isolation Experiments
 
