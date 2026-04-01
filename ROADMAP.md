@@ -3,7 +3,7 @@
 > Forward-looking plan for the argobot-bench experimentation framework.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 >
-> **Last updated:** 2026-03-30
+> **Last updated:** 2026-03-31
 
 ---
 
@@ -402,19 +402,77 @@ embeddings + generator can run via the linear pipeline for
 standalone quality benchmarking. OpenAI is also available
 as an evaluator LLM provider.
 
-### Phase 3C — Experimentation Components
+### Phase 3C — Reranking & Evaluation Standardization
 
-Goal: Add the knobs that let us try to beat the paper's scores.
-All work within the existing linear pipeline.
+Goal: Add a cross-encoder reranker and standardize the evaluator
+stack for formal experiments.
+
+#### Evaluator LLM Standardization
+
+All formal experiment runs will use **GPT-4.1 via EdenAI**
+as the evaluator LLM judge. Ollama remains available for local
+smoke testing and development iteration, but published results
+should use GPT-4.1 for cross-experiment comparability.
+
+The evaluator embedding is fixed to **text-embedding-3-small**
+via EdenAI and must not be overridden — it is the fixed
+measurement instrument across all experiments.
+
+Config for formal runs (override in experiment YAML or base):
+
+```yaml
+evaluation:
+  evaluator_llm:
+    provider: "edenai"
+    model_name: "gpt-4.1"
+    params:
+      sub_provider: "openai"
+  evaluator_embedding:
+    type: "edenai"
+    params:
+      provider: "openai"
+      model_name: "text-embedding-3-small"
+```
+
+#### Cross-Encoder Reranker
 
 | # | Component | Registry | Interface | Library |
 |---|-----------|----------|-----------|---------|
-| 11 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` CrossEncoder |
+| 11 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` `CrossEncoder` |
+
+**Primary model: `Alibaba-NLP/gte-reranker-modernbert-base`**
+
+Selected for its compact size, 8192-token context, Apache 2.0
+license, and straightforward `CrossEncoder` integration.
+
+Config params:
+- `model_name`: HuggingFace model ID
+  (default: `Alibaba-NLP/gte-reranker-modernbert-base`)
+- `device`: `"cuda"`, `"cpu"`, or `null` for auto-detect
+- `batch_size`: Pairs per forward pass (default: 32)
+
+No new dependencies required — `sentence-transformers>=3` (already
+installed) includes the `CrossEncoder` class, and the locked
+`transformers` 4.57.6 supports ModernBERT (requires ≥4.48.0).
+
+**Milestone:** Can run baseline vs reranked experiments and
+measure the effect of reranking on all RAGAS metrics.
+Evaluator LLM and embedding are standardized for all formal
+comparison runs.
+
+### Phase 3D — Query Transforms & Chunking Strategies
+
+Goal: Add remaining experimentation knobs. All work within the
+existing linear pipeline. Deferred until Phase 3C results are
+analyzed.
+
+| # | Component | Registry | Interface | Library |
+|---|-----------|----------|-----------|---------|
 | 12 | HyDE query transformer | `hyde` | `BaseQueryTransformer` | Custom (LLM generates hypothetical doc) |
 | 13 | Multi-query transformer | `multi_query` | `BaseQueryTransformer` | Custom (LLM generates N query variants) |
 | 14 | Semantic chunker | `semantic` | `BaseChunker` | `langchain-experimental` SemanticChunker |
 
-**Milestone:** Can run a matrix of experiments: baseline ×
+**Milestone:** Can run a full experiment matrix: baseline ×
 {with/without reranker} × {passthrough/HyDE/multi-query} ×
 {recursive/semantic chunking} and compare all results in one
 table.
@@ -651,6 +709,12 @@ langchain-openai          OpenAI evaluator LLM (ChatOpenAI)
 
 ### Phase 3C additions
 
+No new dependencies. The cross-encoder reranker uses
+`sentence-transformers` `CrossEncoder` (already installed).
+The locked `transformers` 4.57.6 supports ModernBERT.
+
+### Phase 3D additions
+
 ```
 langchain-experimental    Semantic chunker
 ```
@@ -667,6 +731,10 @@ rank-bm25                 BM25 retrieval for hybrid search
 
 The core experiments, organized by what each isolates.
 
+**Evaluator standard:** All formal comparison runs use GPT-4.1
+via EdenAI as the evaluator LLM and text-embedding-3-small via
+EdenAI as the evaluator embedding. See Phase 3C for rationale.
+
 ### Replication Experiments
 
 | Experiment | What It Tests | Requires |
@@ -674,6 +742,15 @@ The core experiments, organized by what each isolates.
 | `v1_replication` | Reproduce paper Table 2, R-ARGObot row | Phase 3A |
 | `v2_replication` | Reproduce paper Table 2, A-ARGObot row | Phase 4A |
 | `v1_vs_v2_controlled` | Agent vs linear with identical indexing | Phase 4A |
+
+### Reranker Experiments (Phase 3C)
+
+| Experiment | What It Tests | Baseline |
+|-----------|---------------|----------|
+| `reranker_cross_encoder` | Effect of cross-encoder reranking on all metrics | `baseline` (reranking: none) |
+| `reranker_cross_encoder_topk_3` | Reranking with tight final selection (top_k_final=3) | `reranker_cross_encoder` |
+| `reranker_cross_encoder_topk_10` | Reranking with wider candidate pool (top_k_retrieve=20, top_k_final=10) | `reranker_cross_encoder` |
+| `reranker_cross_encoder_chroma` | Reranking with Chroma vectorstore | `reranker_cross_encoder` |
 
 ### Component Isolation Experiments
 
