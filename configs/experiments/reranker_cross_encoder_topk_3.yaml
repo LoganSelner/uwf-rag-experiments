@@ -1,0 +1,21 @@
+# Cross-encoder reranking with tight final selection.
+#
+# Same as reranker_cross_encoder but returns only 3 chunks to the
+# generator. Tests whether fewer, higher-quality chunks improve
+# generation metrics.
+
+extends: ../formal_eval_base.yaml
+
+name: "reranker_cross_encoder_topk_3"
+description: "Cross-encoder reranking with top_k_final=3"
+
+query:
+  retrieval:
+    type: "dense"
+    top_k_retrieve: 10
+    top_k_final: 3
+
+  reranking:
+    type: "cross_encoder"
+    params:
+      model_name: "Alibaba-NLP/gte-reranker-modernbert-base"

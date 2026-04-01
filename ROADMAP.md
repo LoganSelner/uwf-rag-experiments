@@ -87,6 +87,7 @@ behind `BaseEmbedder`), vectorstore (`faiss-cpu` behind
 | Query Transform | `PassthroughQueryTransformer` | `passthrough` | Returns query unchanged |
 | Query Transform | `ContextualizerQueryTransformer` | `contextualizer` | LLM reformulation with history |
 | Reranking | `NoOpReranker` | `none` | Passes through, truncates to top_k |
+| Reranking | `CrossEncoderReranker` | `cross_encoder` | sentence-transformers CrossEncoder, gte-reranker-modernbert-base default |
 | Memory | `NoMemory` | `none` | No-op |
 | Memory | `BufferWindowMemory` | `buffer_window` | Last N turns |
 
@@ -402,7 +403,7 @@ embeddings + generator can run via the linear pipeline for
 standalone quality benchmarking. OpenAI is also available
 as an evaluator LLM provider.
 
-### Phase 3C — Reranking & Evaluation Standardization
+### Phase 3C — Reranking & Evaluation Standardization — COMPLETED
 
 Goal: Add a cross-encoder reranker and standardize the evaluator
 stack for formal experiments.
@@ -436,9 +437,9 @@ evaluation:
 
 #### Cross-Encoder Reranker
 
-| # | Component | Registry | Interface | Library |
-|---|-----------|----------|-----------|---------|
-| 11 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` `CrossEncoder` |
+| # | Component | Registry | Interface | Library | Status |
+|---|-----------|----------|-----------|---------|--------|
+| 11 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` `CrossEncoder` | Done |
 
 **Primary model: `Alibaba-NLP/gte-reranker-modernbert-base`**
 
