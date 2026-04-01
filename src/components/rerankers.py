@@ -25,6 +25,10 @@ class CrossEncoderReranker(BaseReranker):
     More accurate than bi-encoder similarity but slower — intended
     as a second-stage reranker over a small candidate set.
 
+    Expects a regression-style reranker model (``num_labels=1``)
+    that outputs a single relevance score per pair.  Classification
+    cross-encoders (``num_labels > 1``) are not supported.
+
     Config params:
         model_name: HuggingFace model ID
             (default: "Alibaba-NLP/gte-reranker-modernbert-base")
