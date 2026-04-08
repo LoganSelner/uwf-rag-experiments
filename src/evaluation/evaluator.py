@@ -358,12 +358,15 @@ class Evaluator:
         if llm_config.provider == "ollama":
             from langchain_ollama import OllamaLLM
 
-            return LangchainLLMWrapper(
-                OllamaLLM(
-                    model=llm_config.model_name,
-                    temperature=llm_config.temperature,
-                )
-            )
+            ollama_kwargs: dict[str, Any] = {
+                "model": llm_config.model_name,
+                "temperature": llm_config.temperature,
+            }
+            base_url = llm_config.params.get("base_url")
+            if base_url:
+                ollama_kwargs["base_url"] = base_url
+
+            return LangchainLLMWrapper(OllamaLLM(**ollama_kwargs))
 
         if llm_config.provider == "edenai":
             import os

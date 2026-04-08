@@ -337,6 +337,33 @@ class TestBuildEvaluatorLLM:
         assert result == "wrapped"
 
     @patch("ragas.llms.base.LangchainLLMWrapper", autospec=False)
+    @patch("langchain_ollama.OllamaLLM", autospec=False)
+    def test_ollama_provider_passes_base_url_from_params(
+        self, mock_ollama_cls: MagicMock, mock_wrapper_cls: MagicMock
+    ) -> None:
+        mock_wrapper_cls.return_value = "wrapped"
+        cfg = EvaluationConfig.from_dict(
+            {
+                "evaluator_llm": {
+                    "provider": "ollama",
+                    "model_name": "qwen3:14b",
+                    "temperature": 0.0,
+                    "params": {
+                        "base_url": "http://custom-ollama:11434",
+                    },
+                },
+            }
+        )
+        evaluator = Evaluator(cfg)
+        result = evaluator._build_evaluator_llm()
+        mock_ollama_cls.assert_called_once_with(
+            model="qwen3:14b",
+            temperature=0.0,
+            base_url="http://custom-ollama:11434",
+        )
+        assert result == "wrapped"
+
+    @patch("ragas.llms.base.LangchainLLMWrapper", autospec=False)
     @patch(
         "langchain_community.chat_models.edenai.ChatEdenAI",
         autospec=False,
