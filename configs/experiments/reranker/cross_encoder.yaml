@@ -7,7 +7,7 @@
 # Variable changed: reranking (none → cross_encoder)
 # Everything else inherited from base.yaml.
 
-extends: ../../smoke.yaml
+extends: ../../base.yaml
 
 name: "reranker_cross_encoder"
 description: "Baseline + cross-encoder reranking (gte-reranker-modernbert-base)"
