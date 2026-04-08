@@ -13,8 +13,10 @@ import argparse
 import logging
 from pathlib import Path
 import sys
+import warnings
 
 from dotenv import load_dotenv
+import torch
 
 # Add src/ to path for bare imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -64,6 +66,15 @@ def main() -> None:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    # Enable TF32 tensor cores for faster float32 matmul on Ampere+ GPUs.
+    # Precision loss is negligible for embedding/reranking inference.
+    torch.set_float32_matmul_precision("high")
+
+    # Suppress non-actionable inductor warning about SM count — the GPU
+    # simply doesn't have enough SMs for max_autotune_gemm benchmarking
+    # and falls back to a heuristic automatically.
+    warnings.filterwarnings("ignore", message="Not enough SMs to use max_autotune_gemm")
 
     # Load environment variables from .env before any component
     # needs them (API keys, etc.).
