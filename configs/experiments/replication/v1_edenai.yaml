@@ -1,64 +1,35 @@
-# v1 Replication via EdenAI — closest runnable Google-backed variant
+# v1 Replication via EdenAI — thin override of direct-Google v1
 #
-# Keeps the published v1 retrieval/chunking/prompt settings, but routes
-# through EdenAI using Google models that were verified against the live
-# EdenAI v2 endpoints on 2026-04-08.
+# Inherits the canonical v1 replication config and only overrides the
+# provider/model settings needed to run through EdenAI.
 #
-# Verified constraints:
-#   - `gemini-1.0-pro` is rejected by EdenAI's Google chat provider.
-#   - `models/embedding-001` resolves to `google/text-multilingual-embedding-002`.
-#   - `gemini-2.0-flash` succeeds on EdenAI's Google chat provider.
+# Verified against live EdenAI on 2026-04-08:
+#   - `gemini-1.0-pro` is not available via EdenAI's Google chat path
+#   - `models/embedding-001` resolves to `text-multilingual-embedding-002`
+#   - `gemini-2.0-flash` succeeds via EdenAI's Google chat path
 #
 # Usage:
 #   python scripts/run_experiment.py configs/experiments/replication/v1_edenai.yaml -v
 
-extends: ../../base.yaml
+extends: v1.yaml
 
 name: "v1_replication_edenai"
 description: "v1-style replication via EdenAI: Google embeddings + Chroma + Gemini 2.0 Flash"
 
 indexing:
-  sources:
-    - name: "student_handbook"
-      path: "data/sources/student_handbook.pdf"
-      ingest:
-        type: "pdf"
-
-  chunking:
-    type: "recursive_langchain"
-    params:
-      chunk_size: 1200
-      chunk_overlap: 200
-
   embedding:
     type: "edenai"
     params:
       provider: "google"
       model_name: "text-multilingual-embedding-002"
 
-  vectorstore:
-    type: "chroma"
-    params:
-      metric: "cosine"
-      collection_name: "v1_handbook_chunks"
-
 query:
   query_transform:
-    type: "contextualizer"
     params:
       generator_type: "edenai"
       sub_provider: "google"
       llm:
         model_name: "gemini-2.0-flash"
-        temperature: 0.0
-
-  retrieval:
-    type: "dense"
-    top_k_retrieve: 3
-    top_k_final: 3
-
-  reranking:
-    type: "none"
 
   generation:
     type: "edenai"
@@ -68,18 +39,3 @@ query:
   generation_llm:
     provider: "edenai"
     model_name: "gemini-2.0-flash"
-    temperature: 0.0
-    max_tokens: 1024
-
-  prompt:
-    type: "chat"
-    system_template: |
-      Answer using ONLY verbatim quotes from the provided context.
-      Include the citation source for each quote.
-      If the context does not contain the answer, say "I don't know".
-    context_format: "numbered"
-    use_chain_of_thought: false
-    citation_style: "verbatim"
-
-evaluation:
-  dataset: "data/datasets/19qHB_dataset.jsonl"
