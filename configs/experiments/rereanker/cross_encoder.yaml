@@ -1,0 +1,19 @@
+# Cross-encoder reranking experiment.
+#
+# Adds cross-encoder reranking to the baseline. Compare against
+# the baseline (reranking: none) to isolate the effect of reranking
+# on all RAGAS metrics.
+#
+# Variable changed: reranking (none → cross_encoder)
+# Everything else inherited from base.yaml.
+
+extends: ../../base.yaml
+
+name: "reranker_cross_encoder"
+description: "Baseline + cross-encoder reranking (gte-reranker-modernbert-base)"
+
+query:
+  reranking:
+    type: "cross_encoder"
+    params:
+      model_name: "Alibaba-NLP/gte-reranker-modernbert-base"

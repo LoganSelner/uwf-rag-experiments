@@ -1,0 +1,25 @@
+# Cross-encoder reranking with a high-recall setting.
+#
+# Retrieves 20 candidates and keeps 10 after reranking. This is an
+# exploratory upper-bound setting that expands both the candidate
+# pool and the final context beyond the 3/3 baseline.
+#
+# Variables changed vs baseline: reranking (none → cross_encoder),
+# top_k_retrieve (3 → 20), top_k_final (3 → 10)
+# Compare against: reranker_cross_encoder_topk_5 (broader recall/context sweep)
+
+extends: ../../base.yaml
+
+name: "reranker_cross_encoder_topk_10"
+description: "Cross-encoder reranking with top_k_retrieve=20, top_k_final=10"
+
+query:
+  retrieval:
+    type: "dense"
+    top_k_retrieve: 20
+    top_k_final: 10
+
+  reranking:
+    type: "cross_encoder"
+    params:
+      model_name: "Alibaba-NLP/gte-reranker-modernbert-base"

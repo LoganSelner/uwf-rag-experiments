@@ -4,7 +4,7 @@
 #   - LangChain recursive chunking (1000 tokens, 100 overlap)
 #   - text-embedding-3-small embeddings via EdenAI (OpenAI sub-provider)
 #   - Chroma vector store (cosine)
-#   - Dense retrieval (top_k_retrieve=10, top_k_final=5)
+#   - Dense retrieval (top_k_retrieve=3, top_k_final=3)
 #   - No reranking
 #   - Contextualizer query transform via EdenAI GPT-4.1 (OpenAI sub-provider)
 #   - EdenAI GPT-4.1 generation (OpenAI sub-provider)
@@ -59,8 +59,8 @@ query:
 
   retrieval:
     type: "dense"
-    top_k_retrieve: 10
-    top_k_final: 5
+    top_k_retrieve: 3
+    top_k_final: 3
 
   reranking:
     type: "none"

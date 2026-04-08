@@ -749,8 +749,9 @@ EdenAI as the evaluator embedding. See Phase 3C for rationale.
 | Experiment | What It Tests | Baseline |
 |-----------|---------------|----------|
 | `reranker_cross_encoder` | Effect of cross-encoder reranking on all metrics | `baseline` (reranking: none) |
-| `reranker_cross_encoder_topk_3` | Reranking with tight final selection (top_k_final=3) | `reranker_cross_encoder` |
-| `reranker_cross_encoder_topk_10` | Reranking with wider candidate pool (top_k_retrieve=20, top_k_final=10) | `reranker_cross_encoder` |
+| `reranker_cross_encoder_topk_3` | Wider candidate pool with fixed final selection (top_k_retrieve=10, top_k_final=3) | `reranker_cross_encoder` |
+| `reranker_cross_encoder_topk_5` | Larger final context after reranking (top_k_retrieve=10, top_k_final=5) | `reranker_cross_encoder_topk_3` |
+| `reranker_cross_encoder_topk_10` | High-recall exploratory setting (top_k_retrieve=20, top_k_final=10) | `reranker_cross_encoder_topk_5` |
 | `reranker_cross_encoder_chroma` | Reranking with Chroma vectorstore | `reranker_cross_encoder` |
 
 ### Component Isolation Experiments
