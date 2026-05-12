@@ -107,12 +107,22 @@ def main() -> None:
 
     logger.info("Experiment '%s' complete. Results saved to %s", config.name, exp_dir)
 
-    # Print summary
+    # Print summary. Branch on the configured mode rather than on
+    # `metrics` emptiness — empty metrics in full/retrieval_only runs
+    # means scoring was attempted and produced nothing (all queries
+    # failed, judge returned NaN, etc.), which is a failure to flag,
+    # not a deliberate skip.
     print("\n=== Results ===")
-    if not experiment_result.metrics:
+    if config.evaluation.mode == "none":
         print(
-            f"  Scoring skipped (evaluation.mode='{config.evaluation.mode}'). "
+            f"  Scoring skipped (evaluation.mode='none'). "
             f"Per-sample outputs saved to {exp_dir}."
+        )
+    elif not experiment_result.metrics:
+        print(
+            f"  No metrics produced (evaluation.mode="
+            f"'{config.evaluation.mode}'). Scoring was attempted but "
+            f"yielded no values — check logs for query or judge errors."
         )
     else:
         for name, value in sorted(experiment_result.metrics.items()):
