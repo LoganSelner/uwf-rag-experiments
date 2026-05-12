@@ -25,13 +25,19 @@ class CrossEncoderReranker(BaseReranker):
     More accurate than bi-encoder similarity but slower — intended
     as a second-stage reranker over a small candidate set.
 
-    Expects a regression-style reranker model (``num_labels=1``)
-    that outputs a single relevance score per pair.  Classification
-    cross-encoders (``num_labels > 1``) are not supported.
+    Requires a regression-style reranker model (``num_labels=1``)
+    that returns a single scalar relevance score per (query, chunk)
+    pair.  Classification cross-encoders (``num_labels > 1``) are
+    NOT supported — ``predict`` returns a per-class array in that
+    case and ``float(s)`` below will raise ``TypeError`` at query
+    time.  When swapping ``model_name``, verify the model is a
+    regression reranker (e.g. its HF model card / ``config.json``
+    has ``num_labels: 1``) before running an experiment.
 
     Config params:
-        model_name: HuggingFace model ID
-            (default: "Alibaba-NLP/gte-reranker-modernbert-base")
+        model_name: HuggingFace model ID for a regression
+            cross-encoder (default:
+            "Alibaba-NLP/gte-reranker-modernbert-base")
         device: "cuda", "cpu", or null for auto-detect (default: null)
         batch_size: Pairs per forward pass (default: 32)
     """
