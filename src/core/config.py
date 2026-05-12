@@ -534,6 +534,8 @@ _SUPPORTED_EVAL_LLM_PROVIDERS: frozenset[str] = frozenset(
     {"ollama", "edenai", "google", "openai"}
 )
 
+_SUPPORTED_EVAL_MODES: frozenset[str] = frozenset({"full", "retrieval_only", "none"})
+
 
 def validate_config(config: ExperimentConfig, registry: Any) -> None:
     """Validate an ExperimentConfig against the component registry.
@@ -577,7 +579,18 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
             f"(got {config.evaluation.run_config.max_retries})"
         )
 
+    # --- Evaluation mode ---
+    if config.evaluation.mode not in _SUPPORTED_EVAL_MODES:
+        errors.append(
+            f"evaluation.mode: '{config.evaluation.mode}' is not supported. "
+            f"Supported: {sorted(_SUPPORTED_EVAL_MODES)}"
+        )
+
     # --- Evaluator provider + embedding ---
+    # Mode "none" runs the pipeline against the dataset but skips scoring,
+    # so the judge LLM and judge embedder are not needed.
+    scoring_enabled = config.evaluation.mode != "none"
+
     eval_llm = config.evaluation.evaluator_llm
     if eval_llm.provider and eval_llm.provider not in _SUPPORTED_EVAL_LLM_PROVIDERS:
         errors.append(
@@ -594,7 +607,7 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
             "embedding",
             "evaluation.evaluator_embedding.type",
         )
-    else:
+    elif scoring_enabled:
         errors.append(
             "evaluation.evaluator_embedding.type is empty — "
             "a dedicated evaluation embedder is required for consistent measurement"

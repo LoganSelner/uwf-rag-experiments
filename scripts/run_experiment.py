@@ -109,10 +109,16 @@ def main() -> None:
 
     # Print summary
     print("\n=== Results ===")
-    for name, value in sorted(experiment_result.metrics.items()):
-        if not name.endswith("_std"):
-            std = experiment_result.metrics.get(f"{name}_std", 0.0)
-            print(f"  {name}: {value:.4f} ± {std:.4f}")
+    if not experiment_result.metrics:
+        print(
+            f"  Scoring skipped (evaluation.mode='{config.evaluation.mode}'). "
+            f"Per-sample outputs saved to {exp_dir}."
+        )
+    else:
+        for name, value in sorted(experiment_result.metrics.items()):
+            if not name.endswith("_std"):
+                std = experiment_result.metrics.get(f"{name}_std", 0.0)
+                print(f"  {name}: {value:.4f} ± {std:.4f}")
 
 
 if __name__ == "__main__":
