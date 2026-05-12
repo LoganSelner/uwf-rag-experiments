@@ -1,18 +1,24 @@
 # Base experiment config — all experiments inherit from this.
 #
-# This is the canonical local baseline:
-#   - recursive_langchain chunking
-#   - BAAI/bge-m3 embeddings
-#   - FAISS vector store
-#   - dense retrieval
-#   - passthrough query transform
-#   - Ollama qwen3:14b generation
-#   - Ollama qwen3:14b evaluation judge
+# Pipeline defaults:
+#   - LangChain recursive chunking (1000 tokens, 100 overlap)
+#   - text-embedding-3-small embeddings via EdenAI (OpenAI sub-provider)
+#   - Chroma vector store (cosine)
+#   - Dense retrieval (top_k_retrieve=3, top_k_final=3)
+#   - No reranking
+#   - Contextualizer query transform via EdenAI GPT-4.1 (OpenAI sub-provider)
+#   - EdenAI GPT-4.1 generation (OpenAI sub-provider)
 #
-# Experiment configs should override only the variables they are testing.
+# Evaluation defaults (formal):
+#   - GPT-4.1 via EdenAI as LLM judge
+#   - text-embedding-3-small via EdenAI as evaluation embedding
+#   - 3 runs for statistical significance
+#
+# Experiment configs extend this and override only the variable being tested.
+# For local smoke testing, use configs/smoke.yaml instead.
 
 name: "baseline"
-description: "Local baseline: bge-m3 + FAISS + qwen3:14b"
+description: "Local baseline: text-embedding-3-small (EdenAI) + Chroma + EdenAI GPT-4.1, formal eval"
 pipeline_mode: "linear"
 
 indexing:
@@ -25,55 +31,63 @@ indexing:
   chunking:
     type: "recursive_langchain"
     params:
-      chunk_size: 512
-      chunk_overlap: 50
-      separators: ["\n\n", "\n", ". ", " ", ""]
+      chunk_size: 1000
+      chunk_overlap: 100
+      separators: ["\n\n", "\n", ".", " ", ""]
 
   embedding:
-    type: "huggingface"
+    type: "edenai"
     params:
-      model_name: "BAAI/bge-m3"
-      normalize: true
+      provider: "openai"
+      model_name: "text-embedding-3-small"
 
   vectorstore:
-    type: "faiss"
+    type: "chroma"
     params:
       metric: "cosine"
 
 query:
   query_transform:
-    type: "passthrough"
+    type: "contextualizer"
+    params:
+      generator_type: "edenai"
+      sub_provider: "openai"
+      system_prompt: "Given a chat history and the latest user question, rewrite it as a standalone question."
+      llm:
+        model_name: "gpt-4.1"
+        temperature: 0.0
 
   retrieval:
     type: "dense"
-    top_k_retrieve: 10
-    top_k_final: 5
+    top_k_retrieve: 3
+    top_k_final: 3
 
   reranking:
     type: "none"
 
   generation:
-    type: "ollama"
+    type: "edenai"
+    params:
+      sub_provider: "openai"
 
   generation_llm:
-    provider: "ollama"
-    model_name: "qwen3:14b"
+    provider: "edenai"
+    model_name: "gpt-4.1"
     temperature: 0.0
     max_tokens: 1024
 
   prompt:
     type: "chat"
     system_template: |
-      You are an academic advisor for the University of West Florida.
-      Answer the student's question using ONLY the provided context.
-      If the context does not contain enough information to answer,
-      say so clearly.
-    context_format: "numbered"
+      You are an assistant for question-answering tasks.
+      Use the following pieces of retrieved context to answer the question.
+      If you don't know the answer, say so concisely.
+    context_format: "plain"
     use_chain_of_thought: false
     citation_style: "none"
 
 evaluation:
-  dataset: "data/datasets/testKB_dataset.jsonl"
+  dataset: "data/datasets/25qKB_dataset.jsonl"
   mode: "full"
   metrics:
     - "answer_correctness"
@@ -86,16 +100,18 @@ evaluation:
     - "context_entity_recall"
   num_runs: 3
   run_config:
-    timeout: 1200
+    timeout: 300
     max_retries: 10
     max_wait: 60
-    max_workers: 2
+    max_workers: 4
   evaluator_llm:
-    provider: "ollama"
-    model_name: "qwen3:14b"
+    provider: "edenai"
+    model_name: "gpt-4.1"
     temperature: 0.0
-  evaluator_embedding:
-    type: "huggingface"
     params:
-      model_name: "BAAI/bge-m3"
-      normalize: true
+      sub_provider: "openai"
+  evaluator_embedding:
+    type: "edenai"
+    params:
+      provider: "openai"
+      model_name: "text-embedding-3-small"

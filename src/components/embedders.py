@@ -9,6 +9,7 @@ import logging
 import os
 from typing import Any
 
+import requests
 from sentence_transformers import SentenceTransformer
 from tenacity import (
     before_sleep_log,
@@ -206,7 +207,7 @@ class OpenAIEmbedder(BaseEmbedder):
 class EdenAIEmbedder(BaseEmbedder):
     """Embeds text using Eden AI's embedding gateway.
 
-    Wraps ``langchain-community``'s ``EdenAiEmbeddings``.
+    Calls the Eden AI ``/v2/text/embeddings`` endpoint directly.
     Routes to a sub-provider (e.g. ``"openai"``) so a single
     Eden AI key can access multiple embedding backends.
 
@@ -216,6 +217,8 @@ class EdenAIEmbedder(BaseEmbedder):
             (default: "text-embedding-ada-002").
         batch_size: Texts per API call (default: 100).
     """
+
+    _ENDPOINT = "https://api.edenai.run/v2/text/embeddings"
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
@@ -229,20 +232,50 @@ class EdenAIEmbedder(BaseEmbedder):
         self._model_name: str = self.config.get("model_name", "text-embedding-ada-002")
         self._batch_size: int = self.config.get("batch_size", 100)
 
-        api_key = os.environ.get("EDENAI_API_KEY", "")
-        if not api_key:
+        self._api_key = os.environ.get("EDENAI_API_KEY", "")
+        if not self._api_key:
             raise ValueError(
                 "EDENAI_API_KEY environment variable is required. "
                 "Set it in .env or your shell environment."
             )
 
-        from langchain_community.embeddings.edenai import EdenAiEmbeddings
-
-        self._client: Any = EdenAiEmbeddings(
-            provider=self._provider,
-            model=self._model_name,
-            edenai_api_key=api_key,  # type: ignore[arg-type]
+        self._session = requests.Session()
+        self._session.headers.update(
+            {
+                "accept": "application/json",
+                "content-type": "application/json",
+                "authorization": f"Bearer {self._api_key}",
+            }
         )
+
+    def _call_api(self, texts: list[str]) -> list[list[float]]:
+        """POST to Eden AI embeddings and return a list of embedding vectors."""
+        payload: dict[str, Any] = {
+            "texts": texts,
+            "providers": self._provider,
+            "response_as_dict": False,
+        }
+        if self._model_name:
+            payload["settings"] = {self._provider: self._model_name}
+
+        resp = self._session.post(self._ENDPOINT, json=payload)
+        if resp.status_code >= 500:
+            raise RuntimeError(f"EdenAI server error {resp.status_code}")
+        if resp.status_code >= 400:
+            raise ValueError(f"EdenAI invalid payload: {resp.text}")
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"EdenAI unexpected status {resp.status_code}: {resp.text}"
+            )
+
+        data = resp.json()
+        # response_as_dict=False returns a list of provider result objects
+        provider_result = data[0]
+        if provider_result.get("status") == "fail":
+            err = provider_result.get("error", {}).get("message", "unknown error")
+            raise RuntimeError(f"EdenAI provider error: {err}")
+
+        return [item["embedding"] for item in provider_result["items"]]
 
     def embed_chunks(self, chunks: list[Chunk]) -> list[EmbeddedChunk]:
         if not chunks:
@@ -253,7 +286,7 @@ class EdenAIEmbedder(BaseEmbedder):
 
         for i in range(0, len(texts), self._batch_size):
             batch = texts[i : i + self._batch_size]
-            result = self._embed_documents_with_retry(batch)
+            result = self._embed_with_retry(batch)
             all_embeddings.extend(result)
 
         return [
@@ -262,14 +295,9 @@ class EdenAIEmbedder(BaseEmbedder):
         ]
 
     def embed_query(self, query: str) -> list[float]:
-        return self._embed_query_with_retry(query)
+        return self._embed_with_retry([query])[0]
 
     @_retry_decorator
-    def _embed_documents_with_retry(self, texts: list[str]) -> list[list[float]]:
-        """Call Eden AI embedding API for documents with retry."""
-        return self._client.embed_documents(texts)
-
-    @_retry_decorator
-    def _embed_query_with_retry(self, text: str) -> list[float]:
-        """Call Eden AI embedding API for a query with retry."""
-        return self._client.embed_query(text)
+    def _embed_with_retry(self, texts: list[str]) -> list[list[float]]:
+        """Call Eden AI embedding API with retry."""
+        return self._call_api(texts)

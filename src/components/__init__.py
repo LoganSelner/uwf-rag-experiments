@@ -20,10 +20,10 @@ from components import (  # noqa: F401
     ingestors,
     prompts,
     query_transforms,
+    rerankers,
     retrievers,
     vectorstores,
 )
 
 # Stub files (no registrations yet — implementations in future branches):
-# from components import rerankers
 # from components import tools

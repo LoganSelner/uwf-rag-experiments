@@ -35,6 +35,7 @@ dev = [
     "pytest",
     "pre-commit",
     "types-pyyaml>=6.0.12.20250915",
+    "types-requests>=2.31",
 ]
 
 [build-system]

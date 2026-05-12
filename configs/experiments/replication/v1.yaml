@@ -9,19 +9,18 @@
 #   - Top-3 retrieval
 #   - Verbatim citation prompt strategy
 #
-# Published scores (18q dataset, 3 runs):
+# Published scores (original 18q dataset, 3 runs):
 #   Ans.Corr: 0.815 | Ctx.Prec: 0.883 | Faith.: 0.906 | CER: 0.291 | Ans.Rel: 0.867
 #
 # Prerequisites:
 #   1. Place the Student Handbook PDF at data/sources/student_handbook.pdf
-#   2. Place the 18-question dataset at data/datasets/18q_handbook.jsonl
-#   3. Set GOOGLE_API_KEY in .env or your shell environment
-#   4. Ensure Ollama is running with qwen3:14b for the evaluator LLM
+#   2. Place the current handbook dataset at data/datasets/19qHB_dataset.jsonl
+#   3. Set GOOGLE_API_KEY in .env
 #
 # Usage:
-#   python scripts/run_experiment.py configs/experiments/v1_replication.yaml -v
+#   python scripts/run_experiment.py configs/experiments/replication/v1.yaml -v
 
-extends: ../base.yaml
+extends: ../../base.yaml
 
 name: "v1_replication"
 description: "ACMSE v1 replication: Google embedding-001 + Chroma + Gemini 1.0 Pro"
@@ -89,4 +88,4 @@ query:
     citation_style: "verbatim"
 
 evaluation:
-  dataset: "data/datasets/18q_handbook.jsonl"
+  dataset: "data/datasets/19qHB_dataset.jsonl"

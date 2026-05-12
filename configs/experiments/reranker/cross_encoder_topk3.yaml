@@ -1,0 +1,25 @@
+# Cross-encoder reranking with a wider candidate pool.
+#
+# Expands retrieval from the baseline 3 candidates to 10, but still
+# keeps only 3 chunks after reranking. Tests whether the reranker
+# benefits from more candidates without changing final context length.
+#
+# Variables changed vs baseline: reranking (none → cross_encoder),
+# top_k_retrieve (3 → 10)
+# Compare against: reranker_cross_encoder (isolates candidate-pool effect)
+
+extends: ../../base.yaml
+
+name: "reranker_cross_encoder_topk_3"
+description: "Cross-encoder reranking with top_k_retrieve=10, top_k_final=3"
+
+query:
+  retrieval:
+    type: "dense"
+    top_k_retrieve: 10
+    top_k_final: 3
+
+  reranking:
+    type: "cross_encoder"
+    params:
+      model_name: "Alibaba-NLP/gte-reranker-modernbert-base"

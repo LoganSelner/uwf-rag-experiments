@@ -1,0 +1,41 @@
+# v1 Replication via EdenAI — thin override of direct-Google v1
+#
+# Inherits the canonical v1 replication config and only overrides the
+# provider/model settings needed to run through EdenAI.
+#
+# Verified against live EdenAI on 2026-04-08:
+#   - `gemini-1.0-pro` is not available via EdenAI's Google chat path
+#   - `models/embedding-001` resolves to `text-multilingual-embedding-002`
+#   - `gemini-2.0-flash` succeeds via EdenAI's Google chat path
+#
+# Usage:
+#   python scripts/run_experiment.py configs/experiments/replication/v1_edenai.yaml -v
+
+extends: v1.yaml
+
+name: "v1_replication_edenai"
+description: "v1-style replication via EdenAI: Google embeddings + Chroma + Gemini 2.0 Flash"
+
+indexing:
+  embedding:
+    type: "edenai"
+    params:
+      provider: "google"
+      model_name: "text-multilingual-embedding-002"
+
+query:
+  query_transform:
+    params:
+      generator_type: "edenai"
+      sub_provider: "google"
+      llm:
+        model_name: "gemini-2.0-flash"
+
+  generation:
+    type: "edenai"
+    params:
+      sub_provider: "google"
+
+  generation_llm:
+    provider: "edenai"
+    model_name: "gemini-2.0-flash"
