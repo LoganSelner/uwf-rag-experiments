@@ -211,16 +211,28 @@ to produce the prompt, passes it to `generator.generate()`, then
 assembles the final `GenerationResult` with query and chunks. This
 is what makes YAML prompt changes actually affect LLM output.
 
-### Retrieval-Only Mode
+### Evaluation Modes
 
-When `evaluation.mode: "retrieval_only"`, the pipeline skips
-generator and prompt template construction entirely. `run()`
-returns a `GenerationResult` with empty `answer` and populated
-`retrieved_chunks`. The evaluator computes only retriever metrics
-(context_precision, context_entity_recall). This skips the
-generation LLM entirely, but the evaluator LLM is still invoked
-— RAGAS metrics like context_precision require an LLM judge.
-Faster and cheaper than full mode, not free.
+`evaluation.mode` controls how much of the eval loop runs. Three
+values are supported:
+
+- **`full`** (default): retrieve + generate + score with all
+  configured RAGAS metrics. Calls both the generation LLM and the
+  judge LLM.
+- **`retrieval_only`**: pipeline skips generator and prompt
+  template construction entirely. `run()` returns a
+  `GenerationResult` with empty `answer` and populated
+  `retrieved_chunks`. The evaluator computes only retriever
+  metrics (context_precision, context_entity_recall). The judge
+  LLM is still invoked — RAGAS retriever metrics require it.
+  Faster and cheaper than `full`, not free.
+- **`none`**: pipeline runs end-to-end against the dataset, but
+  the evaluator skips RAGAS scoring entirely. No judge LLM or
+  judge embedder is built. Per-sample query / response /
+  retrieved_contexts are still written to `run_<N>.jsonl` (with
+  empty `scores`), so the output remains inspectable. Intended
+  for smoke tests that verify pipeline plumbing without paying
+  for a judge.
 
 ---
 
@@ -336,12 +348,14 @@ construction (called in `scripts/run_experiment.py`). It checks:
 - Every component type referenced in config is registered
 - `top_k_final <= top_k_retrieve` and both are positive
 - `pipeline_mode: "agent"` has agents or tools defined
-- `evaluation.mode: "full"` has a generation type and model name
-- `generation_llm.model_name` is non-empty when generation needed
+- `evaluation.mode` is one of `{full, retrieval_only, none}`
+- Modes other than `retrieval_only` require a generation type, prompt
+  type, and `generation_llm.model_name`
 - `indexing.sources` is non-empty
 - `EvalRunConfig` values are positive (timeout, workers, wait)
-- `evaluator_llm.provider` is one of `{ollama, edenai, google}` (or empty)
+- `evaluator_llm.provider` is one of `{ollama, edenai, google, openai}` (or empty)
 - `evaluator_embedding.type` is registered in the `embedding` category
+  (required for modes other than `none`)
 - Evaluation dataset file exists on disk
 
 All errors are collected into a list and raised as a single

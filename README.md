@@ -143,7 +143,7 @@ Experiments that share the same indexing config reuse the cached index automatic
 | Parameter | Config Path | Default |
 |-----------|------------|---------|
 | Dataset | `evaluation.dataset` | `data/datasets/25qKB_dataset.jsonl` |
-| Mode | `evaluation.mode` | `full` (or `retrieval_only`) |
+| Mode | `evaluation.mode` | `full` (or `retrieval_only`, or `none`) |
 | Number of runs | `evaluation.num_runs` | 3 |
 | Evaluator LLM | `evaluation.evaluator_llm` | Eden AI GPT-4.1 |
 | Evaluator embedding | `evaluation.evaluator_embedding` | Eden AI text-embedding-3-small |
@@ -176,7 +176,7 @@ All four use `Alibaba-NLP/gte-reranker-modernbert-base`.
 
 ### Smoke Test
 
-`configs/smoke.yaml` (top-level, not under `experiments/`) routes the entire pipeline through local Ollama + HuggingFace with a 1-question dataset. Use it to verify the pipeline end-to-end without spending API credits. Its results are not comparable to formal experiments.
+`configs/smoke.yaml` (top-level, not under `experiments/`) routes the entire pipeline through local Ollama + HuggingFace with a 1-question dataset and sets `evaluation.mode: "none"` — the pipeline runs end-to-end and writes per-sample outputs to `run_1.jsonl`, but no RAGAS scoring (and no judge-LLM call) occurs. Use it to verify the pipeline without spending API credits or waiting on a local judge. Its results are not comparable to formal experiments.
 
 ## Output Format
 
