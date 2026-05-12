@@ -112,8 +112,11 @@ def _wrap_embedder_for_ragas(embedder: Any) -> Any:
 class Evaluator:
     """Runs evaluation against a dataset using RAGAS metrics.
 
-    Supports full mode (retrieve + generate + all metrics) and
-    retrieval-only mode (retrieve + retrieval metrics only).
+    Supports full mode (retrieve + generate + all metrics),
+    retrieval-only mode (retrieve + retrieval metrics only), and
+    none mode (run the pipeline against the dataset but skip scoring —
+    intended for smoke tests that verify end-to-end execution without
+    paying for an LLM judge).
     """
 
     def __init__(self, config: EvaluationConfig) -> None:
@@ -123,6 +126,8 @@ class Evaluator:
     @property
     def active_metrics(self) -> list[str]:
         """Return the metrics to compute based on evaluation mode."""
+        if self._config.mode == "none":
+            return []
         if self._config.mode == "retrieval_only":
             return list(self._config.retrieval_only_metrics)
         return list(self._config.metrics)
@@ -148,10 +153,12 @@ class Evaluator:
         """
         dataset = _load_dataset(self._config.dataset)
         num_runs = self._config.num_runs
+        scoring_enabled = self._config.mode != "none"
 
-        # Build dedicated evaluation embedder from config.
+        # Build dedicated evaluation embedder from config. Skipped in
+        # mode="none" because no metrics are computed.
         eval_emb_cfg = self._config.evaluator_embedding
-        if eval_emb_cfg.type:
+        if scoring_enabled and eval_emb_cfg.type:
             embedder_cls = registry.get("embedding", eval_emb_cfg.type)
             embedder_instance = embedder_cls(config=eval_emb_cfg.params)
             self._embedder_adapter = _wrap_embedder_for_ragas(embedder_instance)
@@ -177,7 +184,12 @@ class Evaluator:
                 per_run_metrics.append({})
                 per_run_samples.append([])
                 continue
-            metrics, sample_scores = self._compute_metrics(samples)
+
+            if scoring_enabled:
+                metrics, sample_scores = self._compute_metrics(samples)
+            else:
+                metrics = {}
+                sample_scores = [dict[str, float | None]() for _ in samples]
             per_run_metrics.append(metrics)
 
             scored = [
@@ -193,7 +205,14 @@ class Evaluator:
             ]
             per_run_samples.append(scored)
 
-            logger.info("Run %d metrics: %s", run_idx, metrics)
+            if scoring_enabled:
+                logger.info("Run %d metrics: %s", run_idx, metrics)
+            else:
+                logger.info(
+                    "Run %d: scoring skipped (mode=none); %d samples captured",
+                    run_idx,
+                    len(samples),
+                )
 
         # Aggregate across runs
         aggregated = self._aggregate_metrics(per_run_metrics)

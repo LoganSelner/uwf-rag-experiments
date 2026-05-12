@@ -4,8 +4,11 @@
 #   - Indexing embedding: HuggingFace (local, free) instead of EdenAI
 #   - Query generation: Ollama (local, free) instead of EdenAI
 #   - Query transform: Ollama contextualizer instead of EdenAI contextualizer
-#   - Evaluator LLM: Ollama (local, free) instead of EdenAI
-#   - Evaluator embedding: HuggingFace (local, free) instead of EdenAI
+#   - Evaluation mode: "none" — runs the pipeline against the dataset but
+#     skips RAGAS scoring entirely. Per-sample query/response/contexts are
+#     still written to run_1.jsonl so the output is inspectable.
+#   - Local evaluator LLM/embedding overrides are retained as a record of
+#     how to flip to a scored local run (set evaluation.mode: "full").
 #   - Tiny 1-question dataset for quick sanity checks
 #   - Single run (no statistical aggregation needed for a smoke test)
 #   - Longer timeout and fewer workers for slower local inference
@@ -47,6 +50,7 @@ query:
 
 evaluation:
   dataset: "data/datasets/testKB_dataset.jsonl"
+  mode: "none"
   num_runs: 1
   run_config:
     timeout: 1200

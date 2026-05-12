@@ -72,6 +72,11 @@ class TestActiveMetrics:
         assert "context_precision" in metrics
         assert "faithfulness" not in metrics
 
+    def test_none_mode(self) -> None:
+        cfg = EvaluationConfig.from_dict({"mode": "none"})
+        evaluator = Evaluator(cfg)
+        assert evaluator.active_metrics == []
+
 
 class TestMakeRunConfig:
     def test_uses_evaluation_run_config_settings(self) -> None:
@@ -470,3 +475,64 @@ class TestBuildEvaluatorEmbedder:
 
         sig = inspect.signature(Evaluator.evaluate)
         assert "embedder" not in sig.parameters
+
+
+# -----------------------------------------------------------------------
+# Evaluator.evaluate — mode="none"
+# -----------------------------------------------------------------------
+
+
+class TestEvaluateNoneMode:
+    """mode='none' runs the pipeline but skips RAGAS scoring."""
+
+    def _samples(self, n: int = 2) -> list[EvalSample]:
+        return [
+            EvalSample(
+                id=str(i + 1),
+                query=f"Q{i}?",
+                response=f"A{i}",
+                retrieved_contexts=[f"ctx{i}"],
+                reference=f"R{i}",
+            )
+            for i in range(n)
+        ]
+
+    def test_skips_compute_metrics_and_embedder(self) -> None:
+        """mode='none' must not build the judge embedder or call _compute_metrics."""
+        cfg = EvaluationConfig.from_dict(
+            {
+                "dataset": "dummy.jsonl",
+                "mode": "none",
+                "num_runs": 1,
+                "evaluator_embedding": {
+                    "type": "huggingface",
+                    "params": {"model_name": "test-model"},
+                },
+            }
+        )
+        evaluator = Evaluator(cfg)
+        samples = self._samples(2)
+
+        with (
+            patch("evaluation.evaluator.registry") as mock_registry,
+            patch(
+                "evaluation.evaluator._load_dataset",
+                return_value=[
+                    {"id": s.id, "query": s.query, "reference": s.reference}
+                    for s in samples
+                ],
+            ),
+            patch.object(evaluator, "_run_once", return_value=samples),
+            patch.object(evaluator, "_compute_metrics") as mock_compute,
+        ):
+            result = evaluator.evaluate(MagicMock(), experiment_name="smoke")
+
+        mock_compute.assert_not_called()
+        mock_registry.get.assert_not_called()
+        assert evaluator._embedder_adapter is None
+        assert result.metrics == {}
+        assert len(result.per_run_samples) == 1
+        assert len(result.per_run_samples[0]) == 2
+        for scored in result.per_run_samples[0]:
+            assert scored.scores == {}
+            assert scored.response  # pipeline output is preserved

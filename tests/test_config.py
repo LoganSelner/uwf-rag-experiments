@@ -382,6 +382,25 @@ class TestValidateConfig:
         with pytest.raises(ConfigValidationError, match="generator is required"):
             validate_config(cfg, registry)
 
+    def test_none_mode_skips_embedder_requirement(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.mode = "none"
+        cfg.evaluation.evaluator_embedding.type = ""
+        validate_config(cfg, registry)  # should not raise
+
+    def test_none_mode_still_requires_generation(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.mode = "none"
+        cfg.query.generation.type = ""
+        with pytest.raises(ConfigValidationError, match="generator is required"):
+            validate_config(cfg, registry)
+
+    def test_unknown_eval_mode(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.mode = "bogus"
+        with pytest.raises(ConfigValidationError, match=r"evaluation\.mode"):
+            validate_config(cfg, registry)
+
     def test_unknown_pipeline_mode(self) -> None:
         cfg = self._make_valid_config()
         cfg.pipeline_mode = "unknown"
