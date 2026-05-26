@@ -108,7 +108,7 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 - Index caching by SHA-256 fingerprint
 - RAGAS evaluation with multi-run aggregation (mean ± std) and a
   dedicated, fixed evaluator embedding for cross-experiment comparability
-- Standardized evaluator LLM (GPT-4o-mini via EdenAI) for formal runs;
+- Standardized evaluator LLM (GPT-4.1-mini via EdenAI) for formal runs;
   Ollama for local smoke testing
 - No-score smoke evaluation mode (verifies the pipeline without
   spending judge-LLM calls)
@@ -381,8 +381,8 @@ are not yet implemented.
 | Mode | `evaluation.mode` | full, retrieval_only, no-score smoke done |
 | Metrics | `evaluation.metrics` | done |
 | Number of runs | `evaluation.num_runs` | done |
-| Evaluator LLM | `evaluation.evaluator_llm` | done (standardized) |
-| Evaluator embedding | `evaluation.evaluator_embedding` | done (fixed bge-m3) |
+| Evaluator LLM | `evaluation.evaluator_llm` | done |
+| Evaluator embedding | `evaluation.evaluator_embedding` | done |
 | Run config | `evaluation.run_config` | done |
 
 ---
@@ -473,7 +473,7 @@ loop are custom — no new dependencies.)
 
 Experiments are organized by what each isolates. All inherit from
 `base.yaml`; all formal runs use the standardized evaluator
-(GPT-4o-mini via EdenAI, fixed bge-m3 evaluator embedding).
+(GPT-4.1-mini via EdenAI, fixed text-embedding-3-small evaluator embedding).
 
 ### Retrieval (Phase A) — the core matrix
 
