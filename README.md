@@ -1,14 +1,14 @@
 # UWF RAG Experiments
 
-A config-driven experiment harness for measuring how different Retrieval-Augmented Generation (RAG) component choices affect evaluation metrics. Built for the [ARGObot](https://doi.org/10.1145/3696673.3723065) academic advising chatbot research at the University of West Florida.
+A config-driven experiment harness for measuring how different Retrieval-Augmented Generation (RAG) component choices affect evaluation metrics.
 
-This is a research tool, not a production chatbot. Change one variable at a time — chunking strategy, embedding model, vectorstore, retrieval depth, prompt template, LLM — run the pipeline, evaluate with [RAGAS](https://docs.ragas.io/), and compare results side-by-side.
+This is a research tool, not a production chatbot. Change one variable at a time — chunking strategy, embedding model, vectorstore, retrieval method, reranker, query transform, prompt template, LLM — run the pipeline, evaluate with [RAGAS](https://docs.ragas.io/), and compare results side-by-side.
 
-## Research Context
+## What This Is
 
-ARGObot is an AI academic advising chatbot developed at the University of West Florida (UWF). The published paper ([ACMSE 2025](https://doi.org/10.1145/3696673.3723065)) compared a retrieval-based implementation (Gemini 1.0 Pro + ChromaDB) against an agent-based implementation (GPT-4 + ReAct loop). Both versions showed low Context Entity Recall (~0.27–0.29), motivating systematic experimentation with alternative RAG components.
+The harness exists to explore the modern RAG design space under controlled conditions. Every testable variable is a YAML parameter, so an experiment changes exactly one thing and the effect is attributable. Indexes are cached by fingerprint to avoid redundant embedding, and RAGAS evaluation runs multiple times with a fixed evaluator for statistically meaningful, cross-experiment-comparable results.
 
-This framework enables that experimentation by isolating every variable behind a YAML config parameter, caching indexes to avoid redundant embedding, and running RAGAS evaluation with statistical aggregation across multiple runs.
+The goal is broad, faithful coverage of standard RAG practice — the dense + sparse + rerank retrieval baseline, standard query optimization, standard chunking, and agentic retrieval — built out incrementally so each component can be measured against a credible baseline. See [ROADMAP.md](ROADMAP.md) for the planned trajectory and [ARCHITECTURE.md](ARCHITECTURE.md) for the system as built.
 
 ## Available Components
 
@@ -47,7 +47,7 @@ cp .env.example .env    # then edit with your API key(s)
 Place your source documents and evaluation datasets:
 
 ```
-data/sources/knowledge_base.pdf          # or student_handbook.pdf for v1 replication
+data/sources/knowledge_base.pdf          # your source document(s)
 data/datasets/25qKB_dataset.jsonl        # see data/datasets/README.md for format
 ```
 
@@ -152,9 +152,9 @@ The evaluator embedding is deliberately separate from the pipeline embedding. Th
 
 ## Included Experiment Configs
 
-### Replication
+### Example: Reconstructing a Published Pipeline
 
-Reproduces the ACMSE paper's Retrieval-based ARGObot. Requires `data/sources/student_handbook.pdf` and `data/datasets/19qHB_dataset.jsonl`.
+These configs demonstrate the harness's flexibility by reconstructing a specific published RAG setup (a retrieval-based advising chatbot) entirely through config. They are kept as a worked example of reproducing an arbitrary pipeline, not as a core objective. Requires `data/sources/student_handbook.pdf` and `data/datasets/19qHB_dataset.jsonl`.
 
 | Config | Stack |
 |--------|-------|
@@ -254,6 +254,8 @@ CI runs on every push and pull request (ruff + mypy + pytest).
 | Unknown component type in validation | Check that the `type:` value in your YAML matches a `@registry.register(...)` name exactly. |
 | RAGAS timeout on local Ollama | Increase `evaluation.run_config.timeout` (base default: 300s; `smoke.yaml` raises it to 1200s) or reduce `evaluation.run_config.max_workers`. |
 
-## References
+## Background
+
+This harness originated in UWF research on retrieval-augmented advising systems. The example replication configs above reconstruct the pipeline from:
 
 Tamascelli, M., Bunch, O., Fowler, B., Taeb, M., & Cohen, A. (2025). Academic Advising Chatbot Powered with AI Agent. In *2025 ACM Southeast Conference (ACMSE 2025)*. ACM. https://doi.org/10.1145/3696673.3723065
