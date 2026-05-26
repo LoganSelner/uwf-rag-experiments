@@ -1,53 +1,60 @@
 # Roadmap
 
-> Forward-looking plan for the argobot-bench experimentation framework.
+> Forward-looking plan for the RAG experimentation harness.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 >
-> **Last updated:** 2026-03-31
+> **Last updated:** 2026-05-26
 
 ---
 
 ## 1. Goals
 
-This framework exists to answer: **which combination of RAG
-components produces the best academic advising chatbot?**
+This repository is a **RAG experimentation harness**: a config-driven
+framework for isolating and measuring how individual RAG components
+and paradigms affect end-to-end quality. The long-term aim is broad,
+faithful coverage of the modern RAG design space so that any component
+choice can be swapped via config and evaluated under controlled
+conditions.
 
-The concrete research objectives are:
+Guiding objectives:
 
-1. **Replicate v1** (Retrieval-based ARGObot from the ACMSE paper)
-   using identical components on our evaluation infrastructure,
-   and reproduce the published RAGAS scores.
+1. **Cover the standard pipeline first.** Prioritize the components
+   and paradigms that constitute the field's default, well-established
+   practice — the "de facto strong baseline" of dense + sparse + rerank
+   retrieval, standard query optimization, and standard chunking — before
+   specialized or research-frontier techniques.
 
-2. **Replicate v2** (Agent-based ARGObot from the ACMSE paper)
-   with the single-agent ReAct architecture, and compare it
-   against v1 under controlled conditions.
+2. **Isolate every variable.** Each component is swappable through a
+   single config change, so an experiment changes exactly one thing and
+   the effect is attributable.
 
-3. **Improve on both** by systematically testing alternative
-   components (chunking strategies, embedding models, rerankers,
-   query transformers, prompts) and identifying configurations
-   that raise RAGAS metrics — particularly Context Entity Recall,
-   which scored low (~0.27–0.29) across all published versions.
+3. **Grow toward full coverage.** Build out the three layers of the
+   design space in priority order: (a) the core retrieval/generation
+   pipeline, (b) advanced paradigms layered on top (agentic, self-
+   reflective), and (c) evaluation and robustness. All three are in
+   scope eventually; the sequence is driven by how standard each piece is.
 
-4. **Support v3** (Multi-agent from SURP 2025) as a future
-   controlled comparison point.
+This roadmap is no longer organized around replicating specific prior
+ARGObot versions. Version replication has been retired as an objective;
+the harness stands on its own as a general-purpose RAG testbed.
 
 ---
 
 ## 2. Design Principles
 
 These are documented in ARCHITECTURE.md and apply to all future
-work. One additional principle governs Phase 3+ implementation:
+work. One principle governs component implementation specifically:
 
 ### Framework Wrapper Strategy
 
 **Use framework libraries when the component is a commodity.
 Write custom when the component IS the experiment.**
 
-Chunking, PDF parsing, embedding, and reranking are commodities —
-use proven libraries (`langchain-text-splitters`,
-`sentence-transformers`, `rank-bm25`). Novel chunking strategies
-tuned for policy handbooks, or domain-specific query transformers,
-are research contributions — implement those directly.
+Chunking, PDF parsing, embedding, reranking, and lexical search are
+commodities — use proven libraries (`langchain-text-splitters`,
+`sentence-transformers`, `bm25s`). Score fusion, domain-tuned query
+transformers, and novel chunking strategies are the experiment itself —
+implement those directly.
 
 **Never let framework dependencies leak past the interface
 boundary.** A LangChain-backed chunker imports
@@ -58,36 +65,37 @@ one file.
 
 This is already the pattern for embeddings (`sentence-transformers`
 behind `BaseEmbedder`), vectorstore (`faiss-cpu` behind
-`BaseVectorStore`), and PDF parsing (`pymupdf` behind
+`BaseVectorStore`), reranking (`sentence-transformers` `CrossEncoder`
+behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 `BaseIngestor`). Extend it consistently.
 
 ---
 
 ## 3. What Exists Today
 
-### Completed (Phases 1–3B)
+### Registered Components
 
 | Category | Component | Registry Name | Notes |
 |----------|-----------|---------------|-------|
 | Ingest | `PDFIngestor` | `pdf` | PyMuPDF |
-| Chunking | `RecursiveChunker` | `recursive_custom` | Custom 131-line implementation |
+| Chunking | `RecursiveChunker` | `recursive_custom` | Custom implementation |
 | Chunking | `LangChainRecursiveChunker` | `recursive_langchain` | `langchain-text-splitters` wrapper |
 | Embedding | `HuggingFaceEmbedder` | `huggingface` | sentence-transformers, bge-m3 default |
-| Embedding | `GoogleEmbedder` | `google` | `google-genai` SDK, gemini-embedding-001 default |
-| Embedding | `OpenAIEmbedder` | `openai` | `openai` SDK, ada-002 default |
-| Embedding | `EdenAIEmbedder` | `edenai` | `langchain-community` EdenAiEmbeddings gateway |
+| Embedding | `GoogleEmbedder` | `google` | `google-genai` SDK |
+| Embedding | `OpenAIEmbedder` | `openai` | `openai` SDK |
+| Embedding | `EdenAIEmbedder` | `edenai` | `langchain-community` gateway |
 | Vectorstore | `FAISSVectorStore` | `faiss` | Cosine + L2, metadata post-filtering |
 | Vectorstore | `ChromaVectorStore` | `chroma` | ChromaDB, native metadata filtering |
 | Retrieval | `DenseRetriever` | `dense` | Single-vector similarity search |
-| Generation | `OllamaGenerator` | `ollama` | Local LLM via Ollama |
-| Generation | `EdenAIGenerator` | `edenai` | Cloud LLM via Eden AI gateway |
-| Generation | `GoogleGenerator` | `google` | Gemini via `google-genai` SDK |
-| Generation | `OpenAIGenerator` | `openai` | OpenAI chat completions via `openai` SDK |
-| Prompts | `ChatPromptTemplate` | `chat` | Numbered/plain context, CoT, citations |
 | Query Transform | `PassthroughQueryTransformer` | `passthrough` | Returns query unchanged |
 | Query Transform | `ContextualizerQueryTransformer` | `contextualizer` | LLM reformulation with history |
 | Reranking | `NoOpReranker` | `none` | Passes through, truncates to top_k |
-| Reranking | `CrossEncoderReranker` | `cross_encoder` | sentence-transformers CrossEncoder, gte-reranker-modernbert-base default |
+| Reranking | `CrossEncoderReranker` | `cross_encoder` | gte-reranker-modernbert-base default |
+| Generation | `OllamaGenerator` | `ollama` | Local LLM via Ollama |
+| Generation | `EdenAIGenerator` | `edenai` | Cloud LLM via Eden AI gateway |
+| Generation | `GoogleGenerator` | `google` | Gemini via `google-genai` SDK |
+| Generation | `OpenAIGenerator` | `openai` | OpenAI chat completions |
+| Prompts | `ChatPromptTemplate` | `chat` | Numbered/plain context, CoT, citations |
 | Memory | `NoMemory` | `none` | No-op |
 | Memory | `BufferWindowMemory` | `buffer_window` | Last N turns |
 
@@ -95,688 +103,422 @@ behind `BaseEmbedder`), vectorstore (`faiss-cpu` behind
 
 - Config system with YAML inheritance, cycle detection, index
   fingerprinting, and upfront validation
-- Linear query pipeline with prompt → generator wiring
+- Linear query pipeline (query transform → retrieve → rerank →
+  prompt → generate)
 - Index caching by SHA-256 fingerprint
-- RAGAS evaluation with multi-run aggregation (mean ± std)
-- Configurable RAGAS execution settings (`EvalRunConfig`:
-  timeout, retries, workers)
+- RAGAS evaluation with multi-run aggregation (mean ± std) and a
+  dedicated, fixed evaluator embedding for cross-experiment comparability
+- Standardized evaluator LLM (GPT-4o-mini via EdenAI) for formal runs;
+  Ollama for local smoke testing
+- No-score smoke evaluation mode (verifies the pipeline without
+  spending judge-LLM calls)
+- Configurable RAGAS execution settings (`EvalRunConfig`)
 - Experiment result saving (summary.json + config.yaml + JSONL)
 - Cross-experiment comparison with config diffing
 - CI pipeline (ruff + mypy + pytest), pre-commit, Makefile
 - Agent pipeline stub (raises `NotImplementedError`)
 - Git SHA tracking for reproducibility
-- Centralized `.env` loading at application boundary
-  (`scripts/run_experiment.py`)
+- Config structure: `base.yaml` + `smoke.yaml` + `experiments/`
+  organized by what each isolates
+
+### Coverage Against the Standard Pipeline
+
+The component categories map directly onto the standard RAG pipeline
+anatomy. Current coverage by stage:
+
+| Pipeline Stage | Standard Options | Have | Missing (standard) |
+|----------------|------------------|------|--------------------|
+| Ingestion | PDF, HTML, text | PDF | — (sufficient for now) |
+| Chunking | recursive, semantic, contextual | recursive | semantic, contextual enrichment |
+| Embedding | open + commercial | 4 providers | — (broad coverage) |
+| Vectorstore | dense ANN | FAISS, Chroma | — |
+| Query optimization | rewrite/expand, decompose, multi-query | contextualizer | HyDE, multi-query |
+| Retrieval | dense, sparse, hybrid | dense | **sparse (BM25), hybrid (RRF)** |
+| Reranking | cross-encoder, late-interaction, LLM | cross-encoder | (ColBERT/LLM — advanced) |
+| Generation | grounded gen, citation, abstention | chat + citation | abstention |
+
+The single largest gap relative to standard practice is **retrieval**:
+the harness only does dense retrieval, while the field's de facto
+strong baseline is dense + sparse + reranking. Closing this is the
+top priority (Phase A).
 
 ---
 
-## 4. ARGObot Version Specifications
+## 4. Sequencing Strategy
 
-Extracted from the ACMSE 2025 paper (DOI: 10.1145/3696673.3723065)
-and the SURP 2025 poster. These define the target configurations
-for replication experiments.
+Work is organized into tracks rather than a strict linear sequence.
+The priority ordering reflects how standard each piece is:
 
-### v1 — Retrieval-based (ACMSE paper, Section 3.1)
+1. **Phase A — Complete the standard retrieval baseline** (sparse +
+   hybrid). Highest priority: this is what makes the harness a credible
+   strong baseline rather than a dense-only toy.
+2. **Phase B — Standard query optimization** (HyDE, multi-query).
+3. **Phase C — Standard chunking alternatives** (semantic, contextual
+   retrieval).
+4. **Phase D — Agentic RAG** (single-agent ReAct, then multi-agent).
+   Kept because agentic retrieval is now a standard paradigm, not
+   because it replicates any prior version.
+5. **Phase E — Evaluation depth & robustness** (retrieval/answer
+   decoupling analysis, abstention, knowledge-conflict probes).
+6. **Phase F — Advanced/optional** (late-interaction reranking,
+   graph RAG, multimodal). Explicitly lower priority; pursued only
+   if a concrete need arises.
 
-| Component | Specification |
-|-----------|--------------|
-| LLM | Gemini 1.0 Pro |
-| Embedding | Google Generative AI (models/embedding-001) |
-| Vectorstore | ChromaDB |
-| Chunking | 1,200 tokens, 200 overlap |
-| Retrieval | Top-3 chunks |
-| Architecture | Linear RAG chain |
-| Query handling | Contextualization chain reformulates query using chat history before retrieval |
-| Response strategy | Verbatim quotes with citations; responds "I don't know" when context insufficient |
-| Framework | LangChain, deployed on HuggingFace via Streamlit |
-
-Published scores (18q dataset, 3 runs):
-
-| Ans.Corr | Ctx.Prec | Faith. | CER | Ans.Rel |
-|----------|----------|--------|-------|---------|
-| 0.815 | 0.883 | 0.906 | 0.291 | 0.867 |
-
-### v2 — Single-Agent (ACMSE paper, Section 3.2)
-
-| Component | Specification |
-|-----------|--------------|
-| LLM | GPT-4 |
-| Embedding | text-embedding-ada-002 (OpenAI) |
-| Vectorstore | ChromaDB |
-| Chunking | Same document, same handbook source |
-| Agent | Single ReAct agent choosing between 3 tools |
-| Tool: RAG | Retrieves from Student Handbook vectorstore |
-| Tool: Search | Google Search via Serper API; disclaims accuracy |
-| Tool: Email | Gmail API to schedule advisor appointment (HITL) |
-| Memory | Conversation Buffered Window, 5 turns |
-| Prompt | Role assignment, Chain-of-Thought prompting |
-
-Published scores (18q dataset, 3 runs):
-
-| Ans.Corr | Ctx.Prec | Faith. | CER | Ans.Rel |
-|----------|----------|--------|-------|---------|
-| 0.878 | 0.937 | 0.927 | 0.272 | 0.894 |
-
-### v3 — Multi-Agent (SURP 2025 poster)
-
-| Component | Specification |
-|-----------|--------------|
-| LLM | Qwen2.5 32B |
-| Embedding | bge-m3:567m |
-| Vectorstore | FAISS |
-| Chunking | 1,000 tokens, 100 overlap, k=3 |
-| Architecture | Multi-agent with Supervisor routing |
-| Agents | Handbook_agent, Knowledge_Base_agent (source-filtered) |
-| Tools | EmailSender, WebSearcher |
-| Integration | Qwen2.5 integration count: 3 |
-
-Poster scores (19q dataset):
-
-| Ans.Corr | Ctx.Prec | Faith. | CER | Ans.Rel |
-|----------|----------|--------|-------|---------|
-| 0.3111 | 0.1316 | 0.7632 | 0.2963 | 0.2437 |
-
-Note: MA model scored considerably lower. The poster identifies
-this as an incomplete comparison — modifications to the SA model
-and further evaluation are planned.
+Phases A–C are all within the existing linear pipeline and require no
+architectural changes beyond two well-scoped extensions (Section 7).
+Phase D activates the dormant agent pipeline. Phases E–F are
+open-ended.
 
 ---
 
-## 5. Replication Configs
+## 5. Implementation Phases
 
-These YAML configs recreate each version using our framework.
-Components marked *(Phase 3B)* or *(Phase 4A)* require
-implementation in the corresponding phase. All v1 components
-are implemented.
+### Phase A — Standard Retrieval Baseline (sparse + hybrid)
 
-### v1 Config
-
-All components available now. Config at
-`configs/experiments/v1_replication.yaml`.
-
-```yaml
-pipeline_mode: "linear"
-indexing:
-  sources:
-    - name: "student_handbook"
-      path: "data/sources/student_handbook.pdf"
-      ingest: { type: "pdf" }
-  chunking:
-    type: "recursive_langchain"
-    params: { chunk_size: 1200, chunk_overlap: 200 }
-  embedding:
-    type: "google"
-    params: { model_name: "models/embedding-001" }
-  vectorstore:
-    type: "chroma"
-query:
-  query_transform:
-    type: "contextualizer"
-    params:
-      generator_type: "google"
-      llm: { model_name: "gemini-1.0-pro", temperature: 0.0 }
-  retrieval:
-    type: "dense"
-    top_k_retrieve: 3
-    top_k_final: 3
-  generation:
-    type: "google"
-  generation_llm:
-    provider: "google"
-    model_name: "gemini-1.0-pro"
-  prompt:
-    type: "chat"
-    system_template: |
-      Answer using ONLY verbatim quotes from the provided context.
-      Include the citation source for each quote.
-      If the context does not contain the answer, say "I don't know".
-    citation_style: "verbatim"
-evaluation:
-  dataset: "data/datasets/18q_handbook.jsonl"
-```
-
-### v2 Config
-
-Requires Phase 3B (OpenAI/EdenAI embedder — done) and
-Phase 4A (agent pipeline, tools).
-
-```yaml
-pipeline_mode: "agent"
-indexing:
-  sources:
-    - name: "student_handbook"
-      path: "data/sources/student_handbook.pdf"
-      ingest: { type: "pdf" }
-  chunking:
-    type: "recursive_langchain"
-    params: { chunk_size: 1200, chunk_overlap: 200 }
-  embedding:
-    type: "openai"
-    params: { model_name: "text-embedding-ada-002" }
-    # Alternative for EdenAI users:
-    # type: "edenai"
-    # params: { provider: "openai" }
-  vectorstore:
-    type: "chroma"
-agent:
-  mode: "single"
-  llm:
-    provider: "openai"
-    model_name: "gpt-4"
-  memory:
-    type: "buffer_window"
-    window_size: 5
-  agents:
-    - name: "rag_handbook"
-      type: "rag"
-      retrieval: { type: "dense", top_k_retrieve: 3, top_k_final: 3 }
-      prompt:
-        type: "chat"
-        use_chain_of_thought: true
-  tools:
-    - { name: "web_search", type: "tool", tool: "serper_search" }  # (Phase 4A)
-    - { name: "email", type: "tool", tool: "gmail_mock" }          # (Phase 4A)
-evaluation:
-  dataset: "data/datasets/18q_handbook.jsonl"
-```
-
-### Controlled Comparison
-
-The key insight: v1 and v2 use different LLMs and embeddings.
-To isolate the effect of the agent architecture, create a
-variant where both use the same indexing:
-
-```yaml
-# v1_controlled.yaml — linear, GPT-4, ada-002
-pipeline_mode: "linear"
-# (same indexing as v2)
-query:
-  generation_llm: { provider: "openai", model_name: "gpt-4" }
-
-# v2_controlled.yaml — agent, GPT-4, ada-002
-pipeline_mode: "agent"
-# (same indexing as v1_controlled)
-agent: { mode: "single", ... }
-```
-
-Both configs produce the same index fingerprint. The only
-variable is `pipeline_mode` and the agent config.
-
----
-
-## 6. Implementation Phases
-
-Each phase unlocks a meaningful set of experiments that couldn't
-be run before. Phases are ordered by research value.
-
-### Housekeeping (before Phase 3) — COMPLETED
-
-- [x] Add `data/sources/README.md` and `data/datasets/README.md`
-      explaining expected file formats and placement
-- [x] Update `.gitignore` to track directory READMEs while
-      ignoring contents
-- [x] Evaluated moving presentation concerns from
-      `src/evaluation/comparison.py` to `scripts/compare.py`;
-      decided to keep current separation — the library module
-      provides both data access and formatting for multiple
-      consumers (CLI, notebooks, future tools)
-- [x] Add LangChain-backed chunker as `"recursive_langchain"`;
-      custom kept as `"recursive_custom"` for A/B comparison
-
-### Phase 3A — v1 Replication Components
-
-Goal: Run the v1 configuration on our linear pipeline and
-reproduce the paper's RAGAS scores.
-
-| # | Component | Registry | Interface | Library | Status |
-|---|-----------|----------|-----------|---------|--------|
-| 1 | ChromaDB vectorstore | `chroma` | `BaseVectorStore` | `chromadb` | Done |
-| 2 | Google AI embeddings | `google` | `BaseEmbedder` | `google-genai` | Done |
-| 3 | Gemini generator | `google` | `BaseGenerator` | `google-genai` | Done |
-| 4 | Contextualizing query transformer | `contextualizer` | `BaseQueryTransformer` | Custom (LLM call) | Done |
-| 5 | LangChain recursive chunker | `recursive_langchain` | `BaseChunker` | `langchain-text-splitters` | Done |
-
-**Milestone:** Can run `configs/experiments/v1_replication.yaml`
-and compare scores against the paper's Table 2.
-
-### Evaluator Improvements (before Phase 3B) — COMPLETED
-
-Goal: Complete the evaluator's provider support and add a
-dedicated evaluation embedder so cross-experiment comparisons
-use a consistent measurement instrument.
-
-| # | Item | Details | Status |
-|---|------|---------|--------|
-| E1 | Add `"google"` provider to `_build_evaluator_llm()` | Uses `langchain-google-genai` `ChatGoogleGenerativeAI`. Completes the Google stack — experiments can run 100% Google with no Ollama dependency. | Done |
-| E2 | Add required `evaluator_embedding` config to `EvaluationConfig` | A `ComponentConfig` block (type + params) that builds a dedicated embedder for RAGAS via the registry. Decouples evaluation embeddings from pipeline embeddings. | Done |
-| E3 | Build evaluator embedder from registry in `Evaluator` | Replace the current `embedder=` passthrough with registry-based construction from `evaluator_embedding` config. The evaluator builds its own embedder instance, independent of the pipeline. | Done |
-| E4 | Add evaluator provider validation to `validate_config()` | Check that `evaluator_llm.provider` is one of the supported values (`"ollama"`, `"edenai"`, `"google"`) and that `evaluator_embedding.type` is registered. | Done |
-
-**Why a required evaluator embedder:** RAGAS uses embeddings for
-metrics like `answer_similarity` and `answer_relevancy`. When
-comparing experiments that use different pipeline embedders
-(bge-m3 vs ada-002 vs Google embeddings), a fixed evaluation
-embedder eliminates a confounding variable. Every experiment is
-measured with the same yardstick.
-
-**Config shape:**
-
-```yaml
-evaluation:
-  evaluator_llm:
-    provider: "ollama"
-    model_name: "qwen3:32b"
-  evaluator_embedding:
-    type: "huggingface"
-    params:
-      model_name: "BAAI/bge-m3"
-      normalize: true
-```
-
-**Milestone:** All current providers (Ollama, EdenAI, Google)
-are supported for evaluation LLM. Evaluation embeddings are
-explicitly configured and consistent across experiments.
-
-### Phase 3B — v2 Model Integrations — COMPLETED
-
-Goal: Build the model integrations v2 needs, testable
-independently before the agent loop is implemented. Tool
-components (Serper web search, Gmail mock) are deferred to
-Phase 4A where they are exercised by the agent loop.
-
-| # | Component | Registry | Interface | Library | Status |
-|---|-----------|----------|-----------|---------|--------|
-| 6 | OpenAI embeddings | `openai` | `BaseEmbedder` | `openai` | Done |
-| 7 | EdenAI embeddings | `edenai` | `BaseEmbedder` | `langchain-community` `EdenAiEmbeddings` | Done |
-| 8 | OpenAI generator | `openai` | `BaseGenerator` | `openai` | Done |
-| 9 | OpenAI evaluator LLM | — | `_build_evaluator_llm()` | `langchain-openai` `ChatOpenAI` | Done |
-
-The EdenAI embedder provides access to OpenAI embeddings
-(and other providers) through the EdenAI gateway. Users
-with direct OpenAI API keys use the `"openai"` embedder;
-users with only an EdenAI key use `"edenai"` with
-`provider: "openai"` to get the same ada-002 vectors.
-
-**Milestone:** All v2 model components are registered,
-tested, and usable in linear pipeline experiments. OpenAI
-embeddings + generator can run via the linear pipeline for
-standalone quality benchmarking. OpenAI is also available
-as an evaluator LLM provider.
-
-### Phase 3C — Reranking & Evaluation Standardization — COMPLETED
-
-Goal: Add a cross-encoder reranker and standardize the evaluator
-stack for formal experiments.
-
-#### Evaluator LLM Standardization
-
-All formal experiment runs will use **GPT-4.1 via EdenAI**
-as the evaluator LLM judge. Ollama remains available for local
-smoke testing and development iteration, but published results
-should use GPT-4.1 for cross-experiment comparability.
-
-The evaluator embedding is fixed to **text-embedding-3-small**
-via EdenAI and must not be overridden — it is the fixed
-measurement instrument across all experiments.
-
-Config for formal runs (override in experiment YAML or base):
-
-```yaml
-evaluation:
-  evaluator_llm:
-    provider: "edenai"
-    model_name: "gpt-4.1"
-    params:
-      sub_provider: "openai"
-  evaluator_embedding:
-    type: "edenai"
-    params:
-      provider: "openai"
-      model_name: "text-embedding-3-small"
-```
-
-#### Cross-Encoder Reranker
-
-| # | Component | Registry | Interface | Library | Status |
-|---|-----------|----------|-----------|---------|--------|
-| 11 | Cross-encoder reranker | `cross_encoder` | `BaseReranker` | `sentence-transformers` `CrossEncoder` | Done |
-
-**Primary model: `Alibaba-NLP/gte-reranker-modernbert-base`**
-
-Selected for its compact size, 8192-token context, Apache 2.0
-license, and straightforward `CrossEncoder` integration.
-
-Config params:
-- `model_name`: HuggingFace model ID
-  (default: `Alibaba-NLP/gte-reranker-modernbert-base`)
-- `device`: `"cuda"`, `"cpu"`, or `null` for auto-detect
-- `batch_size`: Pairs per forward pass (default: 32)
-
-No new dependencies required — `sentence-transformers>=3` (already
-installed) includes the `CrossEncoder` class, and the locked
-`transformers` 4.57.6 supports ModernBERT (requires ≥4.48.0).
-
-**Milestone:** Can run baseline vs reranked experiments and
-measure the effect of reranking on all RAGAS metrics.
-Evaluator LLM and embedding are standardized for all formal
-comparison runs.
-
-### Phase 3D — Query Transforms & Chunking Strategies
-
-Goal: Add remaining experimentation knobs. All work within the
-existing linear pipeline. Deferred until Phase 3C results are
-analyzed.
+Goal: bring the harness up to the field's de facto strong retrieval
+baseline — dense + sparse + fusion — so that every later experiment
+compares against a credible baseline rather than dense-only.
 
 | # | Component | Registry | Interface | Library |
 |---|-----------|----------|-----------|---------|
-| 12 | HyDE query transformer | `hyde` | `BaseQueryTransformer` | Custom (LLM generates hypothetical doc) |
-| 13 | Multi-query transformer | `multi_query` | `BaseQueryTransformer` | Custom (LLM generates N query variants) |
-| 14 | Semantic chunker | `semantic` | `BaseChunker` | `langchain-experimental` SemanticChunker |
+| 1 | BM25 sparse retriever | `bm25` | `BaseRetriever` | `bm25s` |
+| 2 | Hybrid retriever (RRF fusion) | `hybrid` | `BaseRetriever` | Custom fusion over dense + sparse |
 
-**Milestone:** Can run a full experiment matrix: baseline ×
-{with/without reranker} × {passthrough/HyDE/multi-query} ×
-{recursive/semantic chunking} and compare all results in one
-table.
+**BM25 retriever.** Lexical retrieval is "remarkably hard to beat out
+of distribution" and fails in different ways than dense retrieval,
+which is exactly why combining them helps. `bm25s` is the current
+standard Python implementation: pure NumPy/SciPy (no Java/PyTorch),
+Apache 2.0, orders of magnitude faster than `rank-bm25`, and it
+persists/loads indices to disk — which fits the harness's
+`IndexArtifact` caching model.
 
-### Phase 4A — Single-Agent Pipeline
+**Hybrid retriever.** Combines the dense and sparse result lists.
+Default fusion is Reciprocal Rank Fusion (RRF) — parameter-light,
+robust, and the production default. Score-weighted fusion is an
+optional alternative param. The hybrid retriever composes the two
+underlying retrievers rather than reimplementing them.
 
-Goal: Implement the ReAct loop in `AgentPipeline` for
-`mode: "single"`. Replicate v2. Includes tool components
-deferred from Phase 3B.
+**Architectural prerequisite:** resolve the auxiliary-index gap
+(Section 7.1) so the BM25 index is built during indexing and cached
+alongside the vector index.
+
+Config params (BM25): `k1`, `b`, `method` (`"lucene"`/`"robertson"`/
+`"bm25+"`), `stemmer`.
+Config params (hybrid): `fusion` (`"rrf"`/`"weighted"`),
+`rrf_k` (default 60), `dense_weight`/`sparse_weight` for weighted mode,
+`top_k_retrieve` per sub-retriever.
+
+**Milestone:** can run dense vs. BM25 vs. hybrid (with and without
+cross-encoder reranking) and compare retrieval and answer metrics in
+one table. This is the canonical strong-baseline matrix.
+
+### Phase B — Standard Query Optimization
+
+Goal: add the standard pre-retrieval query transformations. All reuse
+the existing generator infrastructure and `BaseQueryTransformer`
+interface.
+
+| # | Component | Registry | Interface | Notes |
+|---|-----------|----------|-----------|-------|
+| 3 | HyDE | `hyde` | `BaseQueryTransformer` | LLM generates a hypothetical answer; retrieve on its embedding |
+| 4 | Multi-query | `multi_query` | `BaseQueryTransformer` | LLM generates N reformulations; union/fuse results |
+
+HyDE embeds a generated hypothetical document instead of the raw
+query, on the rationale that an answer resembles its supporting
+passages more than the question does. Multi-query issues several
+reformulations in parallel and fuses their results, trading retrieval
+cost for recall. Both can derail when the LLM hallucinates — that
+trade-off is itself worth measuring on the advising corpus.
+
+Note: multi-query that *fuses* result lists shares fusion logic with
+the hybrid retriever (Phase A). Factor RRF into a small shared helper
+so both use it.
+
+**Milestone:** passthrough vs. contextualizer vs. HyDE vs. multi-query,
+each measured on the hybrid baseline.
+
+### Phase C — Standard Chunking Alternatives
+
+Goal: add the two standard alternatives to fixed-size recursive
+chunking. The review notes that beyond a competent embedder, chunk
+*size* often matters more than chunking *strategy* — so chunk-size
+sweeps on the existing recursive chunker are part of this phase, not
+just new chunkers.
+
+| # | Component | Registry | Interface | Library |
+|---|-----------|----------|-----------|---------|
+| 5 | Semantic chunker | `semantic` | `BaseChunker` | `langchain-experimental` SemanticChunker |
+| 6 | Contextual chunk enricher | `contextual` | `BaseChunkEnricher` | Custom (LLM prepends situating context per chunk) |
+
+**Semantic chunker** splits on embedding-similarity breakpoints rather
+than fixed token counts.
+
+**Contextual retrieval** (the Anthropic recipe) prepends a short,
+model-generated description situating each chunk in its source document
+*before* embedding and indexing. Combined with hybrid retrieval and
+reranking, it is reported to cut top-20 retrieval failures by roughly
+two-thirds. This requires the new enricher stage (Section 7.2) that
+sits between chunking and embedding — a clean, reusable place for any
+pre-embedding transformation.
+
+**Milestone:** recursive (multiple sizes) vs. semantic vs. contextual-
+enriched, on the hybrid baseline.
+
+### Phase D — Agentic RAG
+
+Goal: activate the dormant agent pipeline. Agentic retrieval — the
+model deciding when and what to retrieve as part of multi-step
+reasoning — is now a standard paradigm, so it belongs in the harness.
+This is **not** framed as replicating any prior agent version.
+
+#### Phase D1 — Single-Agent (ReAct)
 
 | # | Component | Location | Notes |
 |---|-----------|----------|-------|
-| 15 | ReAct agent loop | `pipeline/agent.py` | Single LLM decides tool → executes → observes → decides again |
-| 16 | RAG tool wrapper | `pipeline/agent.py` or `components/tools.py` | Wraps a mini QueryPipeline as a tool |
-| 17 | Serper web search tool | `components/tools.py` | `serper_search` registry, `BaseTool`, Serper API via `requests` |
-| 18 | Gmail mock tool | `components/tools.py` | `gmail_mock` registry, `BaseTool`, custom (logs, no real send) |
+| 7 | ReAct agent loop | `pipeline/agent.py` | Reason → act (tool) → observe → repeat |
+| 8 | RAG tool wrapper | `components/tools.py` | Wraps a QueryPipeline as a callable tool |
+| 9 | Web search tool | `components/tools.py` | `BaseTool`; external search via API |
 
-The agent receives a query, decides which tool to use (RAG,
-web search, email), executes it, observes the result, and either
-calls another tool or formulates a final answer. The loop runs
-for up to `agent.supervisor.max_iterations` steps.
+The agent treats retrieval as one tool among several, deciding for
+itself when it has gathered enough evidence. The RAG tool wraps a
+`QueryPipeline` (full hybrid + rerank stack) and produces a
+`ToolResult` with `retrieved_chunks` populated, so the evaluator can
+still assess retrieval quality in agent mode. The loop runs up to
+`agent.max_iterations` steps. Chief risk to measure: error propagation
+from a bad early step.
 
-The RAG tool wraps a `QueryPipeline` instance with the agent's
-per-agent retrieval config and prompt. It produces a `ToolResult`
-with `retrieved_chunks` populated — these flow into the final
-`GenerationResult` so the evaluator can assess retrieval quality
-even in agent mode.
-
-**Milestone:** Can run `configs/experiments/v2_replication.yaml`
-and compare agent vs linear performance with identical indexing.
-
-### Phase 4B — Multi-Agent Supervisor
-
-Goal: Implement supervisor routing for `mode: "multi"`.
-Support v3 comparison.
+#### Phase D2 — Multi-Agent Supervisor
 
 | # | Component | Location | Notes |
 |---|-----------|----------|-------|
-| 19 | Supervisor routing | `pipeline/agent.py` | LLM-based routing to specialized agents |
-| 20 | Agent roster management | `pipeline/agent.py` | Per-agent QueryPipelines with source filters |
+| 10 | Supervisor routing | `pipeline/agent.py` | LLM routes queries to specialized agents |
+| 11 | Agent roster | `pipeline/agent.py` | Per-agent retrieval filters + prompts |
 
-The supervisor uses its own LLM (`agent.supervisor.llm`) to
-decide which agent handles each query. Each agent has its own
-retrieval filters and prompt template, enabling source-specialized
-responses (e.g., handbook_agent only searches the handbook
-vectorstore partition).
+A supervisor LLM routes each query to a specialized agent; each agent
+has its own retrieval filters and prompt (e.g., a handbook-only agent
+vs. a deadlines agent). Resolves GAP 1.
 
-**Milestone:** Can run controlled v1 vs v2 vs v3 comparison
-with identical indexing.
+**Milestone:** linear vs. single-agent vs. multi-agent on identical
+indexing, measuring whether agentic control flow actually improves
+answer quality on advising queries or just adds latency.
 
-### Phase 5 — Advanced
+### Phase E — Evaluation Depth & Robustness
 
-Goal: Research extensions beyond replication.
+Goal: address the review's recurring caution that retrieval metrics and
+answer metrics are only loosely coupled, and that automated judges
+carry biases.
+
+| # | Item | Notes |
+|---|------|-------|
+| 12 | Retrieval/answer decoupling report | Surface where better retrieval did NOT improve answers (and vice-versa) |
+| 13 | Abstention handling | Prompt + metric for "I don't know" when evidence is absent |
+| 14 | Multi-turn session evaluation | Exercises memory across ordered turns (resolves GAP 3) |
+| 15 | Knowledge-conflict probe (optional) | Inject contradicting context; measure whether the model defers appropriately |
+
+LLM-as-judge biases (position, verbosity, self-enhancement) should be
+documented in evaluation outputs and periodically spot-checked against
+human judgment on a held-out slice. This is a methodology note as much
+as a feature.
+
+### Phase F — Advanced / Optional
+
+Goal: specialized techniques pursued only on concrete need. Explicitly
+lower priority; the review covers these but they are not standard
+default practice for a text corpus of this kind.
 
 | # | Component | Notes |
 |---|-----------|-------|
-| 21 | BM25 retriever | `rank-bm25`, for hybrid dense+sparse retrieval |
-| 22 | Hybrid retriever | Combines dense + BM25 with score fusion |
-| 23 | ColBERT reranker | Late interaction model |
-| 24 | Multi-turn session evaluator | Exercises memory across ordered turn sequences |
-| 25 | Additional embedding models | nomic-embed, GTE, OpenAI ada-002 variants |
+| 16 | Late-interaction reranker (ColBERT) | Multi-vector; storage-heavy |
+| 17 | LLM reranker (RankGPT-style) | Listwise prompting; latency/cost-heavy |
+| 18 | Graph RAG | Entity-relation graph + traversal; pays off only on multi-hop/corpus-level synthesis |
+| 19 | Additional ingestors | HTML, markdown, OCR for scanned docs |
 
 ---
 
-## 7. Variable Coverage Matrix
+## 6. Variable Coverage Matrix
 
-Every testable variable from the research factor analysis, mapped
-to its config location. All are independently isolatable.
+The variables the harness can sweep, by pipeline stage. Bold entries
+are not yet implemented.
 
-### 7.1 Indexing Variables
+### 6.1 Indexing Variables
 
-| Variable | Config Location |
-|----------|----------------|
-| Document parser | `indexing.sources[].ingest.type` |
-| Number of sources | `indexing.sources` list length |
-| Source selection | `indexing.sources` list contents |
-| Chunking strategy | `indexing.chunking.type` |
-| Chunk size | `indexing.chunking.params.chunk_size` |
-| Chunk overlap | `indexing.chunking.params.chunk_overlap` |
-| Separators | `indexing.chunking.params.separators` |
-| Embedding model | `indexing.embedding.params.model_name` |
-| Embedding normalization | `indexing.embedding.params.normalize` |
-| Vectorstore backend | `indexing.vectorstore.type` |
-| Distance metric | `indexing.vectorstore.params.metric` |
+| Variable | Config Location | Status |
+|----------|----------------|--------|
+| Source documents | `indexing.sources` | done |
+| Chunking strategy | `indexing.chunking.type` | recursive done; **semantic, contextual** pending |
+| Chunk size / overlap | `indexing.chunking.params` | done |
+| Embedding model | `indexing.embedding` | done (4 providers) |
+| Vectorstore | `indexing.vectorstore.type` | done (FAISS, Chroma) |
 
-### 7.2 Query Variables
+### 6.2 Query Variables
 
-| Variable | Config Location |
-|----------|----------------|
-| Query transform technique | `query.query_transform.type` |
-| Retrieval method | `query.retrieval.type` |
-| top_k_retrieve | `query.retrieval.top_k_retrieve` |
-| top_k_final | `query.retrieval.top_k_final` |
-| Source filters | `query.retrieval.filters` |
-| Reranking method | `query.reranking.type` |
-| Reranking model | `query.reranking.params.model_name` |
-| Generator backend | `query.generation.type` |
-| LLM model | `query.generation_llm.model_name` |
-| LLM temperature | `query.generation_llm.temperature` |
-| LLM max tokens | `query.generation_llm.max_tokens` |
-| System prompt text | `query.prompt.system_template` |
-| Chain-of-thought | `query.prompt.use_chain_of_thought` |
-| Citation style | `query.prompt.citation_style` |
-| Few-shot examples | `query.prompt.few_shot_examples` |
-| Context format | `query.prompt.context_format` |
+| Variable | Config Location | Status |
+|----------|----------------|--------|
+| Query transform | `query.query_transform.type` | passthrough, contextualizer done; **HyDE, multi-query** pending |
+| Retrieval method | `query.retrieval.type` | dense done; **BM25, hybrid** pending |
+| Fusion strategy | `query.retrieval.params.fusion` | **pending (Phase A)** |
+| Retrieval depth | `query.retrieval.top_k_retrieve` | done |
+| Final chunk count | `query.retrieval.top_k_final` | done |
+| Reranker | `query.reranking.type` | none, cross_encoder done |
+| Generator / LLM | `query.generation`, `query.generation_llm` | done (4 providers) |
+| Prompt strategy | `query.prompt` | done (CoT, citation, context format) |
 
-### 7.3 Agent Variables
+### 6.3 Agent Variables (Phase D)
 
-| Variable | Config Location |
-|----------|----------------|
-| Pipeline mode | `pipeline_mode` |
-| Agent mode | `agent.mode` |
-| Supervisor LLM | `agent.supervisor.llm` |
-| Routing strategy | `agent.supervisor.routing` |
-| Max iterations | `agent.supervisor.max_iterations` |
-| Memory type | `agent.memory.type` |
-| Memory window size | `agent.memory.window_size` |
-| Agent roster | `agent.agents` list |
-| Per-agent source filter | `agent.agents[].retrieval.filters` |
-| Per-agent prompt | `agent.agents[].prompt` |
-| Available tools | `agent.tools` list |
+| Variable | Config Location | Status |
+|----------|----------------|--------|
+| Pipeline mode | `pipeline_mode` | linear done; **agent** pending |
+| Agent mode | `agent.mode` | **pending (single/multi)** |
+| Max iterations | `agent.max_iterations` | **pending** |
+| Tool roster | `agent.tools` | **pending** |
+| Memory | `agent.memory.type` | none, buffer_window done (unused until agent) |
 
-### 7.4 Evaluation Variables
+### 6.4 Evaluation Variables
 
-| Variable | Config Location |
-|----------|----------------|
-| Dataset | `evaluation.dataset` |
-| Evaluation mode | `evaluation.mode` |
-| Metric selection | `evaluation.metrics` |
-| Number of runs | `evaluation.num_runs` |
-| Evaluator LLM | `evaluation.evaluator_llm` |
-| Evaluator embedding | `evaluation.evaluator_embedding` |
-| Eval timeout | `evaluation.run_config.timeout` |
-| Eval workers | `evaluation.run_config.max_workers` |
+| Variable | Config Location | Status |
+|----------|----------------|--------|
+| Dataset | `evaluation.dataset` | done |
+| Mode | `evaluation.mode` | full, retrieval_only, no-score smoke done |
+| Metrics | `evaluation.metrics` | done |
+| Number of runs | `evaluation.num_runs` | done |
+| Evaluator LLM | `evaluation.evaluator_llm` | done (standardized) |
+| Evaluator embedding | `evaluation.evaluator_embedding` | done (fixed bge-m3) |
+| Run config | `evaluation.run_config` | done |
 
 ---
 
-## 8. Known Gaps
+## 7. Architectural Extensions Required
 
-### RESOLVED: Config validation
+Two well-scoped changes unblock Phases A and C. Both are additive and
+backward-compatible.
 
-Previously GAP 4. Now implemented as `validate_config()` in
-`core/config.py`, called in `scripts/run_experiment.py` before
-pipeline construction.
+### 7.1 Auxiliary indexes in `IndexArtifact` (unblocks Phase A)
 
-### GAP 1: Agent supervisor lacks its own generator (MEDIUM)
+**Current:** `IndexArtifact` carries one `vectorstore` plus the
+`embedder`. A hybrid/sparse retriever needs a BM25 index built and
+cached alongside the vector index.
 
-**Problem:** The AgentPipeline is a stub. The supervisor needs to
-make LLM calls for routing and synthesis.
+**Plan:** add an optional `auxiliary_stores: dict[str, Any]` field to
+`IndexArtifact`. The indexing pipeline builds the BM25 index when a
+sparse or hybrid retriever is configured and stores it under a known
+key (e.g., `"bm25"`). The retriever reads it from there. The fingerprint
+must incorporate sparse-index parameters so cache invalidation stays
+correct. Dense-only experiments are unaffected — the dict is empty.
 
-**Plan:** Phase 4A (single-agent) and 4B (multi-agent) implement
-the real loops. The config already carries `agent.supervisor.llm`.
+### 7.2 Chunk-enricher stage (unblocks contextual retrieval in Phase C)
 
-### GAP 2: Hybrid retrieval has no BM25 index cache (LOW)
+**Current:** chunks are embedded in isolation; there is no place for a
+post-chunking, pre-embedding transformation.
 
-**Problem:** A hybrid retriever needs a keyword index alongside
-the vector index. The current `IndexArtifact` carries only one
-vectorstore.
+**Plan:** introduce a `BaseChunkEnricher` stage between chunking and
+embedding in the indexing pipeline. Default is a no-op passthrough
+(registered as `none`), so existing configs are unchanged. The
+contextual enricher (Phase C) implements this interface. This is the
+clean home for any future pre-embedding transform (late chunking,
+proposition extraction, title-prepending).
 
-**Plan:** When hybrid retrieval is implemented (Phase 5), extend
-`IndexArtifact` with an optional `auxiliary_stores` dict. The
-hybrid retriever stores/loads its BM25 index in the same cache
-directory.
+### Lower-priority gaps (unchanged)
 
-### GAP 3: No multi-turn session evaluation (LOW)
-
-**Problem:** The evaluator runs each query independently. Memory
-exists in the agent pipeline but the evaluator doesn't exercise it.
-
-**Plan:** Add a `SessionEvaluator` mode (Phase 5) when multi-turn
-datasets are available.
-
-### GAP 4: Contextual chunking has no independent stage (LOW)
-
-**Problem:** Contextual chunking (prepending section titles before
-embedding) is a post-chunking, pre-embedding transformation.
-Currently baked into chunker implementations.
-
-**Plan:** If this becomes a priority, add a `BaseChunkEnricher`
-stage between chunking and embedding. For now, chunker
-implementations can include it as a boolean param.
-
-### GAP 5: Embedder re-instantiation on cache load (LOW)
-
-**Problem:** Loading an index from cache still instantiates the
-full embedding model (needed for `embed_query()` at query time).
-For large models like bge-m3, this takes several seconds even
-when the index itself loads instantly.
-
-**Impact:** Performance cost only — no correctness issue. The
-model is needed regardless; the question is whether it could be
-lazy-loaded.
-
-**Plan:** Acceptable for now. Could add lazy loading to
-`HuggingFaceEmbedder` if startup time becomes a bottleneck
-during rapid iteration.
+- **GAP — Embedder re-instantiation on cache load (LOW):** loading a
+  cached index still instantiates the embedding model for query-time
+  embedding. Performance only, no correctness issue. Could lazy-load
+  `HuggingFaceEmbedder` if startup becomes a bottleneck.
 
 ---
 
-## 9. Dependencies by Phase
+## 8. Dependencies by Phase
 
-### Current (Phases 1–3A)
+### Current
 
 ```
 pyyaml                    Config loading
 faiss-cpu                 Vector store
 numpy                     Array operations
-sentence-transformers     Embedding models
+sentence-transformers     Embeddings + cross-encoder reranking
 pymupdf                   PDF parsing
-ragas                     Evaluation metrics (pinned 0.4.x)
+ragas                     Evaluation metrics
 datasets                  RAGAS transitive dependency
 python-dotenv             API key management
 rich                      CLI table rendering
-langchain-community       EdenAI LLM/embeddings wrapper
-langchain-ollama          Ollama LLM wrapper
-tenacity                  Retry logic for API calls
+langchain-community       EdenAI gateway
+langchain-ollama          Ollama wrapper
+langchain-openai          OpenAI evaluator LLM
+langchain-google-genai    Google evaluator LLM
+tenacity                  Retry logic
 chromadb                  ChromaDB vectorstore
-google-genai              Gemini generation + Google embeddings
-langchain-text-splitters  LangChain recursive chunker
+google-genai              Gemini generation + embeddings
+openai                    OpenAI generation + embeddings
+langchain-text-splitters  Recursive chunker
 ```
 
-### Evaluator improvements additions
+### Phase A additions
 
 ```
-langchain-google-genai    Google evaluator LLM (ChatGoogleGenerativeAI)
+bm25s                     Fast sparse BM25 retrieval (NumPy/SciPy)
+PyStemmer                 Optional stemming for BM25 (recommended)
 ```
 
-### Phase 3B additions
-
-```
-openai                    OpenAI embeddings + generation
-langchain-openai          OpenAI evaluator LLM (ChatOpenAI)
-```
-
-### Phase 3C additions
-
-No new dependencies. The cross-encoder reranker uses
-`sentence-transformers` `CrossEncoder` (already installed).
-The locked `transformers` 4.57.6 supports ModernBERT.
-
-### Phase 3D additions
+### Phase C additions
 
 ```
 langchain-experimental    Semantic chunker
 ```
 
-### Phase 5 additions
-
-```
-rank-bm25                 BM25 retrieval for hybrid search
-```
+(HyDE, multi-query, hybrid fusion, the chunk enricher, and the agent
+loop are custom — no new dependencies.)
 
 ---
 
-## 10. Experiment Matrix
+## 9. Experiment Matrix
 
-The core experiments, organized by what each isolates.
+Experiments are organized by what each isolates. All inherit from
+`base.yaml`; all formal runs use the standardized evaluator
+(GPT-4o-mini via EdenAI, fixed bge-m3 evaluator embedding).
 
-**Evaluator standard:** All formal comparison runs use GPT-4.1
-via EdenAI as the evaluator LLM and text-embedding-3-small via
-EdenAI as the evaluator embedding. See Phase 3C for rationale.
+### Retrieval (Phase A) — the core matrix
 
-### Replication Experiments
+| Experiment | Isolates | Compare against |
+|-----------|----------|-----------------|
+| `dense` (baseline) | dense retrieval | — |
+| `bm25` | sparse retrieval | dense |
+| `hybrid_rrf` | dense + sparse, RRF fusion | dense, bm25 |
+| `hybrid_rrf_rerank` | hybrid + cross-encoder | hybrid_rrf |
+| `hybrid_weighted` | weighted vs. RRF fusion | hybrid_rrf |
 
-| Experiment | What It Tests | Requires |
-|-----------|---------------|----------|
-| `v1_replication` | Reproduce paper Table 2, R-ARGObot row | Phase 3A |
-| `v2_replication` | Reproduce paper Table 2, A-ARGObot row | Phase 4A |
-| `v1_vs_v2_controlled` | Agent vs linear with identical indexing | Phase 4A |
+### Reranking (Phase 3C, done)
 
-### Reranker Experiments (Phase 3C)
+| Experiment | Isolates |
+|-----------|----------|
+| `cross_encoder` | reranking on/off |
+| `cross_encoder_topk{3,5,10}` | final-chunk count under reranking |
 
-| Experiment | What It Tests | Baseline |
-|-----------|---------------|----------|
-| `reranker_cross_encoder` | Effect of cross-encoder reranking on all metrics | `baseline` (reranking: none) |
-| `reranker_cross_encoder_topk_3` | Wider candidate pool with fixed final selection (top_k_retrieve=10, top_k_final=3) | `reranker_cross_encoder` |
-| `reranker_cross_encoder_topk_5` | Larger final context after reranking (top_k_retrieve=10, top_k_final=5) | `reranker_cross_encoder_topk_3` |
-| `reranker_cross_encoder_topk_10` | High-recall exploratory setting (top_k_retrieve=20, top_k_final=10) | `reranker_cross_encoder_topk_5` |
-| `reranker_cross_encoder_chroma` | Reranking with Chroma vectorstore | `reranker_cross_encoder` |
+### Query Optimization (Phase B)
 
-### Component Isolation Experiments
+| Experiment | Isolates |
+|-----------|----------|
+| `qt_hyde` | HyDE vs. passthrough |
+| `qt_multi_query` | multi-query vs. passthrough |
+| `qt_contextualizer` | existing contextualizer |
 
-| Experiment | Variable Isolated | Baseline |
-|-----------|-------------------|----------|
-| `chunking_256` / `_512` / `_1000` / `_1200` | Chunk size | `baseline` |
-| `overlap_0` / `_50` / `_100` / `_200` | Chunk overlap | `baseline` |
-| `embedding_bge_m3` / `_ada002` / `_nomic` | Embedding model | `baseline` |
-| `vectorstore_faiss` / `_chroma` | Vectorstore backend | `baseline` |
-| `reranker_none` / `_cross_encoder` | Reranking | `baseline` |
-| `qt_passthrough` / `_hyde` / `_multi_query` | Query transformation | `baseline` |
-| `prompt_verbatim` / `_cot` / `_numbered` | Prompt strategy | `baseline` |
-| `chunker_recursive` / `_semantic` | Chunking strategy | `baseline` |
+### Chunking (Phase C)
 
-### CER-Focused Experiments
+| Experiment | Isolates |
+|-----------|----------|
+| `chunk_size_{256,512,1024}` | chunk size (recursive) |
+| `chunk_semantic` | semantic vs. recursive |
+| `chunk_contextual` | contextual enrichment on/off |
 
-Context Entity Recall is the weakest metric across all published
-versions (~0.27–0.29). The following experiments specifically
-target CER improvement:
+### Agentic (Phase D)
 
-| Experiment | Hypothesis |
-|-----------|-----------|
-| Smaller chunks (256) | More focused chunks improve entity matching |
-| Larger top_k (10, 15) | More retrieved chunks cover more entities |
-| Cross-encoder reranking | Better-ranked chunks contain more relevant entities |
-| Semantic chunking | Entity-preserving boundaries improve recall |
-| Different embedding model | Better semantic alignment captures entities |
+| Experiment | Isolates |
+|-----------|----------|
+| `agent_single` | ReAct single-agent vs. linear |
+| `agent_multi` | multi-agent vs. single-agent |
+
+### Standing Methodology Note
+
+Because retrieval metrics and answer metrics decouple, every retrieval
+experiment should be read on **both** levels: a change that improves
+context precision but not answer correctness (or vice-versa) is a
+finding, not a null result. The comparison tooling already surfaces
+per-metric deltas; Phase E formalizes the decoupling report.

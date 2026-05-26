@@ -3,9 +3,11 @@
 > Documents the system as built. For planned work, see
 > [ROADMAP.md](ROADMAP.md).
 
-This codebase is an experiment harness that measures how different
-RAG component choices affect RAGAS evaluation metrics for an
-academic advising chatbot. It is not a production chatbot.
+This codebase is a general-purpose RAG experimentation harness. It
+measures how different RAG component choices — chunking, embedding,
+retrieval, reranking, query transformation, generation — affect
+end-to-end evaluation metrics. It is a research testbed, not a
+production chatbot.
 
 ---
 
@@ -113,17 +115,17 @@ src/
 │   ├── embedders.py      HuggingFaceEmbedder, GoogleEmbedder
 │   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
 │   ├── retrievers.py     DenseRetriever
-│   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator
+│   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator, OpenAIGenerator
 │   ├── prompts.py        ChatPromptTemplate
 │   ├── query_transforms.py  ContextualizerQueryTransformer
-│   ├── rerankers.py      (stub — Phase 3C)
-│   ├── tools.py          (stub — Phase 4)
+│   ├── rerankers.py      CrossEncoderReranker
+│   ├── tools.py          (stub — Phase D)
 │   └── __init__.py       Imports all implementation files → triggers registration
 │
 ├── pipeline/
 │   ├── indexing.py        IndexArtifact + IndexingPipeline
 │   ├── query.py           QueryPipeline (linear RAG)
-│   ├── agent.py           AgentPipeline (stub — Phase 4)
+│   ├── agent.py           AgentPipeline (stub — Phase D)
 │   └── rag.py             RAGPipeline (top-level dispatcher)
 │
 └── evaluation/
@@ -419,16 +421,20 @@ metadata, and truncates.
 | `chunking` | `recursive_custom` | `CustomRecursiveChunker` | `chunkers.py` |
 | `embedding` | `huggingface` | `HuggingFaceEmbedder` | `embedders.py` |
 | `embedding` | `google` | `GoogleEmbedder` | `embedders.py` |
+| `embedding` | `openai` | `OpenAIEmbedder` | `embedders.py` |
+| `embedding` | `edenai` | `EdenAIEmbedder` | `embedders.py` |
 | `vectorstore` | `faiss` | `FAISSVectorStore` | `vectorstores.py` |
 | `vectorstore` | `chroma` | `ChromaVectorStore` | `vectorstores.py` |
 | `retrieval` | `dense` | `DenseRetriever` | `retrievers.py` |
-| `generation` | `ollama` | `OllamaGenerator` | `generators.py` |
-| `generation` | `edenai` | `EdenAIGenerator` | `generators.py` |
-| `generation` | `google` | `GoogleGenerator` | `generators.py` |
-| `prompts` | `chat` | `ChatPromptTemplate` | `prompts.py` |
 | `query_transform` | `passthrough` | `PassthroughQueryTransformer` | `defaults.py` |
 | `query_transform` | `contextualizer` | `ContextualizerQueryTransformer` | `query_transforms.py` |
 | `reranking` | `none` | `NoOpReranker` | `defaults.py` |
+| `reranking` | `cross_encoder` | `CrossEncoderReranker` | `rerankers.py` |
+| `generation` | `ollama` | `OllamaGenerator` | `generators.py` |
+| `generation` | `edenai` | `EdenAIGenerator` | `generators.py` |
+| `generation` | `google` | `GoogleGenerator` | `generators.py` |
+| `generation` | `openai` | `OpenAIGenerator` | `generators.py` |
+| `prompts` | `chat` | `ChatPromptTemplate` | `prompts.py` |
 | `memory` | `none` | `NoMemory` | `defaults.py` |
 | `memory` | `buffer_window` | `BufferWindowMemory` | `defaults.py` |
 
@@ -474,8 +480,8 @@ per chunk_id and sorts descending.
 ### AgentPipeline (`pipeline/agent.py`)
 
 Stub. Defines the class interface (`__init__`, `run`, `query`)
-and raises `NotImplementedError`. Will support single-agent (v2)
-and multi-agent (v3) modes in Phase 4.
+and raises `NotImplementedError`. Will support single-agent (ReAct)
+and multi-agent (supervisor-routed) modes in Phase D.
 
 ### RAGPipeline (`pipeline/rag.py`)
 
@@ -563,8 +569,8 @@ lives in `config.yaml`). Snapshot fields: `name`, `description`,
 ### Comparison (`evaluation/comparison.py`)
 
 `compare_experiments(result_dirs)` loads summaries and produces
-comparison rows. `format_comparison_table(rows)` renders Markdown
-matching the ACMSE paper Table 2 format.
+comparison rows. `format_comparison_table(rows)` renders a Markdown
+table of metrics across experiments for side-by-side comparison.
 
 `diff_configs(dir_a, dir_b)` flattens both configs to dotted key
 paths and returns only the keys that differ — essential for
