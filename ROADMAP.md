@@ -3,7 +3,7 @@
 > Forward-looking plan for the RAG experimentation harness.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 >
-> **Last updated:** 2026-05-26
+> **Last updated:** 2026-05-27
 
 ---
 
@@ -86,7 +86,10 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 | Embedding | `EdenAIEmbedder` | `edenai` | `langchain-community` gateway |
 | Vectorstore | `FAISSVectorStore` | `faiss` | Cosine + L2, metadata post-filtering |
 | Vectorstore | `ChromaVectorStore` | `chroma` | ChromaDB, native metadata filtering |
+| Sparse Index | `BM25LexicalIndex` | `bm25` | `bm25s` + PyStemmer; mmap load; metadata over-retrieve + post-filter |
 | Retrieval | `DenseRetriever` | `dense` | Single-vector similarity search |
+| Retrieval | `BM25Retriever` | `bm25` | Delegates to `sparse_index` |
+| Retrieval | `HybridRetriever` | `hybrid` | Composes named child retrievers; RRF or weighted fusion |
 | Query Transform | `PassthroughQueryTransformer` | `passthrough` | Returns query unchanged |
 | Query Transform | `ContextualizerQueryTransformer` | `contextualizer` | LLM reformulation with history |
 | Reranking | `NoOpReranker` | `none` | Passes through, truncates to top_k |
@@ -105,7 +108,16 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
   fingerprinting, and upfront validation
 - Linear query pipeline (query transform → retrieve → rerank →
   prompt → generate)
-- Index caching by SHA-256 fingerprint
+- Index caching by SHA-256 fingerprint, with **empty-config
+  canonicalization** so optional indexing components (sparse index
+  today; chunk enricher in Phase C) don't disturb the fingerprint
+  when unused
+- **Auxiliary indexes** carried inside `IndexArtifact.auxiliary_stores`
+  (typed `dict[str, BaseLexicalIndex | BaseVectorStore]`); BM25 lives
+  under the `"bm25"` key
+- **Rank-list fusion helpers** in `core/fusion.py` (RRF + weighted
+  score fusion); reused by the hybrid retriever today and by
+  multi-query in Phase B
 - RAGAS evaluation with multi-run aggregation (mean ± std) and a
   dedicated, fixed evaluator embedding for cross-experiment comparability
 - Standardized evaluator LLM (GPT-4.1 via EdenAI) for formal runs;
@@ -132,15 +144,17 @@ anatomy. Current coverage by stage:
 | Chunking | recursive, semantic, contextual | recursive | semantic, contextual enrichment |
 | Embedding | open + commercial | 4 providers | — (broad coverage) |
 | Vectorstore | dense ANN | FAISS, Chroma | — |
+| Sparse index | BM25 / SPLADE | BM25 | (SPLADE — advanced) |
 | Query optimization | rewrite/expand, decompose, multi-query | contextualizer | HyDE, multi-query |
-| Retrieval | dense, sparse, hybrid | dense | **sparse (BM25), hybrid (RRF)** |
+| Retrieval | dense, sparse, hybrid | dense, BM25, hybrid (RRF + weighted) | — |
 | Reranking | cross-encoder, late-interaction, LLM | cross-encoder | (ColBERT/LLM — advanced) |
 | Generation | grounded gen, citation, abstention | chat + citation | abstention |
 
-The single largest gap relative to standard practice is **retrieval**:
-the harness only does dense retrieval, while the field's de facto
-strong baseline is dense + sparse + reranking. Closing this is the
-top priority (Phase A).
+With **Phase A complete**, the harness now covers the field's de
+facto strong-baseline retrieval matrix (dense + sparse + hybrid +
+reranking). The largest remaining gaps relative to standard practice
+are **query optimization** (HyDE, multi-query) and **chunking**
+(semantic, contextual enrichment) — Phases B and C respectively.
 
 ---
 
@@ -150,9 +164,10 @@ Work is organized into tracks rather than a strict linear sequence.
 The priority ordering reflects how standard each piece is:
 
 1. **Phase A — Complete the standard retrieval baseline** (sparse +
-   hybrid). Highest priority: this is what makes the harness a credible
-   strong baseline rather than a dense-only toy.
+   hybrid). ✅ **Done.** The harness now runs dense / BM25 / hybrid
+   (RRF or weighted) under the same evaluation harness.
 2. **Phase B — Standard query optimization** (HyDE, multi-query).
+   Next up.
 3. **Phase C — Standard chunking alternatives** (semantic, contextual
    retrieval).
 4. **Phase D — Agentic RAG** (single-agent ReAct, then multi-agent).
@@ -164,53 +179,44 @@ The priority ordering reflects how standard each piece is:
    graph RAG, multimodal). Explicitly lower priority; pursued only
    if a concrete need arises.
 
-Phases A–C are all within the existing linear pipeline and require no
-architectural changes beyond two well-scoped extensions (Section 7).
-Phase D activates the dormant agent pipeline. Phases E–F are
-open-ended.
+Phase A and B are both within the existing linear pipeline; Phase C
+requires one well-scoped extension (Section 7.2). Phase D activates
+the dormant agent pipeline. Phases E–F are open-ended.
 
 ---
 
 ## 5. Implementation Phases
 
-### Phase A — Standard Retrieval Baseline (sparse + hybrid)
+### Phase A — Standard Retrieval Baseline (sparse + hybrid) ✅ Done
 
-Goal: bring the harness up to the field's de facto strong retrieval
-baseline — dense + sparse + fusion — so that every later experiment
-compares against a credible baseline rather than dense-only.
+Delivered the field's de facto strong retrieval baseline — dense +
+sparse + fusion — so every later experiment compares against a
+credible reference rather than dense-only.
 
-| # | Component | Registry | Interface | Library |
-|---|-----------|----------|-----------|---------|
-| 1 | BM25 sparse retriever | `bm25` | `BaseRetriever` | `bm25s` |
-| 2 | Hybrid retriever (RRF fusion) | `hybrid` | `BaseRetriever` | Custom fusion over dense + sparse |
+What landed:
 
-**BM25 retriever.** Lexical retrieval is "remarkably hard to beat out
-of distribution" and fails in different ways than dense retrieval,
-which is exactly why combining them helps. `bm25s` is the current
-standard Python implementation: pure NumPy/SciPy (no Java/PyTorch),
-Apache 2.0, orders of magnitude faster than `rank-bm25`, and it
-persists/loads indices to disk — which fits the harness's
-`IndexArtifact` caching model.
+- `BaseLexicalIndex` ABC and `BM25LexicalIndex` (registry:
+  `sparse_index/bm25`) wrapping `bm25s` with PyStemmer, mmap-friendly
+  load, and FAISS-style metadata over-retrieve + post-filter.
+- `BM25Retriever` (`retrieval/bm25`) and `HybridRetriever`
+  (`retrieval/hybrid`) — the latter composes named child retrievers
+  declared as an ordered list, with **named weights** (dict keyed by
+  child `name`) so config diffs stay stable under list reordering.
+  Nested hybrid is rejected by the validator.
+- `core/fusion.py` — pure rank-list math (`reciprocal_rank_fusion`,
+  `weighted_score_fusion`). Reused by Phase B's multi-query.
+- `IndexArtifact.auxiliary_stores` and `IndexingConfig.sparse_index`
+  (Section 7.1, also done). BM25 is built **before** embedding so
+  tokenizer/stemmer misconfiguration fails fast; the cache lives
+  under `data/indexes/<fingerprint>/bm25/`.
+- Four experiment configs under `configs/experiments/retrieval/`:
+  `bm25`, `hybrid_rrf`, `hybrid_rrf_rerank`, `hybrid_weighted`.
+  (The dense baseline is `base.yaml` itself, not a new file.)
 
-**Hybrid retriever.** Combines the dense and sparse result lists.
-Default fusion is Reciprocal Rank Fusion (RRF) — parameter-light,
-robust, and the production default. Score-weighted fusion is an
-optional alternative param. The hybrid retriever composes the two
-underlying retrievers rather than reimplementing them.
-
-**Architectural prerequisite:** resolve the auxiliary-index gap
-(Section 7.1) so the BM25 index is built during indexing and cached
-alongside the vector index.
-
-Config params (BM25): `k1`, `b`, `method` (`"lucene"`/`"robertson"`/
-`"bm25+"`), `stemmer`.
-Config params (hybrid): `fusion` (`"rrf"`/`"weighted"`),
-`rrf_k` (default 60), `dense_weight`/`sparse_weight` for weighted mode,
-`top_k_retrieve` per sub-retriever.
-
-**Milestone:** can run dense vs. BM25 vs. hybrid (with and without
-cross-encoder reranking) and compare retrieval and answer metrics in
-one table. This is the canonical strong-baseline matrix.
+Achieved milestone: dense vs. BM25 vs. hybrid (with and without
+cross-encoder reranking) all run through the same harness and land
+in a single comparison table. This is the canonical strong-baseline
+matrix the rest of the roadmap measures against.
 
 ### Phase B — Standard Query Optimization
 
@@ -230,9 +236,9 @@ reformulations in parallel and fuses their results, trading retrieval
 cost for recall. Both can derail when the LLM hallucinates — that
 trade-off is itself worth measuring on the advising corpus.
 
-Note: multi-query that *fuses* result lists shares fusion logic with
-the hybrid retriever (Phase A). Factor RRF into a small shared helper
-so both use it.
+Note: multi-query that *fuses* result lists reuses
+`core.fusion.reciprocal_rank_fusion` (built in Phase A) — no new
+fusion code needed.
 
 **Milestone:** passthrough vs. contextualizer vs. HyDE vs. multi-query,
 each measured on the hybrid baseline.
@@ -349,14 +355,15 @@ are not yet implemented.
 | Chunk size / overlap | `indexing.chunking.params` | done |
 | Embedding model | `indexing.embedding` | done (4 providers) |
 | Vectorstore | `indexing.vectorstore.type` | done (FAISS, Chroma) |
+| Sparse index | `indexing.sparse_index.type` | done (BM25) |
 
 ### 6.2 Query Variables
 
 | Variable | Config Location | Status |
 |----------|----------------|--------|
 | Query transform | `query.query_transform.type` | passthrough, contextualizer done; **HyDE, multi-query** pending |
-| Retrieval method | `query.retrieval.type` | dense done; **BM25, hybrid** pending |
-| Fusion strategy | `query.retrieval.params.fusion` | **pending (Phase A)** |
+| Retrieval method | `query.retrieval.type` | done (dense, BM25, hybrid) |
+| Fusion strategy | `query.retrieval.params.fusion` | done (RRF, weighted) |
 | Retrieval depth | `query.retrieval.top_k_retrieve` | done |
 | Final chunk count | `query.retrieval.top_k_final` | done |
 | Reranker | `query.reranking.type` | none, cross_encoder done |
@@ -392,18 +399,20 @@ are not yet implemented.
 Two well-scoped changes unblock Phases A and C. Both are additive and
 backward-compatible.
 
-### 7.1 Auxiliary indexes in `IndexArtifact` (unblocks Phase A)
+### 7.1 Auxiliary indexes in `IndexArtifact` ✅ Done (delivered with Phase A)
 
-**Current:** `IndexArtifact` carries one `vectorstore` plus the
-`embedder`. A hybrid/sparse retriever needs a BM25 index built and
-cached alongside the vector index.
+Shipped as part of Phase A. Final shape:
 
-**Plan:** add an optional `auxiliary_stores: dict[str, Any]` field to
-`IndexArtifact`. The indexing pipeline builds the BM25 index when a
-sparse or hybrid retriever is configured and stores it under a known
-key (e.g., `"bm25"`). The retriever reads it from there. The fingerprint
-must incorporate sparse-index parameters so cache invalidation stays
-correct. Dense-only experiments are unaffected — the dict is empty.
+- `IndexArtifact.auxiliary_stores: dict[str, BaseLexicalIndex | BaseVectorStore]`
+  carries auxiliary indexes; BM25 lives under `"bm25"`. Typed (not
+  `Any`) but extensible — admits a future SPLADE store (a
+  `BaseVectorStore`) under its own key.
+- `IndexingConfig.sparse_index: ComponentConfig` declares the index;
+  the indexing pipeline builds it when `type` is non-empty.
+- The fingerprint includes `sparse_index` **only when configured**
+  (empty-config canonicalization), so adding the field to the
+  config schema didn't disturb existing dense-only fingerprints.
+- BM25 is indexed before embedding (fail-fast on tokenizer config).
 
 ### 7.2 Chunk-enricher stage (unblocks contextual retrieval in Phase C)
 
@@ -436,6 +445,8 @@ faiss-cpu                 Vector store
 numpy                     Array operations
 sentence-transformers     Embeddings + cross-encoder reranking
 pymupdf                   PDF parsing
+bm25s                     Sparse BM25 retrieval (NumPy/SciPy)
+PyStemmer                 Snowball stemmer for BM25 tokenization
 ragas                     Evaluation metrics
 datasets                  RAGAS transitive dependency
 python-dotenv             API key management
@@ -449,13 +460,6 @@ chromadb                  ChromaDB vectorstore
 google-genai              Gemini generation + embeddings
 openai                    OpenAI generation + embeddings
 langchain-text-splitters  Recursive chunker
-```
-
-### Phase A additions
-
-```
-bm25s                     Fast sparse BM25 retrieval (NumPy/SciPy)
-PyStemmer                 Optional stemming for BM25 (recommended)
 ```
 
 ### Phase C additions
@@ -475,15 +479,18 @@ Experiments are organized by what each isolates. All inherit from
 `base.yaml`; all formal runs use the standardized evaluator
 (GPT-4.1 via EdenAI, fixed text-embedding-3-small evaluator embedding).
 
-### Retrieval (Phase A) — the core matrix
+### Retrieval (Phase A, done) — the core matrix
+
+All configs under `configs/experiments/retrieval/`. The dense
+baseline is `configs/base.yaml` itself; no separate `dense.yaml`.
 
 | Experiment | Isolates | Compare against |
 |-----------|----------|-----------------|
-| `dense` (baseline) | dense retrieval | — |
-| `bm25` | sparse retrieval | dense |
-| `hybrid_rrf` | dense + sparse, RRF fusion | dense, bm25 |
-| `hybrid_rrf_rerank` | hybrid + cross-encoder | hybrid_rrf |
-| `hybrid_weighted` | weighted vs. RRF fusion | hybrid_rrf |
+| `base.yaml` (dense baseline) | dense retrieval | — |
+| `retrieval/bm25.yaml` | sparse retrieval | base (dense) |
+| `retrieval/hybrid_rrf.yaml` | dense + sparse, RRF fusion | base, bm25 |
+| `retrieval/hybrid_rrf_rerank.yaml` | hybrid + cross-encoder | hybrid_rrf |
+| `retrieval/hybrid_weighted.yaml` | weighted vs. RRF fusion | hybrid_rrf |
 
 ### Reranking (Phase 3C, done)
 

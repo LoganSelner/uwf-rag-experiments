@@ -105,6 +105,7 @@ src/
 │   ├── types.py          Data contracts between pipeline stages
 │   ├── config.py         Config dataclasses + YAML loading + validation
 │   ├── registry.py       Component registry (@register / get)
+│   ├── fusion.py         Rank-list fusion primitives (RRF + weighted)
 │   └── git.py            Git SHA + dirty flag for reproducibility
 │
 ├── components/
@@ -112,9 +113,10 @@ src/
 │   ├── defaults.py       Passthrough/no-op defaults (always available)
 │   ├── ingestors.py      PDFIngestor (PyMuPDF)
 │   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker
-│   ├── embedders.py      HuggingFaceEmbedder, GoogleEmbedder
+│   ├── embedders.py      HuggingFaceEmbedder, GoogleEmbedder, OpenAIEmbedder, EdenAIEmbedder
 │   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
-│   ├── retrievers.py     DenseRetriever
+│   ├── lexical_indexes.py   BM25LexicalIndex (bm25s + PyStemmer)
+│   ├── retrievers.py     DenseRetriever, BM25Retriever, HybridRetriever
 │   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator, OpenAIGenerator
 │   ├── prompts.py        ChatPromptTemplate
 │   ├── query_transforms.py  ContextualizerQueryTransformer
@@ -123,7 +125,7 @@ src/
 │   └── __init__.py       Imports all implementation files → triggers registration
 │
 ├── pipeline/
-│   ├── indexing.py        IndexArtifact + IndexingPipeline
+│   ├── indexing.py        IndexArtifact + IndexingPipeline (vector + auxiliary stores)
 │   ├── query.py           QueryPipeline (linear RAG)
 │   ├── agent.py           AgentPipeline (stub — Phase D)
 │   └── rag.py             RAGPipeline (top-level dispatcher)
@@ -168,6 +170,9 @@ list[Document]
     ▼
 list[Chunk] ─── each carries source_name in metadata
     │
+    ├──► [LexicalIndex (optional)] ─── BM25 etc.; built before embedding
+    │                                    so tokenizer errors fail fast.
+    │                                    Stored under IndexArtifact.auxiliary_stores
     ▼
 [Embedder] ─── produces float vectors
     │
@@ -175,9 +180,9 @@ list[Chunk] ─── each carries source_name in metadata
 list[EmbeddedChunk]
     │
     ▼
-[VectorStore] ─── FAISS index + chunk metadata, persisted to disk
+[VectorStore] ─── FAISS or Chroma index + chunk metadata, persisted to disk
     │
-    ║  ═══ INDEX BOUNDARY ═══  cached by fingerprint
+    ║  ═══ INDEX BOUNDARY ═══  cached by fingerprint (vector + sparse together)
     ║
     ▼
 User Query
@@ -186,8 +191,9 @@ User Query
 [QueryTransformer] ─── returns list[str] (1 for passthrough, N for multi-query)
     │
     ▼
-[Retriever] ─── embeds query, searches vectorstore, deduplicates across queries
-    │
+[Retriever] ─── dense / BM25 / hybrid (composed children + fusion)
+    │             — dedup happens within a single retriever's output;
+    │               cross-retriever score merging is owned by hybrid fusion.
     ▼
 list[RetrievedChunk]  (top_k_retrieve candidates)
     │
@@ -267,10 +273,22 @@ mocks satisfy it. The evaluator depends on this protocol, never on
 concrete pipeline classes.
 
 `IndexArtifact` lives in `pipeline/indexing.py` (not in
-`core/types.py`) because it references `BaseVectorStore` and
-`BaseEmbedder` from the components layer. Placing it in the
-pipeline layer avoids a circular import and keeps the type
-annotations real (no `Any`).
+`core/types.py`) because it references `BaseVectorStore`,
+`BaseEmbedder`, and `BaseLexicalIndex` from the components layer.
+Placing it in the pipeline layer avoids a circular import and keeps
+the type annotations real (no `Any`).
+
+The artifact carries three things:
+
+- `vectorstore: BaseVectorStore` — populated dense index.
+- `embedder: BaseEmbedder` — needed at query time to embed incoming
+  queries.
+- `auxiliary_stores: dict[str, BaseLexicalIndex | BaseVectorStore]`
+  — optional indexes built alongside the vector store. The BM25
+  index, when configured, lives under the key `"bm25"`. The dict is
+  empty for dense-only experiments; it leaves room for a future
+  SPLADE store (a `BaseVectorStore`) without changing the artifact's
+  shape.
 
 ---
 
@@ -285,7 +303,8 @@ ExperimentConfig
 │   ├── sources: list[SourceConfig]    per-source ingest type + path
 │   ├── chunking: ComponentConfig      type + params
 │   ├── embedding: ComponentConfig
-│   └── vectorstore: ComponentConfig
+│   ├── vectorstore: ComponentConfig
+│   └── sparse_index: ComponentConfig  optional; e.g. {type: bm25}
 ├── QueryConfig                        (linear pipeline)
 │   ├── query_transform: ComponentConfig
 │   ├── retrieval: RetrievalConfig     top_k_retrieve, top_k_final, filters
@@ -330,17 +349,24 @@ Multi-level inheritance is supported (child → parent → grandparent).
 ### Index Fingerprinting
 
 `ExperimentConfig.index_fingerprint()` returns a 12-char hex SHA-256
-of: sources + chunking + embedding + vectorstore config.
+of: sources + chunking + embedding + vectorstore + sparse_index (when
+set) config.
 
 **Included:** Source names, paths, ingest types/params. Chunking,
-embedding, vectorstore types and all params.
+embedding, vectorstore types and all params. Sparse-index type and
+params, *only when its `type` is non-empty* — empty `ComponentConfig`s
+canonicalize to absence, so adding an unused optional component
+doesn't disturb the fingerprint of existing experiments.
 
 **Excluded:** Everything in QueryConfig, AgentConfig,
 EvaluationConfig. Pipeline mode.
 
 Two experiments with the same fingerprint share a cached index.
 This means query-side experiments (retrieval strategy, reranking,
-prompt template, LLM model) never re-index.
+prompt template, LLM model) never re-index. Switching from dense to
+hybrid (which adds `sparse_index`) does change the fingerprint and
+trigger a one-time rebuild — the vector embeddings are recomputed
+alongside the new sparse index, by design.
 
 ### Validation
 
@@ -380,6 +406,9 @@ All abstract base classes live in `src/components/base.py`.
 | `BaseVectorStore` | `vectorstore` | `add(chunks)` | `list[EmbeddedChunk] → None` |
 | | | `search(vec, top_k, filters)` | `→ list[RetrievedChunk]` |
 | | | `save(dir)` / `load(dir)` | Persistence for caching |
+| `BaseLexicalIndex` | `sparse_index` | `add(chunks)` | `list[Chunk] → None` (takes raw text, no embeddings) |
+| | | `search(query, top_k, filters)` | `→ list[RetrievedChunk]` |
+| | | `save(dir)` / `load(dir)` | Persistence for caching |
 | `BaseRetriever` | `retrieval` | `retrieve(query, top_k, filters)` | `str → list[RetrievedChunk]` |
 | `BaseQueryTransformer` | `query_transform` | `transform(query, history)` | `str → list[str]` |
 | `BaseReranker` | `reranking` | `rerank(query, chunks, top_k)` | `→ list[RetrievedChunk]` |
@@ -395,11 +424,28 @@ pipeline calls `PromptTemplate.format()` first. The generator is a
 pure LLM wrapper that knows nothing about retrieval context. This
 is what makes prompt config changes actually affect output.
 
-**BaseRetriever holds injected dependencies.** The vectorstore and
-embedder are set via `set_vectorstore()` / `set_embedder()` after
-construction. Default filters from config are set via
-`set_default_filters()`. This allows the pipeline to construct
-components independently from config and wire them afterward.
+**BaseRetriever holds injected dependencies.** Dense retrievers
+receive vectorstore + embedder via `set_vectorstore()` /
+`set_embedder()`. Lexical retrievers receive a sparse index via
+`set_sparse_index()` (the BM25 index lives in
+`IndexArtifact.auxiliary_stores["bm25"]`). Hybrid retrievers compose
+child retrievers and inject each child's sources independently.
+Default filters from config are set via `set_default_filters()` and
+the hybrid retriever pushes them down to every child so per-branch
+over-retrieve + filter semantics stay consistent with the
+single-retriever paths.
+
+**HybridRetriever composes children; fusion lives in `core.fusion`.**
+The hybrid retriever holds an ordered list of named child retrievers
+plus a fusion strategy (RRF or weighted). Sub-retrievers are declared
+in YAML as a list of `{name, type, top_k, params}` entries; named
+weights (dict keyed by sub-retriever `name`) are used for weighted
+fusion so config diffs stay stable under list reordering. Nested
+hybrid retrievers are disallowed by the validator — multi-query
+fusion in Phase B will live at the pipeline level, not the retriever
+level, sharing the same `core.fusion` helpers. The fused output's
+`retrieval_method` is set to `"hybrid_rrf"` or `"hybrid_weighted"`
+rather than inheriting a child's label.
 
 **BaseQueryTransformer always returns a list.** Even single-query
 transforms return `[query]`. The pipeline deduplicates results
@@ -425,7 +471,10 @@ metadata, and truncates.
 | `embedding` | `edenai` | `EdenAIEmbedder` | `embedders.py` |
 | `vectorstore` | `faiss` | `FAISSVectorStore` | `vectorstores.py` |
 | `vectorstore` | `chroma` | `ChromaVectorStore` | `vectorstores.py` |
+| `sparse_index` | `bm25` | `BM25LexicalIndex` | `lexical_indexes.py` |
 | `retrieval` | `dense` | `DenseRetriever` | `retrievers.py` |
+| `retrieval` | `bm25` | `BM25Retriever` | `retrievers.py` |
+| `retrieval` | `hybrid` | `HybridRetriever` | `retrievers.py` |
 | `query_transform` | `passthrough` | `PassthroughQueryTransformer` | `defaults.py` |
 | `query_transform` | `contextualizer` | `ContextualizerQueryTransformer` | `query_transforms.py` |
 | `reranking` | `none` | `NoOpReranker` | `defaults.py` |
@@ -444,38 +493,63 @@ metadata, and truncates.
 
 ### IndexingPipeline (`pipeline/indexing.py`)
 
-Builds the vector index from source documents.
+Builds the vector index — and any configured auxiliary indexes —
+from source documents.
 
 `from_config(config)` constructs per-source ingestors plus shared
-chunker, embedder, and vectorstore from the registry.
+chunker, embedder, vectorstore, and (when `indexing.sparse_index.type`
+is set) a sparse index, all from the registry.
 
 `build()` iterates sources (ingest → tag source_name), chunks all
-documents, embeds, stores. Returns an `IndexArtifact` carrying the
-populated vectorstore and embedder.
+documents, then runs **sparse indexing before embedding** so a
+misconfigured BM25 tokenizer/stemmer fails fast — before spending
+embedding API budget. After embedding, the vector store is populated.
+Returns an `IndexArtifact` carrying the vectorstore, embedder, and an
+`auxiliary_stores` dict (containing the BM25 index under `"bm25"`
+when configured).
 
 `run_or_load_cache(config)` checks if
 `data/indexes/<fingerprint>/` exists. If yes, constructs a fresh
-pipeline (to get embedder + vectorstore instances) and loads the
-stored index. If no, builds from scratch and saves.
+pipeline (to get embedder + vectorstore + sparse-index instances)
+and loads each from disk: the vector store from the fingerprint
+directory, and the BM25 index (if any) from the `bm25/` subdirectory
+underneath. If no, builds from scratch and saves.
+
+On save: the vector store writes its native files at the fingerprint
+root; the sparse index writes to `<fingerprint>/bm25/` (bm25s files +
+a position-aligned `chunks.pkl` + a versioned `meta.pkl`).
 
 **Cache load note:** Loading from cache still instantiates the
 embedding model (needed at query time for `embed_query()`). For
-large models this takes several seconds. This is a known cost, not
-a bug.
+large models this takes several seconds. The BM25 index loads with
+`mmap=True` to keep memory overhead minimal. These are known costs,
+not bugs.
 
 ### QueryPipeline (`pipeline/query.py`)
 
 Linear RAG: transform → retrieve → rerank → format → generate.
 
 `from_config(config, index_artifact, retrieval_only)` builds each
-component from the registry, wires the retriever to the
-vectorstore/embedder from the `IndexArtifact`, and sets default
-filters.
+component from the registry. Wiring is per-retriever-type:
+
+- **`dense`** retrievers receive `index_artifact.vectorstore` and
+  `index_artifact.embedder`.
+- **`bm25`** retrievers receive `index_artifact.auxiliary_stores["bm25"]`
+  via `set_sparse_index()`. A missing sparse index here raises at
+  pipeline-construction time — caught earlier by `validate_config`
+  for typo'd configs, but the runtime guard is the source of truth.
+- **`hybrid`** retrievers construct each declared sub-retriever from
+  `params["retrievers"]`, recursively apply the dispatch above to
+  each child, then assemble a `HybridRetriever` with the fusion
+  configuration. Hybrid-level filters propagate to every child.
 
 `run(query, history)` executes the pipeline. All top_k values and
 filters come from config — `run()` takes no override parameters.
-Deduplication across multi-query results keeps the highest score
-per chunk_id and sorts descending.
+Within-retriever deduplication across multi-query results keeps the
+highest score per chunk_id and sorts descending; cross-retriever
+score merging is **not** done here (scores from dense and BM25 are
+not comparable) — that's the hybrid retriever's job, handled by
+`core.fusion`.
 
 ### AgentPipeline (`pipeline/agent.py`)
 

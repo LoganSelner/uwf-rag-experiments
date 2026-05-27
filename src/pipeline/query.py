@@ -14,15 +14,17 @@ from typing import Any
 
 from components.base import (
     BaseGenerator,
+    BaseLexicalIndex,
     BasePromptTemplate,
     BaseQueryTransformer,
     BaseReranker,
     BaseRetriever,
 )
+from components.retrievers import HybridRetriever
 from core.config import QueryConfig
 from core.registry import registry
 from core.types import GenerationResult, RetrievedChunk
-from pipeline.indexing import IndexArtifact
+from pipeline.indexing import BM25_AUX_KEY, IndexArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +73,18 @@ class QueryPipeline:
             config=config.query_transform.params
         )
 
-        # Retriever — wire to vectorstore and embedder from index
-        retriever_cls = registry.get("retrieval", config.retrieval.type)
-        retriever: BaseRetriever = retriever_cls(config=config.retrieval.params)
-        retriever.set_vectorstore(index_artifact.vectorstore)
-        retriever.set_embedder(index_artifact.embedder)
+        # Retriever — wire to vectorstore / embedder / sparse index
+        # from the IndexArtifact. Hybrid retrievers compose child
+        # retrievers, each independently wired.
+        retriever: BaseRetriever
+        if config.retrieval.type == "hybrid":
+            retriever = cls._build_hybrid_retriever(
+                config.retrieval.params, index_artifact
+            )
+        else:
+            retriever_cls = registry.get("retrieval", config.retrieval.type)
+            retriever = retriever_cls(config=config.retrieval.params)
+            cls._wire_retriever(retriever, config.retrieval.type, index_artifact)
         if config.retrieval.filters:
             retriever.set_default_filters(config.retrieval.filters)
 
@@ -175,7 +184,16 @@ class QueryPipeline:
         return result
 
     def _retrieve_and_deduplicate(self, queries: list[str]) -> list[RetrievedChunk]:
-        """Retrieve for each query, deduplicate by chunk_id."""
+        """Retrieve for each query, deduplicate by chunk_id.
+
+        All retrievals here come from the same retriever instance, so
+        scores are comparable within this call — multi-query (Phase B)
+        will still produce per-query lists from one underlying scoring
+        function. Cross-retriever score merging (e.g. cosine vs. BM25)
+        is *not* this method's job; ``HybridRetriever`` owns that via
+        ``core.fusion``. We keep the highest score per chunk_id here
+        and sort descending; ties keep first occurrence.
+        """
         seen: dict[str, RetrievedChunk] = {}
 
         for q in queries:
@@ -187,3 +205,74 @@ class QueryPipeline:
 
         # Sort by score descending
         return sorted(seen.values(), key=lambda x: x.score, reverse=True)
+
+    @staticmethod
+    def _wire_retriever(
+        retriever: BaseRetriever,
+        retrieval_type: str,
+        index_artifact: IndexArtifact,
+    ) -> None:
+        """Inject the appropriate index sources into a single retriever.
+
+        Dense retrievers need vectorstore + embedder; BM25 retrievers
+        need the sparse index from ``auxiliary_stores``. Other future
+        retrievers can extend this dispatch.
+        """
+        if retrieval_type == "bm25":
+            sparse_index = index_artifact.auxiliary_stores.get(BM25_AUX_KEY)
+            if sparse_index is None:
+                raise RuntimeError(
+                    "BM25 retriever requires a sparse index, but the "
+                    "IndexArtifact has none under "
+                    f"auxiliary_stores['{BM25_AUX_KEY}']. Ensure "
+                    "indexing.sparse_index is configured."
+                )
+            if not isinstance(sparse_index, BaseLexicalIndex):
+                raise RuntimeError(
+                    f"auxiliary_stores['{BM25_AUX_KEY}'] is not a BaseLexicalIndex"
+                )
+            retriever.set_sparse_index(sparse_index)
+        else:
+            # Default: dense-style wiring (vectorstore + embedder).
+            retriever.set_vectorstore(index_artifact.vectorstore)
+            retriever.set_embedder(index_artifact.embedder)
+
+    @classmethod
+    def _build_hybrid_retriever(
+        cls,
+        params: dict[str, Any],
+        index_artifact: IndexArtifact,
+    ) -> HybridRetriever:
+        """Construct a HybridRetriever and its wired sub-retrievers.
+
+        Each sub-retriever entry: ``{name, type, top_k, params}``.
+        ``name`` defaults to ``type`` and must be unique within the
+        hybrid (validated upstream in ``validate_config``).
+        """
+        sub_specs = params.get("retrievers", [])
+        children: list[tuple[str, BaseRetriever, int]] = []
+        for spec in sub_specs:
+            sub_type = spec["type"]
+            sub_name = spec.get("name", sub_type)
+            sub_top_k = int(spec["top_k"])
+            sub_params = spec.get("params", {})
+            sub_cls = registry.get("retrieval", sub_type)
+            sub_retriever: BaseRetriever = sub_cls(config=sub_params)
+            cls._wire_retriever(sub_retriever, sub_type, index_artifact)
+            children.append((sub_name, sub_retriever, sub_top_k))
+
+        fusion = params.get("fusion", "rrf")
+        rrf_k = int(params.get("rrf_k", 60))
+        weights_dict: dict[str, float] = {
+            k: float(v) for k, v in params.get("weights", {}).items()
+        }
+        normalize = params.get("normalize", "min_max")
+
+        return HybridRetriever(
+            config=params,
+            children=children,
+            fusion=fusion,
+            rrf_k=rrf_k,
+            weights=weights_dict,
+            normalize=normalize,
+        )

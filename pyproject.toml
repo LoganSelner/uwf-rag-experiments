@@ -13,6 +13,8 @@ dependencies = [
     "numpy>=1.24",
     "sentence-transformers>=3,<4",
     "pymupdf>=1.24",
+    "bm25s>=0.2",                    # Sparse (BM25) lexical retrieval
+    "PyStemmer>=2.2",                # Snowball stemmer used by bm25s tokenizer
     "ragas>=0.4,<0.5",              # Private API usage (_build_metric_map), pin to 0.4.x
     "datasets",                      # Transitive dep of RAGAS
     "python-dotenv>=1.0",
@@ -129,6 +131,14 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["langchain_openai", "langchain_openai.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["bm25s", "bm25s.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["Stemmer", "Stemmer.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

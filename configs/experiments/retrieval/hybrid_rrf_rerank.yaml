@@ -1,0 +1,46 @@
+# Hybrid retrieval (RRF) + cross-encoder reranking — the canonical
+# strong-baseline configuration for modern RAG.
+#
+# Compare against hybrid_rrf.yaml to isolate the effect of reranking
+# on top of fusion; compare against reranker/cross_encoder.yaml to
+# isolate hybrid vs. dense under reranking.
+#
+# Variables changed from base.yaml: retrieval (dense → hybrid),
+# reranking (none → cross_encoder). Adds indexing.sparse_index.
+
+extends: ../../base.yaml
+
+name: "retrieval_hybrid_rrf_rerank"
+description: "Hybrid dense + BM25 (RRF) + cross-encoder reranker"
+
+indexing:
+  sparse_index:
+    type: "bm25"
+    params:
+      k1: 1.5
+      b: 0.75
+      method: "lucene"
+      stopwords: "en"
+      stemmer: "english"
+
+query:
+  retrieval:
+    type: "hybrid"
+    top_k_retrieve: 20
+    top_k_final: 5
+    params:
+      fusion: "rrf"
+      rrf_k: 60
+      retrievers:
+        - name: "dense"
+          type: "dense"
+          top_k: 20
+          params: {}
+        - name: "bm25"
+          type: "bm25"
+          top_k: 20
+          params: {}
+  reranking:
+    type: "cross_encoder"
+    params:
+      model_name: "Alibaba-NLP/gte-reranker-modernbert-base"

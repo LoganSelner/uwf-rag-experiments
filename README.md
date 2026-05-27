@@ -20,7 +20,8 @@ Every component is swappable via config. No code changes needed.
 | **Chunking** | `recursive_langchain`, `recursive_custom` | `indexing.chunking.type` |
 | **Embedding** | `huggingface` (bge-m3 etc.), `google` (Gemini), `openai`, `edenai` (cloud gateway) | `indexing.embedding.type` |
 | **Vectorstore** | `faiss` (cosine/L2), `chroma` (cosine/L2/IP) | `indexing.vectorstore.type` |
-| **Retrieval** | `dense` (single-vector similarity) | `query.retrieval.type` |
+| **Sparse Index** | `bm25` (via [`bm25s`](https://github.com/xhluca/bm25s)) | `indexing.sparse_index.type` |
+| **Retrieval** | `dense` (single-vector similarity), `bm25` (lexical), `hybrid` (dense + sparse fusion: RRF or weighted) | `query.retrieval.type` |
 | **Query Transform** | `passthrough`, `contextualizer` (LLM reformulation) | `query.query_transform.type` |
 | **Reranking** | `none` (passthrough), `cross_encoder` (HF cross-encoder) | `query.reranking.type` |
 | **Generation** | `ollama` (local), `edenai` (cloud gateway), `google` (Gemini), `openai` | `query.generation.type` |
@@ -121,8 +122,9 @@ The base config defines all default values. Experiment configs use `extends:` to
 | Chunk overlap | `indexing.chunking.params.chunk_overlap` | 100 |
 | Embedding model | `indexing.embedding.type` + `.params.model_name` | `edenai` / `text-embedding-3-small` |
 | Vectorstore | `indexing.vectorstore.type` | `chroma` (cosine) |
+| Sparse index (optional) | `indexing.sparse_index.type` | unset (built only when configured) |
 
-Experiments that share the same indexing config reuse the cached index automatically.
+Experiments that share the same indexing config reuse the cached index automatically. When `sparse_index` is configured, the BM25 index is built before embeddings (so tokenizer/stemmer misconfigurations fail fast) and cached in a `bm25/` subdirectory next to the vector index.
 
 ### Query Pipeline
 
@@ -173,6 +175,19 @@ Each changes only the reranking-related parameters from `base.yaml`. Compare aga
 | `reranker/cross_encoder_topk10.yaml` | 20 → 10 (high-recall upper bound) |
 
 All four use `Alibaba-NLP/gte-reranker-modernbert-base`.
+
+### Retrieval Matrix (dense / sparse / hybrid)
+
+The canonical strong-baseline matrix — compare BM25 and hybrid fusion against the dense baseline (`base.yaml`) to see whether sparse retrieval and fusion add lift on this corpus.
+
+| Config | Retrieval | Fusion | Reranker |
+|--------|-----------|--------|----------|
+| `retrieval/bm25.yaml` | BM25 only | — | none |
+| `retrieval/hybrid_rrf.yaml` | dense + BM25 | RRF (k=60) | none |
+| `retrieval/hybrid_rrf_rerank.yaml` | dense + BM25 | RRF (k=60) | `cross_encoder` |
+| `retrieval/hybrid_weighted.yaml` | dense + BM25 | weighted (0.5/0.5, min-max) | none |
+
+Per-branch `top_k=20` is the production-standard pre-fusion depth. Stage-level `top_k_retrieve` controls the count entering the reranker; `top_k_final` is what the generator sees.
 
 ### Smoke Test
 
@@ -235,7 +250,7 @@ For full architectural details, see [ARCHITECTURE.md](ARCHITECTURE.md). For the 
 ```bash
 make qa          # Full gate: format + typecheck + lint + tests
 make test        # Fast tests only (skip @pytest.mark.slow)
-make test-all    # All tests (312 tests)
+make test-all    # All tests
 make fmt         # Auto-fix formatting
 make lint        # Ruff lint
 make typecheck   # Mypy strict type checking
