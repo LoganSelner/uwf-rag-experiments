@@ -405,6 +405,79 @@ class TestValidateConfig:
         cfg.query.query_transform.fusion = "max"
         validate_config(cfg, registry)  # should not raise
 
+    def _make_hybrid_config(self, qt_params: dict) -> ExperimentConfig:
+        """Build a minimal valid hybrid+HyDE-style config for branch tests."""
+        return self._make_valid_config(
+            **{
+                "indexing.sparse_index": {"type": "bm25"},
+                "query.query_transform": {
+                    "type": "hyde",
+                    "fusion": "rrf",
+                    "params": qt_params,
+                },
+                "query.retrieval": {
+                    "type": "hybrid",
+                    "top_k_retrieve": 10,
+                    "top_k_final": 5,
+                    "params": {
+                        "fusion": "rrf",
+                        "retrievers": [
+                            {"name": "dense", "type": "dense", "top_k": 10},
+                            {"name": "bm25", "type": "bm25", "top_k": 10},
+                        ],
+                    },
+                },
+            }
+        )
+
+    def test_qt_branch_matches_hybrid_child(self) -> None:
+        cfg = self._make_hybrid_config(
+            {
+                "generator_type": "edenai",
+                "branch": "dense",
+                "original_branch": "bm25",
+                "include_original": True,
+                "llm": {"model_name": "m"},
+            }
+        )
+        validate_config(cfg, registry)  # should not raise
+
+    def test_qt_branch_unknown_rejected(self) -> None:
+        cfg = self._make_hybrid_config(
+            {
+                "generator_type": "edenai",
+                "branch": "splade",  # not a hybrid child
+                "llm": {"model_name": "m"},
+            }
+        )
+        with pytest.raises(ConfigValidationError, match="not match any hybrid child"):
+            validate_config(cfg, registry)
+
+    def test_qt_original_branch_unknown_rejected(self) -> None:
+        cfg = self._make_hybrid_config(
+            {
+                "generator_type": "edenai",
+                "branch": "dense",
+                "include_original": True,
+                "original_branch": "ghost",  # not a hybrid child
+                "llm": {"model_name": "m"},
+            }
+        )
+        with pytest.raises(ConfigValidationError, match="not match any hybrid child"):
+            validate_config(cfg, registry)
+
+    def test_qt_branch_ignored_on_non_hybrid(self) -> None:
+        # Branch hints are silently ignored when retrieval is not hybrid —
+        # the same HyDE config should work with dense retrieval.
+        cfg = self._make_valid_config()
+        cfg.query.query_transform.type = "hyde"
+        cfg.query.query_transform.params = {
+            "generator_type": "edenai",
+            "branch": "anything",
+            "llm": {"model_name": "m"},
+        }
+        validate_config(cfg, registry)  # should not raise
+
     def test_empty_reranking_defaults_to_none(self) -> None:
         cfg = self._make_valid_config()
         cfg.query.reranking.type = ""

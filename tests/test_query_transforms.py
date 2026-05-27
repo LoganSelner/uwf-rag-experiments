@@ -7,8 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from components.query_transforms import (
+    _DEFAULT_HYDE_SYSTEM_PROMPT,
     _DEFAULT_SYSTEM_PROMPT,
     ContextualizerQueryTransformer,
+    HyDEQueryTransformer,
 )
 from core.types import GenerationResult, TransformedQuery
 
@@ -177,3 +179,172 @@ class TestContextualizerQueryTransformer:
         assert messages[1] == history[0]
         assert messages[2] == history[1]
         assert messages[3] == {"role": "user", "content": "Second question"}
+
+
+class TestHyDEQueryTransformer:
+    @patch("components.query_transforms.registry")
+    def test_default_emits_one_hypothetical_branch_dense(
+        self, mock_registry: MagicMock
+    ) -> None:
+        mock_registry.get.return_value = _mock_generator_cls("A hypothetical doc.")
+        qt = HyDEQueryTransformer(
+            {"generator_type": "edenai", "llm": {"model_name": "m"}}
+        )
+        result = qt.transform("What is grade forgiveness?")
+        assert result == [TransformedQuery(text="A hypothetical doc.", branch="dense")]
+
+    @patch("components.query_transforms.registry")
+    def test_include_original_prepends_original(self, mock_registry: MagicMock) -> None:
+        mock_registry.get.return_value = _mock_generator_cls("Hypothesis.")
+        qt = HyDEQueryTransformer(
+            {
+                "generator_type": "edenai",
+                "include_original": True,
+                "original_branch": "bm25",
+                "llm": {"model_name": "m"},
+            }
+        )
+        result = qt.transform("Query?")
+        assert result == [
+            TransformedQuery(text="Query?", branch="bm25"),
+            TransformedQuery(text="Hypothesis.", branch="dense"),
+        ]
+
+    @patch("components.query_transforms.registry")
+    def test_original_branch_defaults_to_none(self, mock_registry: MagicMock) -> None:
+        mock_registry.get.return_value = _mock_generator_cls("Hyp.")
+        qt = HyDEQueryTransformer(
+            {
+                "generator_type": "edenai",
+                "include_original": True,
+                "llm": {"model_name": "m"},
+            }
+        )
+        result = qt.transform("Q?")
+        # branch=None means "broadcast to all hybrid children" or "ignored
+        # by single retrievers".
+        assert result[0].branch is None
+        assert result[1].branch == "dense"
+
+    @patch("components.query_transforms.registry")
+    def test_num_hypotheticals_makes_n_calls(self, mock_registry: MagicMock) -> None:
+        mock_registry.get.return_value = _mock_generator_cls("Hyp.")
+        qt = HyDEQueryTransformer(
+            {
+                "generator_type": "edenai",
+                "num_hypotheticals": 3,
+                "llm": {"model_name": "m", "temperature": 0.5},
+            }
+        )
+        result = qt.transform("Q?")
+        assert qt._generator.generate.call_count == 3
+        assert len(result) == 3
+        assert all(tq.branch == "dense" for tq in result)
+
+    @patch("components.query_transforms.registry")
+    def test_branch_override(self, mock_registry: MagicMock) -> None:
+        mock_registry.get.return_value = _mock_generator_cls("Hyp.")
+        qt = HyDEQueryTransformer(
+            {
+                "generator_type": "edenai",
+                "branch": "splade",
+                "llm": {"model_name": "m"},
+            }
+        )
+        result = qt.transform("Q?")
+        assert result[0].branch == "splade"
+
+    @patch("components.query_transforms.registry")
+    def test_history_is_ignored_for_hyde(self, mock_registry: MagicMock) -> None:
+        # HyDE generates a fresh hypothetical from the standalone query;
+        # conversation history is not part of the prompt by design.
+        mock_registry.get.return_value = _mock_generator_cls("Hyp.")
+        qt = HyDEQueryTransformer(
+            {"generator_type": "edenai", "llm": {"model_name": "m"}}
+        )
+        qt.transform("Q?", history=[{"role": "user", "content": "prior"}])
+        messages = qt._generator.generate.call_args[0][0]
+        assert len(messages) == 2  # system + user only
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+
+    @patch("components.query_transforms.registry")
+    def test_default_system_prompt_used(self, mock_registry: MagicMock) -> None:
+        mock_registry.get.return_value = _mock_generator_cls("Hyp.")
+        qt = HyDEQueryTransformer(
+            {"generator_type": "edenai", "llm": {"model_name": "m"}}
+        )
+        qt.transform("Q?")
+        messages = qt._generator.generate.call_args[0][0]
+        assert messages[0]["content"] == _DEFAULT_HYDE_SYSTEM_PROMPT
+
+    @patch("components.query_transforms.registry")
+    def test_system_prompt_override(self, mock_registry: MagicMock) -> None:
+        mock_registry.get.return_value = _mock_generator_cls("Hyp.")
+        custom = "Generate a fake answer."
+        qt = HyDEQueryTransformer(
+            {
+                "generator_type": "edenai",
+                "system_prompt": custom,
+                "llm": {"model_name": "m"},
+            }
+        )
+        qt.transform("Q?")
+        messages = qt._generator.generate.call_args[0][0]
+        assert messages[0]["content"] == custom
+
+    @patch("components.query_transforms.registry")
+    def test_generator_receives_provider_params(self, mock_registry: MagicMock) -> None:
+        # HyDE-specific keys are stripped before passing config to the
+        # generator; provider params (sub_provider, base_url, llm) pass through.
+        mock_cls = _mock_generator_cls("Hyp.")
+        mock_registry.get.return_value = mock_cls
+        HyDEQueryTransformer(
+            {
+                "generator_type": "edenai",
+                "sub_provider": "openai",
+                "base_url": "http://example:8080",
+                "num_hypotheticals": 1,
+                "include_original": True,
+                "branch": "dense",
+                "original_branch": "bm25",
+                "system_prompt": "ignored by generator",
+                "llm": {"model_name": "gpt-4.1", "temperature": 0.0},
+            }
+        )
+        mock_cls.assert_called_once_with(
+            config={
+                "sub_provider": "openai",
+                "base_url": "http://example:8080",
+                "llm": {"model_name": "gpt-4.1", "temperature": 0.0},
+            }
+        )
+
+    def test_missing_generator_type_raises(self) -> None:
+        with pytest.raises(ValueError, match="generator_type"):
+            HyDEQueryTransformer({"llm": {"model_name": "m"}})
+
+    @patch("components.query_transforms.registry")
+    def test_num_hypotheticals_must_be_positive(self, mock_registry: MagicMock) -> None:
+        mock_registry.get.return_value = _mock_generator_cls()
+        with pytest.raises(ValueError, match="num_hypotheticals"):
+            HyDEQueryTransformer(
+                {
+                    "generator_type": "edenai",
+                    "num_hypotheticals": 0,
+                    "llm": {"model_name": "m"},
+                }
+            )
+
+    @patch("components.query_transforms.registry")
+    def test_empty_generator_output_falls_back_to_original(
+        self, mock_registry: MagicMock
+    ) -> None:
+        # LLM returns whitespace-only → no hypothetical; transformer
+        # gracefully falls back to the original query.
+        mock_registry.get.return_value = _mock_generator_cls("   ")
+        qt = HyDEQueryTransformer(
+            {"generator_type": "edenai", "llm": {"model_name": "m"}}
+        )
+        result = qt.transform("Q?")
+        assert result == [TransformedQuery(text="Q?")]

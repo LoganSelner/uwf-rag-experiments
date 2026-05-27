@@ -727,6 +727,7 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
         )
 
         _validate_retrieval_dependencies(errors, config, registry)
+        _validate_qt_branch_references(errors, config)
 
         rerank_type = config.query.reranking.type or "none"
         _check_registered(
@@ -987,3 +988,46 @@ def _validate_retrieval_dependencies(
                     "query.retrieval.params.weights must sum to > 0 "
                     f"(got {sum(weight_values)})"
                 )
+
+
+def _validate_qt_branch_references(
+    errors: list[str],
+    config: ExperimentConfig,
+) -> None:
+    """Static check that any transformer ``branch`` hints reference real
+    hybrid children.
+
+    Catches typos pre-runtime. The runtime guard in
+    :meth:`HybridRetriever.retrieve_multi` is authoritative — this is a
+    courtesy check that fails fast on a misconfiguration.
+
+    No-op when retrieval is not ``hybrid`` (branch hints are silently
+    ignored by non-hybrid retrievers, by design).
+    """
+    if config.query.retrieval.type != "hybrid":
+        return
+
+    children = config.query.retrieval.params.get("retrievers") or []
+    if not isinstance(children, list):
+        return  # the retrieval validator already flagged this.
+
+    known_branches: set[str] = set()
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        sub_type = child.get("type", "")
+        sub_name = str(child.get("name", sub_type))
+        if sub_name:
+            known_branches.add(sub_name)
+
+    qt_params = config.query.query_transform.params or {}
+    for key in ("branch", "original_branch"):
+        value = qt_params.get(key)
+        if value is None:
+            continue
+        if value not in known_branches:
+            errors.append(
+                f"query.query_transform.params.{key}: '{value}' does not "
+                f"match any hybrid child name. Known children: "
+                f"{sorted(known_branches)}"
+            )

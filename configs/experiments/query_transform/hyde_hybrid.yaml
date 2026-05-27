@@ -1,0 +1,71 @@
+# Canonical HyDE + hybrid retrieval with per-branch query routing.
+#
+# Routes the hypothetical document to the dense child (where its
+# answer-shaped vector helps) and the original question to the BM25
+# child (where its specific terms match). This is the recipe from
+# practitioners' "HyDE alongside hybrid" notes — the two retrievers see
+# the query in the form each handles best.
+#
+# Compare against:
+#   - hyde_dense.yaml          → isolates branch routing
+#   - retrieval/hybrid_rrf.yaml → isolates HyDE vs. raw query on hybrid
+#
+# Variables changed from base.yaml:
+#   - query.query_transform.type: contextualizer → hyde
+#   - query.query_transform.params.include_original: true (route original to bm25)
+#   - query.query_transform.params.original_branch: "bm25"
+#   - query.retrieval.type: dense → hybrid (with bm25 + dense children)
+#   - indexing.sparse_index: adds bm25 (reuses the Phase A index cache)
+#
+# Two-level fusion:
+#   - Intra-branch fusion across transformed queries: query_transform.fusion = "rrf"
+#     (each child only ever sees 1 query under this config, so it's a no-op,
+#     but the field is correct.)
+#   - Cross-branch fusion (dense vs. bm25): retrieval.params.fusion = "rrf"
+
+extends: ../../base.yaml
+
+name: "qt_hyde_hybrid"
+description: "HyDE with per-branch routing: hypothetical → dense, original → bm25"
+
+indexing:
+  sparse_index:
+    type: "bm25"
+    params:
+      k1: 1.5
+      b: 0.75
+      method: "lucene"
+      stopwords: "en"
+      stemmer: "english"
+
+query:
+  query_transform:
+    type: "hyde"
+    fusion: "rrf"
+    params:
+      generator_type: "edenai"
+      sub_provider: "openai"
+      num_hypotheticals: 1
+      include_original: true
+      branch: "dense"
+      original_branch: "bm25"
+      llm:
+        model_name: "gpt-4.1"
+        temperature: 0.0
+
+  retrieval:
+    type: "hybrid"
+    top_k_retrieve: 20
+    top_k_final: 5
+    params:
+      fusion: "rrf"
+      rrf_k: 60
+      retrievers:
+        - name: "dense"
+          type: "dense"
+          top_k: 20
+          params: {}
+        - name: "bm25"
+          type: "bm25"
+          top_k: 20
+          params: {}
