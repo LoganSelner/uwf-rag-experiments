@@ -15,6 +15,7 @@ from core.config import (
     IndexingConfig,
     LLMConfig,
     PromptConfig,
+    QueryTransformConfig,
     RetrievalConfig,
     _deep_merge,
     load_yaml_with_inheritance,
@@ -158,6 +159,30 @@ class TestSpecificConfigs:
         assert cfg.type == "dense"
         assert cfg.top_k_retrieve == 10
         assert cfg.top_k_final == 5
+
+    def test_query_transform_config_defaults(self) -> None:
+        cfg = QueryTransformConfig.from_dict(None)
+        assert cfg.type == "passthrough"
+        assert cfg.fusion == "rrf"
+        assert cfg.params == {}
+
+    def test_query_transform_config_from_dict(self) -> None:
+        cfg = QueryTransformConfig.from_dict(
+            {
+                "type": "multi_query",
+                "fusion": "max",
+                "params": {"num_queries": 3},
+            }
+        )
+        assert cfg.type == "multi_query"
+        assert cfg.fusion == "max"
+        assert cfg.params == {"num_queries": 3}
+
+    def test_query_transform_config_fusion_default_when_missing(self) -> None:
+        # Existing YAML configs predate the fusion field; ensure they
+        # still resolve to the default.
+        cfg = QueryTransformConfig.from_dict({"type": "hyde", "params": {}})
+        assert cfg.fusion == "rrf"
 
     def test_prompt_config(self) -> None:
         cfg = PromptConfig.from_dict(
@@ -362,6 +387,22 @@ class TestValidateConfig:
     def test_empty_query_transform_defaults_to_passthrough(self) -> None:
         cfg = self._make_valid_config()
         cfg.query.query_transform.type = ""
+        validate_config(cfg, registry)  # should not raise
+
+    def test_default_qt_fusion_passes(self) -> None:
+        cfg = self._make_valid_config()
+        assert cfg.query.query_transform.fusion == "rrf"
+        validate_config(cfg, registry)  # should not raise
+
+    def test_unknown_qt_fusion_rejected(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.query_transform.fusion = "bogus"
+        with pytest.raises(ConfigValidationError, match=r"query_transform\.fusion"):
+            validate_config(cfg, registry)
+
+    def test_qt_fusion_max_accepted(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.query.query_transform.fusion = "max"
         validate_config(cfg, registry)  # should not raise
 
     def test_empty_reranking_defaults_to_none(self) -> None:

@@ -23,7 +23,7 @@ from components.base import (
 from components.retrievers import HybridRetriever
 from core.config import QueryConfig
 from core.registry import registry
-from core.types import GenerationResult, RetrievedChunk
+from core.types import GenerationResult
 from pipeline.indexing import BM25_AUX_KEY, IndexArtifact
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ class QueryPipeline:
         generator: BaseGenerator | None = None,
         prompt_template: BasePromptTemplate | None = None,
         retrieval_only: bool = False,
+        qt_fusion: str = "rrf",
     ) -> None:
         self._query_transformer = query_transformer
         self._retriever = retriever
@@ -51,6 +52,7 @@ class QueryPipeline:
         self._generator = generator
         self._prompt_template = prompt_template
         self._retrieval_only = retrieval_only
+        self._qt_fusion = qt_fusion
 
     @classmethod
     def from_config(
@@ -131,6 +133,7 @@ class QueryPipeline:
             generator=generator,
             prompt_template=prompt_template,
             retrieval_only=retrieval_only,
+            qt_fusion=config.query_transform.fusion,
         )
 
     def run(
@@ -149,11 +152,18 @@ class QueryPipeline:
             retrieval-only) a generated answer.
         """
         # 1. Transform query
-        queries = self._query_transformer.transform(query, history)
-        logger.info("Query transformed into %d search queries", len(queries))
+        transformed = self._query_transformer.transform(query, history)
+        logger.info("Query transformed into %d search queries", len(transformed))
 
-        # 2. Retrieve for each transformed query, deduplicate
-        all_chunks = self._retrieve_and_deduplicate(queries)
+        # 2. Retrieve and fuse across all transformed queries. The retriever
+        #    owns the per-branch routing and intra/cross-branch fusion; the
+        #    pipeline only supplies the strategy.
+        all_chunks = self._retriever.retrieve_multi(
+            transformed,
+            top_k_per_query=self._top_k_retrieve,
+            fusion=self._qt_fusion,
+            filters=None,
+        )
         logger.info("Retrieved %d unique candidates", len(all_chunks))
 
         # 3. Rerank and truncate to top_k_final
@@ -182,29 +192,6 @@ class QueryPipeline:
         result.query = query
         result.retrieved_chunks = reranked
         return result
-
-    def _retrieve_and_deduplicate(self, queries: list[str]) -> list[RetrievedChunk]:
-        """Retrieve for each query, deduplicate by chunk_id.
-
-        All retrievals here come from the same retriever instance, so
-        scores are comparable within this call — multi-query (Phase B)
-        will still produce per-query lists from one underlying scoring
-        function. Cross-retriever score merging (e.g. cosine vs. BM25)
-        is *not* this method's job; ``HybridRetriever`` owns that via
-        ``core.fusion``. We keep the highest score per chunk_id here
-        and sort descending; ties keep first occurrence.
-        """
-        seen: dict[str, RetrievedChunk] = {}
-
-        for q in queries:
-            results = self._retriever.retrieve(q, self._top_k_retrieve)
-            for rc in results:
-                cid = rc.chunk.chunk_id
-                if cid not in seen or rc.score > seen[cid].score:
-                    seen[cid] = rc
-
-        # Sort by score descending
-        return sorted(seen.values(), key=lambda x: x.score, reverse=True)
 
     @staticmethod
     def _wire_retriever(

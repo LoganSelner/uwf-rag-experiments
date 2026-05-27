@@ -12,6 +12,7 @@ from typing import Any
 
 from components.base import BaseQueryTransformer
 from core.registry import registry
+from core.types import TransformedQuery
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +65,9 @@ class ContextualizerQueryTransformer(BaseQueryTransformer):
         self,
         query: str,
         history: list[dict[str, str]] | None = None,
-    ) -> list[str]:
+    ) -> list[TransformedQuery]:
         if not history:
-            return [query]
+            return [TransformedQuery(text=query)]
 
         messages: list[dict[str, str]] = [
             {"role": "system", "content": self._system_prompt},
@@ -77,4 +78,4 @@ class ContextualizerQueryTransformer(BaseQueryTransformer):
         result = self._generator.generate(messages)
         reformulated = result.answer.strip()
         logger.info("Contextualized query: %r -> %r", query, reformulated)
-        return [reformulated]
+        return [TransformedQuery(text=reformulated)]

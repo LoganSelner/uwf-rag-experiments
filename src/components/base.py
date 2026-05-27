@@ -13,6 +13,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from core.fusion import max_score_dedup, reciprocal_rank_fusion
 from core.types import (
     Chunk,
     Document,
@@ -20,6 +21,7 @@ from core.types import (
     GenerationResult,
     RetrievedChunk,
     ToolResult,
+    TransformedQuery,
 )
 
 
@@ -191,12 +193,92 @@ class BaseRetriever(ABC):
         self._sparse_index.
         """
 
+    def retrieve_multi(
+        self,
+        transformed_queries: list[TransformedQuery],
+        top_k_per_query: int,
+        fusion: str = "rrf",
+        filters: dict[str, Any] | None = None,
+    ) -> list[RetrievedChunk]:
+        """Retrieve and fuse across multiple transformed queries.
+
+        Default implementation: ignores ``branch`` hints, calls
+        :meth:`retrieve` once per query, fuses the per-query rank lists
+        via the chosen strategy. Branch hints are meaningful only inside
+        :class:`HybridRetriever` (which overrides this method); non-hybrid
+        retrievers silently drop the hint, by design — this lets the same
+        HyDE/multi-query config work in both dense and hybrid setups.
+
+        Args:
+            transformed_queries: One or more queries from a
+                :class:`BaseQueryTransformer`. Empty list returns ``[]``.
+            top_k_per_query: Per-query retrieval depth before fusion.
+                The fused output is also truncated to this size.
+            fusion: ``"rrf"`` (Reciprocal Rank Fusion across queries),
+                ``"max"`` (highest score per chunk across queries), or
+                ``"none"`` (single-query result returned as-is — only
+                valid when exactly one query is passed).
+            filters: Optional per-call filters forwarded to each
+                ``retrieve`` call. Merged with ``self._default_filters``
+                inside ``retrieve``.
+
+        Returns:
+            Top-``top_k_per_query`` fused chunks with scores reflecting
+            the fusion strategy. ``retrieval_method`` carries through
+            from the first occurrence of each chunk.
+        """
+        if not transformed_queries:
+            return []
+
+        ranked_id_lists: list[list[str]] = []
+        scored_lists: list[list[tuple[str, float]]] = []
+        chunk_lookup: dict[str, RetrievedChunk] = {}
+
+        for tq in transformed_queries:
+            results = self.retrieve(tq.text, top_k_per_query, filters)
+            ids: list[str] = []
+            scored: list[tuple[str, float]] = []
+            for rc in results:
+                cid = rc.chunk.chunk_id
+                ids.append(cid)
+                scored.append((cid, rc.score))
+                chunk_lookup.setdefault(cid, rc)
+            ranked_id_lists.append(ids)
+            scored_lists.append(scored)
+
+        if len(transformed_queries) == 1 or fusion == "none":
+            # Preserve the single retrieval's order; no fusion needed.
+            return [chunk_lookup[cid] for cid in ranked_id_lists[0]][:top_k_per_query]
+
+        if fusion == "rrf":
+            fused = reciprocal_rank_fusion(ranked_id_lists)
+        elif fusion == "max":
+            fused = max_score_dedup(scored_lists)
+        else:
+            raise ValueError(
+                f"retrieve_multi: unknown fusion mode '{fusion}' "
+                "(expected 'rrf', 'max', or 'none')"
+            )
+
+        out: list[RetrievedChunk] = []
+        for cid, fused_score in fused[:top_k_per_query]:
+            base = chunk_lookup[cid]
+            out.append(
+                RetrievedChunk(
+                    chunk=base.chunk,
+                    score=fused_score,
+                    retrieval_method=base.retrieval_method,
+                )
+            )
+        return out
+
 
 class BaseQueryTransformer(ABC):
     """Transforms a user query before retrieval.
 
-    Always returns a list of queries, even for single-query transforms.
-    This naturally supports passthrough (1 query), HyDE (1 query),
+    Always returns a list of TransformedQuery instances, even for
+    single-query transforms. This naturally supports passthrough (1
+    query), HyDE (1 query, optionally branch-tagged for hybrid routing),
     multi-query (N queries), and sub-question decomposition (N queries).
     """
 
@@ -208,7 +290,7 @@ class BaseQueryTransformer(ABC):
         self,
         query: str,
         history: list[dict[str, str]] | None = None,
-    ) -> list[str]:
+    ) -> list[TransformedQuery]:
         """Transform the query into one or more search queries."""
 
 

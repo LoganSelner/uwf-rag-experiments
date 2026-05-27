@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from components.retrievers import BM25Retriever, DenseRetriever, HybridRetriever
-from core.types import Chunk, RetrievedChunk
+from core.types import Chunk, RetrievedChunk, TransformedQuery
 
 
 def _make_rc(chunk_id: str, score: float, content: str = "text") -> RetrievedChunk:
@@ -233,3 +233,238 @@ class TestHybridRetriever:
         # First positional arg after query is top_k for each child.
         assert dense_mock.retrieve.call_args.args[1] == 20
         assert sparse_mock.retrieve.call_args.args[1] == 30
+
+
+# -----------------------------------------------------------------------
+# BaseRetriever.retrieve_multi default impl (exercised via DenseRetriever)
+# -----------------------------------------------------------------------
+
+
+class TestBaseRetrieverRetrieveMulti:
+    def _wired(self) -> tuple[DenseRetriever, MagicMock]:
+        retriever = DenseRetriever()
+        retriever.set_embedder(MagicMock(embed_query=lambda q: [0.1]))
+        mock_vs = MagicMock()
+        retriever.set_vectorstore(mock_vs)
+        return retriever, mock_vs
+
+    def test_single_query_returns_results_as_is(self) -> None:
+        retriever, mock_vs = self._wired()
+        mock_vs.search.return_value = [_make_rc("a", 0.9), _make_rc("b", 0.7)]
+        results = retriever.retrieve_multi(
+            [TransformedQuery(text="Q?")], top_k_per_query=5
+        )
+        assert [rc.chunk.chunk_id for rc in results] == ["a", "b"]
+        # Single query: no fusion overhead, raw scores preserved.
+        assert results[0].score == 0.9
+
+    def test_rrf_fusion_two_queries(self) -> None:
+        retriever, mock_vs = self._wired()
+        mock_vs.search.side_effect = [
+            [_make_rc("shared", 0.9), _make_rc("only_a", 0.5)],
+            [_make_rc("shared", 0.6), _make_rc("only_b", 0.4)],
+        ]
+        results = retriever.retrieve_multi(
+            [TransformedQuery(text="q1"), TransformedQuery(text="q2")],
+            top_k_per_query=10,
+            fusion="rrf",
+        )
+        ids = [rc.chunk.chunk_id for rc in results]
+        assert ids[0] == "shared"  # Appears in both lists → highest RRF score.
+        assert set(ids) == {"shared", "only_a", "only_b"}
+
+    def test_max_fusion_keeps_highest_score(self) -> None:
+        retriever, mock_vs = self._wired()
+        mock_vs.search.side_effect = [
+            [_make_rc("c1", 0.5)],
+            [_make_rc("c1", 0.9)],
+        ]
+        results = retriever.retrieve_multi(
+            [TransformedQuery(text="q1"), TransformedQuery(text="q2")],
+            top_k_per_query=10,
+            fusion="max",
+        )
+        assert results[0].score == 0.9
+
+    def test_branch_hints_silently_ignored(self) -> None:
+        retriever, mock_vs = self._wired()
+        mock_vs.search.return_value = [_make_rc("a", 0.9)]
+        # Branch hints don't apply outside HybridRetriever.
+        results = retriever.retrieve_multi(
+            [TransformedQuery(text="q", branch="dense")], top_k_per_query=5
+        )
+        assert len(results) == 1
+        mock_vs.search.assert_called_once()
+
+    def test_empty_queries_returns_empty(self) -> None:
+        retriever, _ = self._wired()
+        assert retriever.retrieve_multi([], top_k_per_query=5) == []
+
+    def test_unknown_fusion_raises(self) -> None:
+        retriever, mock_vs = self._wired()
+        mock_vs.search.return_value = [_make_rc("a", 0.9)]
+        with pytest.raises(ValueError, match="unknown fusion mode"):
+            retriever.retrieve_multi(
+                [TransformedQuery(text="q1"), TransformedQuery(text="q2")],
+                top_k_per_query=5,
+                fusion="bogus",
+            )
+
+
+# -----------------------------------------------------------------------
+# HybridRetriever.retrieve_multi — branch routing + two-level fusion
+# -----------------------------------------------------------------------
+
+
+class TestHybridRetrieverRetrieveMulti:
+    def _make_child(
+        self, name: str, results_per_call: list[list[RetrievedChunk]]
+    ) -> tuple[str, MagicMock, int]:
+        """Return (name, mock_child, top_k). Child's retrieve_multi returns
+        ``results_per_call[0]`` (the first list — children own their own
+        intra-branch fusion via the default base impl)."""
+        mock = MagicMock()
+        # HybridRetriever calls child.retrieve_multi (not child.retrieve)
+        # — the child is responsible for its own intra-branch fusion.
+        # For testing we collapse to one canonical fused list per child.
+        mock.retrieve_multi.return_value = results_per_call[0]
+        return name, mock, 10
+
+    def test_all_unrouted_broadcasts_to_all_children(self) -> None:
+        dense = self._make_child("dense", [[_make_rc("c1", 0.95)]])
+        sparse = self._make_child("bm25", [[_make_rc("c1", 18.0)]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+
+        hybrid.retrieve_multi(
+            [TransformedQuery(text="q1"), TransformedQuery(text="q2")],
+            top_k_per_query=5,
+        )
+
+        # Both children received both queries.
+        for _, child, _ in [dense, sparse]:
+            received = child.retrieve_multi.call_args.args[0]
+            assert len(received) == 2
+
+    def test_branch_routing_exclusive_dispatch(self) -> None:
+        dense = self._make_child("dense", [[_make_rc("d1", 0.9)]])
+        sparse = self._make_child("bm25", [[_make_rc("s1", 0.7)]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+
+        hybrid.retrieve_multi(
+            [
+                TransformedQuery(text="hyp", branch="dense"),
+                TransformedQuery(text="orig", branch="bm25"),
+            ],
+            top_k_per_query=5,
+        )
+
+        dense_qs = [q.text for q in dense[1].retrieve_multi.call_args.args[0]]
+        sparse_qs = [q.text for q in sparse[1].retrieve_multi.call_args.args[0]]
+        assert dense_qs == ["hyp"]
+        assert sparse_qs == ["orig"]
+
+    def test_mixed_routed_and_unrouted(self) -> None:
+        dense = self._make_child("dense", [[_make_rc("d1", 0.9)]])
+        sparse = self._make_child("bm25", [[_make_rc("s1", 0.7)]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+
+        hybrid.retrieve_multi(
+            [
+                TransformedQuery(text="hyp", branch="dense"),
+                TransformedQuery(text="broadcast"),
+            ],
+            top_k_per_query=5,
+        )
+
+        dense_qs = [q.text for q in dense[1].retrieve_multi.call_args.args[0]]
+        sparse_qs = [q.text for q in sparse[1].retrieve_multi.call_args.args[0]]
+        # Dense gets the routed query + the unrouted broadcast.
+        assert set(dense_qs) == {"hyp", "broadcast"}
+        # Sparse gets only the unrouted broadcast (no explicit branch="bm25").
+        assert sparse_qs == ["broadcast"]
+
+    def test_unknown_branch_raises(self) -> None:
+        dense = self._make_child("dense", [[_make_rc("d1", 0.9)]])
+        sparse = self._make_child("bm25", [[_make_rc("s1", 0.7)]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+
+        with pytest.raises(ValueError, match="unknown branch"):
+            hybrid.retrieve_multi(
+                [TransformedQuery(text="q", branch="not_a_child")],
+                top_k_per_query=5,
+            )
+
+    def test_qt_fusion_forwarded_to_children(self) -> None:
+        dense = self._make_child("dense", [[_make_rc("d1", 0.9)]])
+        sparse = self._make_child("bm25", [[_make_rc("s1", 0.7)]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+
+        hybrid.retrieve_multi(
+            [TransformedQuery(text="q1"), TransformedQuery(text="q2")],
+            top_k_per_query=5,
+            fusion="max",
+        )
+
+        # Each child's retrieve_multi was called with fusion="max" — that's
+        # the pipeline-level (intra-branch) fusion. Hybrid's own fusion
+        # (cross-branch) is independent.
+        for _, child, _ in [dense, sparse]:
+            assert child.retrieve_multi.call_args.kwargs["fusion"] == "max"
+
+    def test_per_branch_top_k_forwarded(self) -> None:
+        dense_mock = MagicMock()
+        dense_mock.retrieve_multi.return_value = [_make_rc("d1", 0.9)]
+        sparse_mock = MagicMock()
+        sparse_mock.retrieve_multi.return_value = [_make_rc("s1", 0.7)]
+        hybrid = HybridRetriever(
+            children=[("dense", dense_mock, 20), ("bm25", sparse_mock, 30)],
+            fusion="rrf",
+        )
+
+        hybrid.retrieve_multi([TransformedQuery(text="q")], top_k_per_query=5)
+
+        assert dense_mock.retrieve_multi.call_args.kwargs["top_k_per_query"] == 20
+        assert sparse_mock.retrieve_multi.call_args.kwargs["top_k_per_query"] == 30
+
+    def test_filters_forwarded_to_children(self) -> None:
+        dense = self._make_child("dense", [[_make_rc("d1", 0.9)]])
+        sparse = self._make_child("bm25", [[_make_rc("s1", 0.7)]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+        hybrid.set_default_filters({"source_name": "handbook"})
+
+        hybrid.retrieve_multi(
+            [TransformedQuery(text="q")],
+            top_k_per_query=5,
+            filters={"page_number": 1},
+        )
+
+        for _, child, _ in [dense, sparse]:
+            forwarded = child.retrieve_multi.call_args.kwargs["filters"]
+            # Default filters merge with per-call filters.
+            assert forwarded == {"source_name": "handbook", "page_number": 1}
+
+    def test_cross_branch_fusion_label(self) -> None:
+        dense = self._make_child("dense", [[_make_rc("c1", 0.9)]])
+        sparse = self._make_child("bm25", [[_make_rc("c1", 18.0)]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+
+        results = hybrid.retrieve_multi([TransformedQuery(text="q")], top_k_per_query=5)
+        assert all(rc.retrieval_method == "hybrid_rrf" for rc in results)
+
+    def test_skips_empty_branches(self) -> None:
+        dense = self._make_child("dense", [[_make_rc("d1", 0.9)]])
+        sparse = self._make_child("bm25", [[_make_rc("s1", 0.7)]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+
+        # Only routes to dense; sparse should be skipped (empty group).
+        hybrid.retrieve_multi(
+            [TransformedQuery(text="hyp", branch="dense")], top_k_per_query=5
+        )
+        dense[1].retrieve_multi.assert_called_once()
+        sparse[1].retrieve_multi.assert_not_called()
+
+    def test_empty_queries_returns_empty(self) -> None:
+        dense = self._make_child("dense", [[]])
+        sparse = self._make_child("bm25", [[]])
+        hybrid = HybridRetriever(children=[dense, sparse], fusion="rrf")
+        assert hybrid.retrieve_multi([], top_k_per_query=5) == []

@@ -10,7 +10,7 @@ from components.query_transforms import (
     _DEFAULT_SYSTEM_PROMPT,
     ContextualizerQueryTransformer,
 )
-from core.types import GenerationResult
+from core.types import GenerationResult, TransformedQuery
 
 
 def _mock_generator_cls(answer: str = "Standalone question") -> MagicMock:
@@ -31,7 +31,7 @@ class TestContextualizerQueryTransformer:
         )
         result = qt.transform("What is UWF?")
 
-        assert result == ["What is UWF?"]
+        assert result == [TransformedQuery(text="What is UWF?")]
         # No LLM call when history is empty
         qt._generator.generate.assert_not_called()
 
@@ -46,7 +46,7 @@ class TestContextualizerQueryTransformer:
         )
         result = qt.transform("What is UWF?", history=[])
 
-        assert result == ["What is UWF?"]
+        assert result == [TransformedQuery(text="What is UWF?")]
         qt._generator.generate.assert_not_called()
 
     @patch("components.query_transforms.registry")
@@ -81,7 +81,7 @@ class TestContextualizerQueryTransformer:
         ]
         result = qt.transform("What programs do they offer?", history=history)
 
-        assert result == ["What programs does UWF offer?"]
+        assert result == [TransformedQuery(text="What programs does UWF offer?")]
 
     @patch("components.query_transforms.registry")
     def test_system_prompt_default(self, mock_registry: MagicMock) -> None:
@@ -154,6 +154,8 @@ class TestContextualizerQueryTransformer:
 
         assert isinstance(result, list)
         assert len(result) == 1
+        assert isinstance(result[0], TransformedQuery)
+        assert result[0].branch is None
 
     @patch("components.query_transforms.registry")
     def test_messages_include_history_and_query(self, mock_registry: MagicMock) -> None:

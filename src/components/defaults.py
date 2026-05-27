@@ -11,7 +11,7 @@ from typing import Any
 
 from components.base import BaseMemory, BaseQueryTransformer, BaseReranker
 from core.registry import registry
-from core.types import RetrievedChunk
+from core.types import RetrievedChunk, TransformedQuery
 
 
 @registry.register("query_transform", "passthrough")
@@ -22,8 +22,8 @@ class PassthroughQueryTransformer(BaseQueryTransformer):
         self,
         query: str,
         history: list[dict[str, str]] | None = None,
-    ) -> list[str]:
-        return [query]
+    ) -> list[TransformedQuery]:
+        return [TransformedQuery(text=query)]
 
 
 @registry.register("reranking", "none")

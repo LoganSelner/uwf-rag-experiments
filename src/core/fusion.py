@@ -122,6 +122,40 @@ def weighted_score_fusion(
     return sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
 
 
+def max_score_dedup(
+    scored_lists: list[list[tuple[str, float]]],
+) -> list[tuple[str, float]]:
+    """Deduplicate (id, score) pairs across lists, keeping the highest score.
+
+    Used by ``BaseRetriever.retrieve_multi`` when the pipeline-level
+    ``fusion="max"`` is selected. The semantics match the legacy
+    ``QueryPipeline._retrieve_and_deduplicate`` behavior preserved for
+    backward compatibility and as an ablation against RRF.
+
+    Scores are only meaningful when all lists come from the *same*
+    underlying retriever (same scoring function) — true by construction
+    inside an intra-branch fan-out where each child runs the same N
+    transformed queries through one retriever. For cross-retriever
+    score combination, use ``weighted_score_fusion`` (with
+    normalization) or ``reciprocal_rank_fusion`` (rank-only) instead.
+
+    Args:
+        scored_lists: Each inner list is ``(id, score)`` tuples in any
+            order. Lists may have different lengths and overlapping ids.
+            Empty inner lists are allowed.
+
+    Returns:
+        ``(id, fused_score)`` tuples sorted by score descending. Ties
+        keep the first-encountered ordering.
+    """
+    seen: dict[str, float] = {}
+    for scored in scored_lists:
+        for doc_id, score in scored:
+            if doc_id not in seen or score > seen[doc_id]:
+                seen[doc_id] = score
+    return sorted(seen.items(), key=lambda kv: kv[1], reverse=True)
+
+
 def _rescale(
     scored: list[tuple[str, float]],
     normalize: str,

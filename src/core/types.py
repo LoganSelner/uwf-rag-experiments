@@ -53,6 +53,26 @@ class RetrievedChunk:
     retrieval_method: str = ""
 
 
+@dataclass(frozen=True)
+class TransformedQuery:
+    """A query string produced by a BaseQueryTransformer, with an optional
+    branch hint for per-retriever routing inside a HybridRetriever.
+
+    ``branch=None`` is the broadcast sentinel: the query is consumed by
+    every child retriever. A non-None ``branch`` matches a child's
+    ``name`` inside the hybrid — at runtime, HybridRetriever raises
+    ``ValueError`` for branch hints that reference no child. Non-hybrid
+    retrievers ignore the hint entirely.
+
+    Used by HyDE (hypothetical doc tagged ``branch="dense"``; original,
+    when included, tagged ``branch="bm25"``) and multi-query (all
+    ``branch=None`` — broadcast).
+    """
+
+    text: str
+    branch: str | None = None
+
+
 @dataclass
 class GenerationResult:
     """The output of a pipeline run (linear or agent).
