@@ -102,19 +102,66 @@ class BaseVectorStore(ABC):
         """Load a previously saved store from disk."""
 
 
+class BaseLexicalIndex(ABC):
+    """Stores and searches chunks via lexical (term-frequency) matching.
+
+    Parallel to BaseVectorStore but for sparse/lexical retrievers like
+    BM25 that operate on raw text rather than dense embeddings. The
+    index owns its own tokenizer; query-time tokenization mirrors
+    index-time tokenization.
+
+    Named "lexical" rather than "sparse" to leave room for learned
+    sparse retrievers (e.g. SPLADE) that produce sparse *vectors* and
+    naturally fit BaseVectorStore.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        self.config = config or {}
+
+    @abstractmethod
+    def add(self, chunks: list[Chunk]) -> None:
+        """Tokenize and index a batch of chunks."""
+
+    @abstractmethod
+    def search(
+        self,
+        query: str,
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+    ) -> list[RetrievedChunk]:
+        """Search for the top_k most lexically relevant chunks.
+
+        Takes a raw query string — the index handles its own tokenization.
+        Implementations without native filtering must over-retrieve and
+        post-filter, mirroring the FAISS pattern.
+        """
+
+    @abstractmethod
+    def save(self, directory: str) -> None:
+        """Persist the index to disk."""
+
+    @abstractmethod
+    def load(self, directory: str) -> None:
+        """Load a previously saved index from disk."""
+
+
 class BaseRetriever(ABC):
     """Retrieves relevant chunks for a query.
 
-    Holds references to a vectorstore and embedder, injected after
-    construction via set_vectorstore() / set_embedder(). This allows
-    the pipeline to construct components independently from config
-    and wire them together afterward.
+    Holds references to a vectorstore, embedder, and/or lexical index,
+    injected after construction. This allows the pipeline to construct
+    components independently from config and wire them together afterward.
+
+    Dense retrievers use set_vectorstore + set_embedder; lexical (e.g.
+    BM25) retrievers use set_sparse_index; hybrid retrievers compose
+    sub-retrievers and inject the appropriate sources into each child.
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
         self._vectorstore: BaseVectorStore | None = None
         self._embedder: BaseEmbedder | None = None
+        self._sparse_index: BaseLexicalIndex | None = None
         self._default_filters: dict[str, Any] = {}
 
     def set_vectorstore(self, vectorstore: BaseVectorStore) -> None:
@@ -122,6 +169,9 @@ class BaseRetriever(ABC):
 
     def set_embedder(self, embedder: BaseEmbedder) -> None:
         self._embedder = embedder
+
+    def set_sparse_index(self, sparse_index: BaseLexicalIndex) -> None:
+        self._sparse_index = sparse_index
 
     def set_default_filters(self, filters: dict[str, Any]) -> None:
         self._default_filters = filters
@@ -136,7 +186,9 @@ class BaseRetriever(ABC):
         """Retrieve the top_k most relevant chunks for a query.
 
         Uses self._default_filters merged with any explicit filters.
-        Embeds the query using self._embedder, searches self._vectorstore.
+        Dense retrievers embed via self._embedder and search
+        self._vectorstore. Lexical retrievers delegate to
+        self._sparse_index.
         """
 
 

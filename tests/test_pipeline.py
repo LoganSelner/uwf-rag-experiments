@@ -295,3 +295,188 @@ class TestIndexArtifact:
         a = IndexArtifact(vectorstore=MagicMock(), embedder=MagicMock())
         assert a.vectorstore is not None
         assert a.stats == {}
+        assert a.auxiliary_stores == {}
+
+    def test_auxiliary_stores_populated(self) -> None:
+        sparse = MagicMock()
+        a = IndexArtifact(
+            vectorstore=MagicMock(),
+            embedder=MagicMock(),
+            auxiliary_stores={"bm25": sparse},
+        )
+        assert a.auxiliary_stores["bm25"] is sparse
+
+
+# -----------------------------------------------------------------------
+# IndexingPipeline — sparse index plumbing
+# -----------------------------------------------------------------------
+
+
+class TestIndexingPipelineSparse:
+    def test_build_indexes_sparse_before_embed(self) -> None:
+        """Sparse index must be populated before the embedder is called.
+
+        Order matters: a misconfigured BM25 tokenizer should fail
+        before we spend embedding API budget.
+        """
+        from pipeline.indexing import IndexingPipeline
+
+        call_order: list[str] = []
+
+        mock_ingestor = MagicMock()
+        mock_ingestor.ingest.return_value = [
+            MagicMock(content="t", metadata={}),
+        ]
+        chunks = [Chunk(content="c", chunk_id="1", metadata={})]
+        mock_chunker = MagicMock()
+        mock_chunker.chunk.return_value = chunks
+        mock_embedder = MagicMock()
+        mock_embedder.embed_chunks.side_effect = lambda c: (
+            call_order.append("embed") or [MagicMock()]
+        )
+        mock_vs = MagicMock()
+        mock_sparse = MagicMock()
+        mock_sparse.add.side_effect = lambda c: call_order.append("sparse")
+
+        pipeline = IndexingPipeline(
+            ingestors=[("src", "/f", mock_ingestor)],
+            chunker=mock_chunker,
+            embedder=mock_embedder,
+            vectorstore=mock_vs,
+            sparse_index=mock_sparse,
+        )
+        artifact = pipeline.build()
+
+        assert call_order == ["sparse", "embed"]
+        assert "bm25" in artifact.auxiliary_stores
+        assert artifact.stats["has_sparse_index"] is True
+
+    def test_build_without_sparse_index_unchanged(self) -> None:
+        from pipeline.indexing import IndexingPipeline
+
+        mock_ingestor = MagicMock()
+        mock_ingestor.ingest.return_value = [MagicMock(content="t", metadata={})]
+        mock_chunker = MagicMock()
+        mock_chunker.chunk.return_value = [
+            Chunk(content="c", chunk_id="1", metadata={})
+        ]
+        mock_embedder = MagicMock()
+        mock_embedder.embed_chunks.return_value = [MagicMock()]
+        mock_vs = MagicMock()
+
+        pipeline = IndexingPipeline(
+            ingestors=[("src", "/f", mock_ingestor)],
+            chunker=mock_chunker,
+            embedder=mock_embedder,
+            vectorstore=mock_vs,
+            sparse_index=None,
+        )
+        artifact = pipeline.build()
+        assert artifact.auxiliary_stores == {}
+        assert artifact.stats["has_sparse_index"] is False
+
+    def test_save_index_writes_sparse_subdir(self, tmp_path: Path) -> None:
+        from pipeline.indexing import IndexingPipeline
+
+        mock_vs = MagicMock()
+        mock_sparse = MagicMock()
+        pipeline = IndexingPipeline(
+            ingestors=[],
+            chunker=MagicMock(),
+            embedder=MagicMock(),
+            vectorstore=mock_vs,
+            sparse_index=mock_sparse,
+        )
+        pipeline.save_index(str(tmp_path))
+        mock_vs.save.assert_called_once_with(str(tmp_path))
+        mock_sparse.save.assert_called_once()
+        saved_dir = mock_sparse.save.call_args.args[0]
+        assert saved_dir.endswith("/bm25")
+
+
+# -----------------------------------------------------------------------
+# QueryPipeline — hybrid wiring
+# -----------------------------------------------------------------------
+
+
+class TestQueryPipelineHybridWiring:
+    def _index_artifact(self, sparse_index: object | None = None) -> IndexArtifact:
+        return IndexArtifact(
+            vectorstore=MagicMock(),
+            embedder=MagicMock(),
+            auxiliary_stores={"bm25": sparse_index} if sparse_index else {},
+        )
+
+    def test_hybrid_from_config_wires_children(self) -> None:
+        # Build a real BaseLexicalIndex-shaped mock for the bm25 child
+        from components.base import BaseLexicalIndex
+        from core.config import QueryConfig
+        from pipeline.query import QueryPipeline
+
+        class _FakeIdx(BaseLexicalIndex):
+            def add(self, chunks: list) -> None: ...
+            def search(self, query: str, top_k: int, filters=None) -> list:
+                return []
+
+            def save(self, directory: str) -> None: ...
+            def load(self, directory: str) -> None: ...
+
+        artifact = self._index_artifact(sparse_index=_FakeIdx())
+
+        config = QueryConfig.from_dict(
+            {
+                "retrieval": {
+                    "type": "hybrid",
+                    "top_k_retrieve": 20,
+                    "top_k_final": 5,
+                    "params": {
+                        "fusion": "rrf",
+                        "rrf_k": 60,
+                        "retrievers": [
+                            {
+                                "name": "dense",
+                                "type": "dense",
+                                "top_k": 20,
+                                "params": {},
+                            },
+                            {
+                                "name": "bm25",
+                                "type": "bm25",
+                                "top_k": 20,
+                                "params": {},
+                            },
+                        ],
+                    },
+                },
+                "generation": {"type": "ollama"},
+                "generation_llm": {"model_name": "x"},
+                "prompt": {"type": "chat"},
+            }
+        )
+
+        pipeline = QueryPipeline.from_config(config, artifact, retrieval_only=True)
+        # The hybrid retriever should have two children configured.
+        retriever = pipeline._retriever  # type: ignore[attr-defined]
+        assert hasattr(retriever, "_children")
+        names = [name for name, _, _ in retriever._children]
+        assert names == ["dense", "bm25"]
+
+    def test_bm25_retriever_requires_aux_store(self) -> None:
+        from core.config import QueryConfig
+        from pipeline.query import QueryPipeline
+
+        artifact = self._index_artifact(sparse_index=None)
+        config = QueryConfig.from_dict(
+            {
+                "retrieval": {
+                    "type": "bm25",
+                    "top_k_retrieve": 5,
+                    "top_k_final": 5,
+                },
+                "generation": {"type": "ollama"},
+                "generation_llm": {"model_name": "x"},
+                "prompt": {"type": "chat"},
+            }
+        )
+        with pytest.raises(RuntimeError, match="sparse index"):
+            QueryPipeline.from_config(config, artifact, retrieval_only=True)

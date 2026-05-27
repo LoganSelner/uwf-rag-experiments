@@ -1,0 +1,44 @@
+# Hybrid retrieval with Reciprocal Rank Fusion (RRF).
+#
+# Combines dense + BM25 retrieval via RRF (k=60, the cross-vendor
+# default). Compare against base.yaml (dense) and bm25.yaml (sparse)
+# to isolate the effect of fusion.
+#
+# Variable changed: query.retrieval.type (dense → hybrid); adds
+# indexing.sparse_index. Per-branch top_k=20 follows the production
+# best practice of over-retrieving per branch before fusion. The
+# stage-level top_k_retrieve is the count entering the reranker
+# (which is "none" by default in base.yaml).
+
+extends: ../../base.yaml
+
+name: "retrieval_hybrid_rrf"
+description: "Hybrid dense + BM25 via RRF (k=60)"
+
+indexing:
+  sparse_index:
+    type: "bm25"
+    params:
+      k1: 1.5
+      b: 0.75
+      method: "lucene"
+      stopwords: "en"
+      stemmer: "english"
+
+query:
+  retrieval:
+    type: "hybrid"
+    top_k_retrieve: 20
+    top_k_final: 5
+    params:
+      fusion: "rrf"
+      rrf_k: 60
+      retrievers:
+        - name: "dense"
+          type: "dense"
+          top_k: 20
+          params: {}
+        - name: "bm25"
+          type: "bm25"
+          top_k: 20
+          params: {}

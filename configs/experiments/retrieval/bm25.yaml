@@ -1,0 +1,29 @@
+# BM25 sparse-retrieval experiment.
+#
+# Replaces dense retrieval with BM25 lexical retrieval, keeping every
+# other variable identical to the baseline. Compare against base.yaml
+# (the dense baseline) to isolate sparse vs. dense retrieval.
+#
+# Variable changed: query.retrieval.type (dense → bm25); adds
+# indexing.sparse_index. Everything else inherited from base.yaml.
+
+extends: ../../base.yaml
+
+name: "retrieval_bm25"
+description: "BM25 lexical retrieval (bm25s, lucene method)"
+
+indexing:
+  sparse_index:
+    type: "bm25"
+    params:
+      k1: 1.5
+      b: 0.75
+      method: "lucene"
+      stopwords: "en"
+      stemmer: "english"
+
+query:
+  retrieval:
+    type: "bm25"
+    top_k_retrieve: 3
+    top_k_final: 3

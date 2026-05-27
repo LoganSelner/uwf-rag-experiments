@@ -1,0 +1,46 @@
+# Hybrid retrieval with weighted score fusion.
+#
+# Ablation against hybrid_rrf.yaml: same indexes, same per-branch
+# top_k, only the fusion strategy changes. RRF is the production
+# default because score normalization across retrievers is brittle —
+# this config exists primarily to measure that effect on the
+# advising corpus.
+#
+# Variable changed: query.retrieval.params.fusion (rrf → weighted),
+# plus the addition of explicit per-branch weights.
+
+extends: ../../base.yaml
+
+name: "retrieval_hybrid_weighted"
+description: "Hybrid dense + BM25 via weighted score fusion (min-max)"
+
+indexing:
+  sparse_index:
+    type: "bm25"
+    params:
+      k1: 1.5
+      b: 0.75
+      method: "lucene"
+      stopwords: "en"
+      stemmer: "english"
+
+query:
+  retrieval:
+    type: "hybrid"
+    top_k_retrieve: 20
+    top_k_final: 5
+    params:
+      fusion: "weighted"
+      normalize: "min_max"
+      weights:
+        dense: 0.5
+        bm25: 0.5
+      retrievers:
+        - name: "dense"
+          type: "dense"
+          top_k: 20
+          params: {}
+        - name: "bm25"
+          type: "bm25"
+          top_k: 20
+          params: {}

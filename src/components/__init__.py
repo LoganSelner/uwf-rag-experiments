@@ -18,6 +18,7 @@ from components import (  # noqa: F401
     embedders,
     generators,
     ingestors,
+    lexical_indexes,
     prompts,
     query_transforms,
     rerankers,

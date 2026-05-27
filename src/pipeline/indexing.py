@@ -14,7 +14,13 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from components.base import BaseChunker, BaseEmbedder, BaseIngestor, BaseVectorStore
+from components.base import (
+    BaseChunker,
+    BaseEmbedder,
+    BaseIngestor,
+    BaseLexicalIndex,
+    BaseVectorStore,
+)
 from core.config import ExperimentConfig
 from core.registry import registry
 from core.types import Chunk, Document
@@ -23,18 +29,27 @@ logger = logging.getLogger(__name__)
 
 INDEX_CACHE_DIR = Path("data/indexes")
 
+# Key under which the BM25 lexical index lives inside
+# ``IndexArtifact.auxiliary_stores``. Names the implementation (per
+# ROADMAP §7.1) so a future SPLADE store can coexist under its own key.
+BM25_AUX_KEY = "bm25"
+
 
 @dataclass
 class IndexArtifact:
     """Handoff between the indexing pipeline and the query pipeline.
 
     Carries the populated vectorstore and embedder (needed at query
-    time to embed incoming queries). Also carries stats about what
-    was indexed.
+    time to embed incoming queries). Also carries optional auxiliary
+    indexes — BM25 for now, room for SPLADE / contextual-embedding
+    secondary stores later — and stats about what was indexed.
     """
 
     vectorstore: BaseVectorStore
     embedder: BaseEmbedder
+    auxiliary_stores: dict[str, BaseLexicalIndex | BaseVectorStore] = field(
+        default_factory=dict
+    )
     stats: dict[str, Any] = field(default_factory=dict)
 
 
@@ -47,11 +62,13 @@ class IndexingPipeline:
         chunker: BaseChunker,
         embedder: BaseEmbedder,
         vectorstore: BaseVectorStore,
+        sparse_index: BaseLexicalIndex | None = None,
     ) -> None:
         self._ingestors = ingestors  # [(source_name, path, ingestor), ...]
         self._chunker = chunker
         self._embedder = embedder
         self._vectorstore = vectorstore
+        self._sparse_index = sparse_index
 
     @classmethod
     def from_config(cls, config: ExperimentConfig) -> IndexingPipeline:
@@ -75,18 +92,26 @@ class IndexingPipeline:
         vectorstore_cls = registry.get("vectorstore", idx.vectorstore.type)
         vectorstore: BaseVectorStore = vectorstore_cls(config=idx.vectorstore.params)
 
+        sparse_index: BaseLexicalIndex | None = None
+        if idx.sparse_index.type:
+            sparse_cls = registry.get("sparse_index", idx.sparse_index.type)
+            sparse_index = sparse_cls(config=idx.sparse_index.params)
+
         return cls(
             ingestors=ingestors,
             chunker=chunker,
             embedder=embedder,
             vectorstore=vectorstore,
+            sparse_index=sparse_index,
         )
 
     def build(self) -> IndexArtifact:
-        """Run the full indexing pipeline: ingest → chunk → embed → store.
+        """Run the full indexing pipeline.
 
-        Returns an IndexArtifact carrying the populated vectorstore
-        and embedder (needed at query time).
+        Ordering: ingest → chunk → sparse index (if configured) →
+        embed → vector store. BM25 indexing happens *before* embedding
+        so a tokenizer/stemmer misconfiguration fails fast, before
+        spending embedding API budget.
         """
         all_documents: list[Document] = []
         source_counts: dict[str, int] = {}
@@ -110,6 +135,12 @@ class IndexingPipeline:
         chunks: list[Chunk] = self._chunker.chunk(all_documents)
         logger.info("Produced %d chunks", len(chunks))
 
+        # Sparse index (BM25 etc.) — built before embedding so a bad
+        # tokenizer/stemmer config doesn't waste embedding API calls.
+        if self._sparse_index is not None:
+            self._sparse_index.add(chunks)
+            logger.info("Added %d chunks to sparse index", len(chunks))
+
         # Embed
         embedded = self._embedder.embed_chunks(chunks)
         logger.info("Embedded %d chunks", len(embedded))
@@ -122,17 +153,25 @@ class IndexingPipeline:
             "total_documents": len(all_documents),
             "total_chunks": len(chunks),
             "source_counts": source_counts,
+            "has_sparse_index": self._sparse_index is not None,
         }
+
+        auxiliary_stores: dict[str, BaseLexicalIndex | BaseVectorStore] = {}
+        if self._sparse_index is not None:
+            auxiliary_stores[BM25_AUX_KEY] = self._sparse_index
 
         return IndexArtifact(
             vectorstore=self._vectorstore,
             embedder=self._embedder,
+            auxiliary_stores=auxiliary_stores,
             stats=stats,
         )
 
     def save_index(self, directory: str) -> None:
-        """Save the vectorstore to disk for caching."""
+        """Save the vector + sparse indexes to disk for caching."""
         self._vectorstore.save(directory)
+        if self._sparse_index is not None:
+            self._sparse_index.save(str(Path(directory) / BM25_AUX_KEY))
 
     @classmethod
     def run_or_load_cache(
@@ -161,12 +200,20 @@ class IndexingPipeline:
                 index_dir,
                 fingerprint,
             )
-            # Build pipeline to get embedder and vectorstore instances
+            # Build pipeline to get embedder, vectorstore, and sparse
+            # index instances; populate them from disk.
             pipeline = cls.from_config(config)
             pipeline._vectorstore.load(str(index_dir))
+
+            auxiliary_stores: dict[str, BaseLexicalIndex | BaseVectorStore] = {}
+            if pipeline._sparse_index is not None:
+                pipeline._sparse_index.load(str(index_dir / BM25_AUX_KEY))
+                auxiliary_stores[BM25_AUX_KEY] = pipeline._sparse_index
+
             return IndexArtifact(
                 vectorstore=pipeline._vectorstore,
                 embedder=pipeline._embedder,
+                auxiliary_stores=auxiliary_stores,
                 stats={"cached": True, "fingerprint": fingerprint},
             )
 

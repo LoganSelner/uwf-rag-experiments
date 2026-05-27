@@ -257,12 +257,13 @@ class SourceConfig:
 
 @dataclass
 class IndexingConfig:
-    """Config for the indexing pipeline (sources → vectorstore)."""
+    """Config for the indexing pipeline (sources → vectorstore + optional sparse)."""
 
     sources: list[SourceConfig] = field(default_factory=list)
     chunking: ComponentConfig = field(default_factory=ComponentConfig)
     embedding: ComponentConfig = field(default_factory=ComponentConfig)
     vectorstore: ComponentConfig = field(default_factory=ComponentConfig)
+    sparse_index: ComponentConfig = field(default_factory=ComponentConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> IndexingConfig:
@@ -273,6 +274,7 @@ class IndexingConfig:
             chunking=ComponentConfig.from_dict(data.get("chunking")),
             embedding=ComponentConfig.from_dict(data.get("embedding")),
             vectorstore=ComponentConfig.from_dict(data.get("vectorstore")),
+            sparse_index=ComponentConfig.from_dict(data.get("sparse_index")),
         )
 
 
@@ -483,12 +485,20 @@ class ExperimentConfig:
     def index_fingerprint(self) -> str:
         """Compute a SHA-256 fingerprint (12 hex chars) of indexing config.
 
-        Includes: sources, chunking, embedding, vectorstore.
+        Includes: sources, chunking, embedding, vectorstore, and
+        ``sparse_index`` (the latter only when its ``type`` is set).
         Excludes: query, agent, evaluation, pipeline_mode.
 
-        Two experiments with the same fingerprint can share a cached index.
+        Empty-config canonicalization: any ``ComponentConfig`` with an
+        empty ``type`` is omitted from the hashed dict so adding a new
+        optional indexing component (e.g. ``sparse_index`` in Phase A,
+        a chunk enricher in Phase C) doesn't disturb the fingerprint
+        for configs that don't use it.
+
+        Two experiments with the same fingerprint can share a cached
+        index.
         """
-        data = {
+        data: dict[str, Any] = {
             "sources": [
                 {
                     "name": s.name,
@@ -510,6 +520,11 @@ class ExperimentConfig:
                 "params": self.indexing.vectorstore.params,
             },
         }
+        if self.indexing.sparse_index.type:
+            data["sparse_index"] = {
+                "type": self.indexing.sparse_index.type,
+                "params": self.indexing.sparse_index.params,
+            }
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
@@ -643,6 +658,15 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
         "indexing.vectorstore.type",
     )
 
+    if config.indexing.sparse_index.type:
+        _check_registered(
+            errors,
+            registry,
+            config.indexing.sparse_index.type,
+            "sparse_index",
+            "indexing.sparse_index.type",
+        )
+
     # --- Linear pipeline components ---
     if config.pipeline_mode == "linear":
         # Apply same defaults as pipeline/query.py
@@ -662,6 +686,8 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
             "retrieval",
             "query.retrieval.type",
         )
+
+        _validate_retrieval_dependencies(errors, config, registry)
 
         rerank_type = config.query.reranking.type or "none"
         _check_registered(
@@ -761,3 +787,156 @@ def _check_registered(
             f"{config_path}: '{type_name}' is not registered in "
             f"category '{category}'. Available: {available}"
         )
+
+
+_SUPPORTED_FUSION_MODES: frozenset[str] = frozenset({"rrf", "weighted"})
+
+
+def _validate_retrieval_dependencies(
+    errors: list[str],
+    config: ExperimentConfig,
+    registry: Any,
+) -> None:
+    """Phase A retrieval validations beyond simple registry checks.
+
+    Covers:
+    - `bm25` retriever requires `indexing.sparse_index` to be set.
+    - `hybrid` retriever: child specs, fusion mode, weights, nesting
+      prohibition, sparse-index requirement when any child is `bm25`.
+    """
+    retrieval = config.query.retrieval
+
+    if retrieval.type == "bm25":
+        if not config.indexing.sparse_index.type:
+            errors.append(
+                "query.retrieval.type is 'bm25' but indexing.sparse_index "
+                "is not configured"
+            )
+        return
+
+    if retrieval.type != "hybrid":
+        return
+
+    params = retrieval.params or {}
+    children = params.get("retrievers")
+    if not isinstance(children, list):
+        errors.append(
+            "query.retrieval.params.retrievers must be a list of "
+            "sub-retriever specs for hybrid retrieval"
+        )
+        return
+    if len(children) < 2:
+        errors.append(
+            f"query.retrieval.params.retrievers must have at least 2 "
+            f"entries for hybrid (got {len(children)})"
+        )
+
+    seen_names: set[str] = set()
+    seen_types: dict[str, int] = {}
+    has_bm25_child = False
+    child_top_k_sum = 0
+
+    for i, child in enumerate(children):
+        path = f"query.retrieval.params.retrievers[{i}]"
+        if not isinstance(child, dict):
+            errors.append(f"{path} must be a dict")
+            continue
+        sub_type = child.get("type", "")
+        if sub_type == "hybrid":
+            errors.append(f"{path}.type: nested 'hybrid' is not allowed")
+            continue
+        if not sub_type:
+            errors.append(f"{path}.type is empty")
+        else:
+            _check_registered(errors, registry, sub_type, "retrieval", f"{path}.type")
+            seen_types[sub_type] = seen_types.get(sub_type, 0) + 1
+            if sub_type == "bm25":
+                has_bm25_child = True
+
+        sub_name = str(child.get("name", sub_type))
+        if sub_name in seen_names:
+            errors.append(
+                f"{path}.name: '{sub_name}' is duplicated in this hybrid "
+                "(child names must be unique)"
+            )
+        else:
+            seen_names.add(sub_name)
+
+        sub_top_k = child.get("top_k")
+        if not isinstance(sub_top_k, int) or sub_top_k <= 0:
+            errors.append(f"{path}.top_k must be a positive int (got {sub_top_k!r})")
+        else:
+            child_top_k_sum += sub_top_k
+
+    # Duplicate types without explicit names are disallowed — the
+    # default name (the type) would collide.
+    for sub_type, count in seen_types.items():
+        if count > 1:
+            explicit = sum(
+                1
+                for c in children
+                if isinstance(c, dict) and c.get("type") == sub_type and c.get("name")
+            )
+            if explicit < count:
+                errors.append(
+                    f"query.retrieval.params.retrievers: type '{sub_type}' "
+                    f"appears {count} times — each duplicate child must "
+                    "supply an explicit unique 'name'"
+                )
+
+    if (
+        child_top_k_sum
+        and retrieval.top_k_retrieve > 0
+        and child_top_k_sum < retrieval.top_k_retrieve
+    ):
+        errors.append(
+            f"query.retrieval.params.retrievers: sum of child top_k "
+            f"({child_top_k_sum}) < query.retrieval.top_k_retrieve "
+            f"({retrieval.top_k_retrieve}) — fusion cannot fill the slate"
+        )
+
+    if has_bm25_child and config.indexing.sparse_index.type != "bm25":
+        errors.append(
+            "hybrid has a 'bm25' child but indexing.sparse_index.type "
+            f"is '{config.indexing.sparse_index.type}' (expected 'bm25')"
+        )
+
+    fusion = params.get("fusion", "rrf")
+    if fusion not in _SUPPORTED_FUSION_MODES:
+        errors.append(
+            f"query.retrieval.params.fusion: '{fusion}' is not supported. "
+            f"Supported: {sorted(_SUPPORTED_FUSION_MODES)}"
+        )
+
+    if fusion == "rrf":
+        rrf_k = params.get("rrf_k", 60)
+        if not isinstance(rrf_k, int) or rrf_k <= 0:
+            errors.append(
+                f"query.retrieval.params.rrf_k must be a positive int (got {rrf_k!r})"
+            )
+
+    if fusion == "weighted":
+        weights = params.get("weights")
+        if not isinstance(weights, dict):
+            errors.append(
+                "query.retrieval.params.weights is required for weighted "
+                "fusion and must be a dict keyed by sub-retriever name"
+            )
+        else:
+            if set(weights.keys()) != seen_names:
+                errors.append(
+                    f"query.retrieval.params.weights keys "
+                    f"{sorted(weights.keys())} must match sub-retriever "
+                    f"names {sorted(seen_names)}"
+                )
+            weight_values = list(weights.values())
+            if any(not isinstance(w, (int, float)) or w < 0 for w in weight_values):
+                errors.append(
+                    "query.retrieval.params.weights values must be "
+                    f"non-negative numbers (got {weight_values})"
+                )
+            elif sum(weight_values) <= 0:
+                errors.append(
+                    "query.retrieval.params.weights must sum to > 0 "
+                    f"(got {sum(weight_values)})"
+                )

@@ -128,9 +128,19 @@ class TestRegistrationInventory:
     def test_embedding_edenai(self) -> None:
         assert registry.is_registered("embedding", "edenai")
 
+    # Sparse / lexical indexes
+    def test_sparse_index_bm25(self) -> None:
+        assert registry.is_registered("sparse_index", "bm25")
+
     # Query
     def test_retrieval_dense(self) -> None:
         assert registry.is_registered("retrieval", "dense")
+
+    def test_retrieval_bm25(self) -> None:
+        assert registry.is_registered("retrieval", "bm25")
+
+    def test_retrieval_hybrid(self) -> None:
+        assert registry.is_registered("retrieval", "hybrid")
 
     def test_generation_ollama(self) -> None:
         assert registry.is_registered("generation", "ollama")

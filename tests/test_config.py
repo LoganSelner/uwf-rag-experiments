@@ -483,3 +483,288 @@ class TestValidateConfig:
         cfg = self._make_valid_config()
         cfg.evaluation.evaluator_embedding.type = "huggingface"
         validate_config(cfg, registry)  # should not raise
+
+
+# -----------------------------------------------------------------------
+# Phase A — sparse_index fingerprint + validator
+# -----------------------------------------------------------------------
+
+
+class TestSparseIndexFingerprint:
+    def test_empty_sparse_index_does_not_change_fingerprint(
+        self, fixtures_dir: Path
+    ) -> None:
+        # An empty sparse_index ComponentConfig must canonicalize to
+        # absence — same fingerprint as a config that doesn't mention it.
+        cfg_no_key = ExperimentConfig.from_yaml(fixtures_dir / "base.yaml")
+        raw = load_yaml_with_inheritance(fixtures_dir / "base.yaml")
+        raw["indexing"]["sparse_index"] = {"type": "", "params": {}}
+        cfg_explicit_empty = ExperimentConfig.from_dict(raw)
+        assert cfg_no_key.index_fingerprint() == cfg_explicit_empty.index_fingerprint()
+
+    def test_sparse_index_set_changes_fingerprint(self, fixtures_dir: Path) -> None:
+        cfg_no = ExperimentConfig.from_yaml(fixtures_dir / "base.yaml")
+        raw = load_yaml_with_inheritance(fixtures_dir / "base.yaml")
+        raw["indexing"]["sparse_index"] = {"type": "bm25", "params": {"k1": 1.5}}
+        cfg_yes = ExperimentConfig.from_dict(raw)
+        assert cfg_no.index_fingerprint() != cfg_yes.index_fingerprint()
+
+    def test_sparse_index_params_change_fingerprint(self, fixtures_dir: Path) -> None:
+        raw1 = load_yaml_with_inheritance(fixtures_dir / "base.yaml")
+        raw1["indexing"]["sparse_index"] = {"type": "bm25", "params": {"k1": 1.2}}
+        raw2 = load_yaml_with_inheritance(fixtures_dir / "base.yaml")
+        raw2["indexing"]["sparse_index"] = {"type": "bm25", "params": {"k1": 1.5}}
+        assert (
+            ExperimentConfig.from_dict(raw1).index_fingerprint()
+            != ExperimentConfig.from_dict(raw2).index_fingerprint()
+        )
+
+
+class TestValidateConfigSparseAndHybrid:
+    """Validator coverage for Phase A retrieval rules."""
+
+    def _make_valid_dense_config(self) -> ExperimentConfig:
+        return ExperimentConfig.from_dict(
+            {
+                "name": "test",
+                "pipeline_mode": "linear",
+                "indexing": {
+                    "sources": [{"name": "s", "path": "", "ingest": {"type": "pdf"}}],
+                    "chunking": {"type": "recursive_langchain"},
+                    "embedding": {"type": "huggingface"},
+                    "vectorstore": {"type": "faiss"},
+                },
+                "query": {
+                    "retrieval": {
+                        "type": "dense",
+                        "top_k_retrieve": 10,
+                        "top_k_final": 5,
+                    },
+                    "generation": {"type": "ollama"},
+                    "generation_llm": {"model_name": "x"},
+                    "prompt": {"type": "chat"},
+                },
+                "evaluation": {
+                    "mode": "full",
+                    "evaluator_embedding": {"type": "huggingface"},
+                },
+            }
+        )
+
+    def _add_hybrid(
+        self,
+        cfg: ExperimentConfig,
+        *,
+        children: list[dict],
+        fusion: str = "rrf",
+        rrf_k: int = 60,
+        weights: dict[str, float] | None = None,
+        top_k_retrieve: int = 20,
+        top_k_final: int = 5,
+    ) -> None:
+        cfg.indexing.sparse_index.type = "bm25"
+        cfg.indexing.sparse_index.params = {}
+        cfg.query.retrieval.type = "hybrid"
+        cfg.query.retrieval.top_k_retrieve = top_k_retrieve
+        cfg.query.retrieval.top_k_final = top_k_final
+        params: dict = {
+            "fusion": fusion,
+            "rrf_k": rrf_k,
+            "retrievers": children,
+        }
+        if weights is not None:
+            params["weights"] = weights
+        cfg.query.retrieval.params = params
+
+    def test_sparse_index_unregistered_fails(self) -> None:
+        cfg = self._make_valid_dense_config()
+        cfg.indexing.sparse_index.type = "bogus"
+        with pytest.raises(ConfigValidationError, match="bogus"):
+            validate_config(cfg, registry)
+
+    def test_bm25_retriever_without_sparse_index_fails(self) -> None:
+        cfg = self._make_valid_dense_config()
+        cfg.query.retrieval.type = "bm25"
+        with pytest.raises(ConfigValidationError, match=r"indexing\.sparse_index"):
+            validate_config(cfg, registry)
+
+    def test_bm25_retriever_with_sparse_index_passes(self) -> None:
+        cfg = self._make_valid_dense_config()
+        cfg.indexing.sparse_index.type = "bm25"
+        cfg.query.retrieval.type = "bm25"
+        validate_config(cfg, registry)
+
+    def test_hybrid_valid_rrf_passes(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        validate_config(cfg, registry)
+
+    def test_hybrid_valid_weighted_passes(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            fusion="weighted",
+            weights={"dense": 0.6, "bm25": 0.4},
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        validate_config(cfg, registry)
+
+    def test_hybrid_fewer_than_two_children_fails(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            children=[{"name": "dense", "type": "dense", "top_k": 20, "params": {}}],
+        )
+        with pytest.raises(ConfigValidationError, match="at least 2"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_nested_disallowed(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            children=[
+                {"name": "inner", "type": "hybrid", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="nested 'hybrid'"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_duplicate_names_fail(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            children=[
+                {"name": "x", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "x", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="duplicated"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_duplicate_types_without_explicit_names_fail(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            children=[
+                {"type": "dense", "top_k": 20, "params": {}},
+                {"type": "dense", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match=r"duplicated|unique 'name'"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_child_top_k_must_be_positive(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 0, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="top_k must be a positive"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_sum_child_top_k_below_top_k_retrieve_fails(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            top_k_retrieve=50,
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 10, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 10, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="cannot fill the slate"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_bm25_child_requires_sparse_index_bm25(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        cfg.indexing.sparse_index.type = ""  # break the dependency
+        with pytest.raises(ConfigValidationError):
+            validate_config(cfg, registry)
+
+    def test_hybrid_unknown_fusion_fails(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            fusion="bogus",
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="not supported"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_weighted_keys_must_match_children(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            fusion="weighted",
+            weights={"dense": 0.5, "wrong_name": 0.5},
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="must match"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_weighted_negative_weight_fails(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            fusion="weighted",
+            weights={"dense": -0.1, "bm25": 0.5},
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="non-negative"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_weighted_zero_sum_fails(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            fusion="weighted",
+            weights={"dense": 0.0, "bm25": 0.0},
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="sum to > 0"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_rrf_k_must_be_positive(self) -> None:
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            rrf_k=0,
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        with pytest.raises(ConfigValidationError, match="rrf_k"):
+            validate_config(cfg, registry)
