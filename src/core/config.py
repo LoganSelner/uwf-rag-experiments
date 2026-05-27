@@ -790,6 +790,7 @@ def _check_registered(
 
 
 _SUPPORTED_FUSION_MODES: frozenset[str] = frozenset({"rrf", "weighted"})
+_SUPPORTED_NORMALIZE_MODES: frozenset[str] = frozenset({"min_max", "none"})
 
 
 def _validate_retrieval_dependencies(
@@ -916,6 +917,13 @@ def _validate_retrieval_dependencies(
             )
 
     if fusion == "weighted":
+        normalize = params.get("normalize", "min_max")
+        if normalize not in _SUPPORTED_NORMALIZE_MODES:
+            errors.append(
+                f"query.retrieval.params.normalize: '{normalize}' is not "
+                f"supported. Supported: {sorted(_SUPPORTED_NORMALIZE_MODES)}"
+            )
+
         weights = params.get("weights")
         if not isinstance(weights, dict):
             errors.append(

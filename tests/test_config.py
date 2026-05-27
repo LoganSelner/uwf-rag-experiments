@@ -768,3 +768,34 @@ class TestValidateConfigSparseAndHybrid:
         )
         with pytest.raises(ConfigValidationError, match="rrf_k"):
             validate_config(cfg, registry)
+
+    def test_hybrid_weighted_unknown_normalize_fails(self) -> None:
+        # Catches typos at config-validation time rather than letting
+        # them blow up inside core.fusion on the first query.
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            fusion="weighted",
+            weights={"dense": 0.5, "bm25": 0.5},
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        cfg.query.retrieval.params["normalize"] = "zscore"
+        with pytest.raises(ConfigValidationError, match=r"normalize.*not supported"):
+            validate_config(cfg, registry)
+
+    def test_hybrid_weighted_default_normalize_passes(self) -> None:
+        # Unset normalize is fine — defaults to min_max in fusion.
+        cfg = self._make_valid_dense_config()
+        self._add_hybrid(
+            cfg,
+            fusion="weighted",
+            weights={"dense": 0.5, "bm25": 0.5},
+            children=[
+                {"name": "dense", "type": "dense", "top_k": 20, "params": {}},
+                {"name": "bm25", "type": "bm25", "top_k": 20, "params": {}},
+            ],
+        )
+        validate_config(cfg, registry)
