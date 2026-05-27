@@ -1,0 +1,63 @@
+# RAG-Fusion canonical recipe: multi-query expansion + hybrid retrieval.
+#
+# Generates N=4 query reformulations, fans them out across both dense
+# and BM25 retrievers, then applies two-level RRF fusion:
+#   - Intra-branch (across reformulations within a child)
+#   - Cross-branch (dense vs. bm25 fused lists)
+# Reported in Raudaschl 2024 as the strongest pre-rerank stack
+# (+19% NDCG@10 over single-query baseline).
+#
+# Compare against:
+#   - multi_query_dense.yaml        → isolates hybrid vs. dense-only
+#   - retrieval/hybrid_rrf.yaml     → isolates multi-query vs. single-query
+#   - multi_query_hybrid_rerank.yaml → adds reranking on top
+#
+# Variables changed from base.yaml:
+#   - query.query_transform.type: contextualizer → multi_query
+#   - query.retrieval.type: dense → hybrid
+#   - indexing.sparse_index: adds bm25 (reuses Phase A index cache)
+
+extends: ../../base.yaml
+
+name: "qt_multi_query_hybrid"
+description: "RAG-Fusion: multi-query (4) × hybrid (dense+BM25) with two-level RRF"
+
+indexing:
+  sparse_index:
+    type: "bm25"
+    params:
+      k1: 1.5
+      b: 0.75
+      method: "lucene"
+      stopwords: "en"
+      stemmer: "english"
+
+query:
+  query_transform:
+    type: "multi_query"
+    fusion: "rrf"
+    params:
+      generator_type: "edenai"
+      sub_provider: "openai"
+      num_queries: 4
+      include_original: true
+      llm:
+        model_name: "gpt-4.1"
+        temperature: 0.0
+
+  retrieval:
+    type: "hybrid"
+    top_k_retrieve: 20
+    top_k_final: 5
+    params:
+      fusion: "rrf"
+      rrf_k: 60
+      retrievers:
+        - name: "dense"
+          type: "dense"
+          top_k: 20
+          params: {}
+        - name: "bm25"
+          type: "bm25"
+          top_k: 20
+          params: {}

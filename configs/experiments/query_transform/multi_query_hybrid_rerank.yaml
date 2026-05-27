@@ -1,0 +1,63 @@
+# Full strong-baseline stack: multi-query + hybrid + cross-encoder reranking.
+#
+# The upper-bound experiment from contemporary RAG practice: RAG-Fusion's
+# multi-query × hybrid recipe (see multi_query_hybrid.yaml), with a
+# cross-encoder reranker on the fused candidate set as a final
+# precision-improving pass.
+#
+# Compare against:
+#   - multi_query_hybrid.yaml          → isolates reranking's effect
+#   - retrieval/hybrid_rrf_rerank.yaml → isolates multi-query's effect
+#
+# Variables changed from multi_query_hybrid.yaml:
+#   - query.reranking.type: none → cross_encoder
+
+extends: ../../base.yaml
+
+name: "qt_multi_query_hybrid_rerank"
+description: "RAG-Fusion + cross-encoder reranker (full strong-baseline stack)"
+
+indexing:
+  sparse_index:
+    type: "bm25"
+    params:
+      k1: 1.5
+      b: 0.75
+      method: "lucene"
+      stopwords: "en"
+      stemmer: "english"
+
+query:
+  query_transform:
+    type: "multi_query"
+    fusion: "rrf"
+    params:
+      generator_type: "edenai"
+      sub_provider: "openai"
+      num_queries: 4
+      include_original: true
+      llm:
+        model_name: "gpt-4.1"
+        temperature: 0.0
+
+  retrieval:
+    type: "hybrid"
+    top_k_retrieve: 20
+    top_k_final: 5
+    params:
+      fusion: "rrf"
+      rrf_k: 60
+      retrievers:
+        - name: "dense"
+          type: "dense"
+          top_k: 20
+          params: {}
+        - name: "bm25"
+          type: "bm25"
+          top_k: 20
+          params: {}
+
+  reranking:
+    type: "cross_encoder"
+    params:
+      model_name: "Alibaba-NLP/gte-reranker-modernbert-base"

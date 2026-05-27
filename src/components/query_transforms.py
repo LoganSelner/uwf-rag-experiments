@@ -8,6 +8,7 @@ into standalone queries when conversation history is present.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from components.base import BaseQueryTransformer
@@ -201,6 +202,167 @@ class HyDEQueryTransformer(BaseQueryTransformer):
         logger.info(
             "HyDE produced %d hypothetical(s) (include_original=%s, branch=%r)",
             len(hypotheticals),
+            self._include_original,
+            self._branch,
+        )
+        return out
+
+
+_DEFAULT_MULTI_QUERY_SYSTEM_PROMPT = (
+    "Generate {num_queries} different reformulations of the user's question. "
+    "Each reformulation should explore a different aspect, phrasing, or "
+    "interpretation of the original question to help retrieve diverse "
+    "relevant documents. Output one reformulation per line, prefixed with "
+    "its number and a period (e.g. '1. ...'). Do not include explanations, "
+    "headers, or any text other than the numbered reformulations."
+)
+
+# Tolerant matcher for LLM-emitted numbered/bulleted lines. Accepts
+# `1.`, `1)`, `1:`, `-`, `*` as prefixes; trims surrounding whitespace
+# and stray surrounding quotes from the captured content.
+_NUMBERED_LINE_RE = re.compile(r"^\s*(?:\d+[\.\)\:]|\-|\*)\s*(.+?)\s*$")
+
+
+def _parse_numbered_list(text: str, expected: int) -> list[str]:
+    """Extract up to ``expected`` queries from a numbered-list LLM response.
+
+    Strategy:
+    1. Match lines against the tolerant numbered/bulleted regex.
+    2. If no lines matched, fall back to each non-empty stripped line
+       (Ollama qwen3 occasionally drops the numbering prefix).
+    3. Truncate to ``expected``. Log a warning if fewer than ``expected``
+       reformulations were parsed — the multi-query path still works
+       with fewer, just with reduced query diversity.
+
+    Surrounding ``"`` or ``'`` quotes are stripped from each match;
+    blank captures are dropped.
+    """
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    parsed: list[str] = []
+    for ln in lines:
+        m = _NUMBERED_LINE_RE.match(ln)
+        if m:
+            cleaned = m.group(1).strip().strip("\"'")
+            if cleaned:
+                parsed.append(cleaned)
+
+    if not parsed:
+        # Fallback: treat each non-empty line as a query.
+        parsed = [ln.strip() for ln in lines if ln.strip()]
+
+    if len(parsed) < expected:
+        logger.warning(
+            "Multi-query parser extracted %d of %d expected reformulations "
+            "from LLM output; proceeding with what we have",
+            len(parsed),
+            expected,
+        )
+    return parsed[:expected]
+
+
+@registry.register("query_transform", "multi_query")
+class MultiQueryQueryTransformer(BaseQueryTransformer):
+    """Multi-query expansion (RAG-Fusion style).
+
+    Asks an LLM to generate ``num_queries`` reformulations of the user's
+    question, then returns each as a separate :class:`TransformedQuery`
+    for the retriever to fan out over. Combined with the pipeline's RRF
+    fusion (``query_transform.fusion="rrf"``), this is the canonical
+    RAG-Fusion recipe (Raudaschl, 2024).
+
+    All emitted queries default to ``branch=None``, so they broadcast to
+    every hybrid child — pairs naturally with both dense-only and
+    hybrid+BM25 setups. Hybrid + multi-query + RRF is reported in the
+    literature as the strongest pre-rerank stack.
+
+    Config params:
+        generator_type: Registry name of the generator (required).
+        llm: LLM config dict for the generator.
+        system_prompt: Override the default reformulation prompt. The
+            template variable ``{num_queries}`` is replaced with the
+            configured count.
+        num_queries: How many reformulations to request (default 4 —
+            the RAG-Fusion paper default).
+        include_original: If True, prepend a TransformedQuery for the
+            original user question (default True — keeps the literal
+            query in the retrieval pool).
+        branch: Branch hint attached to all emitted TransformedQueries
+            (default None — broadcast to all hybrid children).
+    """
+
+    _OWN_KEYS = frozenset(
+        {
+            "generator_type",
+            "system_prompt",
+            "num_queries",
+            "include_original",
+            "branch",
+        }
+    )
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+
+        generator_type = self.config.get("generator_type")
+        if not generator_type:
+            raise ValueError(
+                "MultiQueryQueryTransformer requires 'generator_type' in "
+                "config (e.g. 'edenai', 'google', 'ollama'). Set it via "
+                "query_transform.params.generator_type in YAML."
+            )
+
+        num_queries = int(self.config.get("num_queries", 4))
+        if num_queries < 1:
+            raise ValueError(
+                f"MultiQueryQueryTransformer 'num_queries' must be >= 1 "
+                f"(got {num_queries})"
+            )
+        self._num_queries: int = num_queries
+        self._include_original: bool = bool(self.config.get("include_original", True))
+        self._branch: str | None = self.config.get("branch")
+
+        gen_config = {k: v for k, v in self.config.items() if k not in self._OWN_KEYS}
+        gen_cls = registry.get("generation", generator_type)
+        self._generator = gen_cls(config=gen_config)
+
+        self._system_prompt: str = self.config.get(
+            "system_prompt", _DEFAULT_MULTI_QUERY_SYSTEM_PROMPT
+        )
+
+    def transform(
+        self,
+        query: str,
+        history: list[dict[str, str]] | None = None,
+    ) -> list[TransformedQuery]:
+        system_prompt = self._system_prompt.replace(
+            "{num_queries}", str(self._num_queries)
+        )
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query},
+        ]
+
+        result = self._generator.generate(messages)
+        reformulations = _parse_numbered_list(result.answer, self._num_queries)
+
+        if not reformulations:
+            logger.warning(
+                "Multi-query produced no reformulations for query %r; "
+                "falling back to original query",
+                query,
+            )
+            return [TransformedQuery(text=query, branch=self._branch)]
+
+        out: list[TransformedQuery] = []
+        if self._include_original:
+            out.append(TransformedQuery(text=query, branch=self._branch))
+        out.extend(
+            TransformedQuery(text=q, branch=self._branch) for q in reformulations
+        )
+
+        logger.info(
+            "Multi-query produced %d reformulation(s) (include_original=%s, branch=%r)",
+            len(reformulations),
             self._include_original,
             self._branch,
         )
