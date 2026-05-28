@@ -3,7 +3,7 @@
 > Forward-looking plan for the RAG experimentation harness.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 >
-> **Last updated:** 2026-05-27
+> **Last updated:** 2026-05-28
 
 ---
 
@@ -92,6 +92,8 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 | Retrieval | `HybridRetriever` | `hybrid` | Composes named child retrievers; RRF or weighted fusion |
 | Query Transform | `PassthroughQueryTransformer` | `passthrough` | Returns query unchanged |
 | Query Transform | `ContextualizerQueryTransformer` | `contextualizer` | LLM reformulation with history |
+| Query Transform | `HyDEQueryTransformer` | `hyde` | LLM hypothetical-doc; per-branch routing for hybrid |
+| Query Transform | `MultiQueryQueryTransformer` | `multi_query` | LLM N reformulations; RRF fusion across them |
 | Reranking | `NoOpReranker` | `none` | Passes through, truncates to top_k |
 | Reranking | `CrossEncoderReranker` | `cross_encoder` | gte-reranker-modernbert-base default |
 | Generation | `OllamaGenerator` | `ollama` | Local LLM via Ollama |
@@ -116,8 +118,15 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
   (typed `dict[str, BaseLexicalIndex | BaseVectorStore]`); BM25 lives
   under the `"bm25"` key
 - **Rank-list fusion helpers** in `core/fusion.py` (RRF + weighted
-  score fusion); reused by the hybrid retriever today and by
-  multi-query in Phase B
+  score fusion + max-score dedup); reused by the hybrid retriever and
+  by multi-query / HyDE result fusion
+- **Multi-query plumbing** (Phase B): `TransformedQuery(text, branch)`
+  type, `BaseQueryTransformer.transform() -> list[TransformedQuery]`,
+  and `BaseRetriever.retrieve_multi()` with **two-level fusion** (across
+  query reformulations, then across retrieval methods) and **per-branch
+  routing** so HyDE can send a hypothetical doc to the dense child and
+  the original query to BM25. Pipeline-level fusion strategy is a
+  first-class config field (`query.query_transform.fusion`)
 - RAGAS evaluation with multi-run aggregation (mean ± std) and a
   dedicated, fixed evaluator embedding for cross-experiment comparability
 - Standardized evaluator LLM (GPT-4.1 via EdenAI) for formal runs;
@@ -145,16 +154,16 @@ anatomy. Current coverage by stage:
 | Embedding | open + commercial | 4 providers | — (broad coverage) |
 | Vectorstore | dense ANN | FAISS, Chroma | — |
 | Sparse index | BM25 / SPLADE | BM25 | (SPLADE — advanced) |
-| Query optimization | rewrite/expand, decompose, multi-query | contextualizer | HyDE, multi-query |
+| Query optimization | rewrite/expand, decompose, multi-query | contextualizer, HyDE, multi-query | (decompose — advanced) |
 | Retrieval | dense, sparse, hybrid | dense, BM25, hybrid (RRF + weighted) | — |
 | Reranking | cross-encoder, late-interaction, LLM | cross-encoder | (ColBERT/LLM — advanced) |
 | Generation | grounded gen, citation, abstention | chat + citation | abstention |
 
-With **Phase A complete**, the harness now covers the field's de
-facto strong-baseline retrieval matrix (dense + sparse + hybrid +
-reranking). The largest remaining gaps relative to standard practice
-are **query optimization** (HyDE, multi-query) and **chunking**
-(semantic, contextual enrichment) — Phases B and C respectively.
+With **Phases A and B complete**, the harness now covers the field's
+de facto strong-baseline retrieval matrix (dense + sparse + hybrid +
+reranking) *and* standard query optimization (HyDE, multi-query). The
+largest remaining gap relative to standard practice is **chunking**
+(semantic, contextual enrichment) — Phase C.
 
 ---
 
@@ -167,7 +176,8 @@ The priority ordering reflects how standard each piece is:
    hybrid). ✅ **Done.** The harness now runs dense / BM25 / hybrid
    (RRF or weighted) under the same evaluation harness.
 2. **Phase B — Standard query optimization** (HyDE, multi-query).
-   Next up.
+   ✅ **Done.** Both run as `BaseQueryTransformer` implementations with
+   pipeline-level fusion and per-branch routing for hybrid setups.
 3. **Phase C — Standard chunking alternatives** (semantic, contextual
    retrieval).
 4. **Phase D — Agentic RAG** (single-agent ReAct, then multi-agent).
@@ -179,7 +189,7 @@ The priority ordering reflects how standard each piece is:
    graph RAG, multimodal). Explicitly lower priority; pursued only
    if a concrete need arises.
 
-Phase A and B are both within the existing linear pipeline; Phase C
+Phases A and B both landed within the existing linear pipeline; Phase C
 requires one well-scoped extension (Section 7.2). Phase D activates
 the dormant agent pipeline. Phases E–F are open-ended.
 
@@ -218,30 +228,50 @@ cross-encoder reranking) all run through the same harness and land
 in a single comparison table. This is the canonical strong-baseline
 matrix the rest of the roadmap measures against.
 
-### Phase B — Standard Query Optimization
+### Phase B — Standard Query Optimization ✅ Done
 
-Goal: add the standard pre-retrieval query transformations. All reuse
+Delivered the standard pre-retrieval query transformations. Both reuse
 the existing generator infrastructure and `BaseQueryTransformer`
-interface.
+interface; both can derail when the LLM hallucinates — a trade-off the
+harness now measures rather than assumes.
 
 | # | Component | Registry | Interface | Notes |
 |---|-----------|----------|-----------|-------|
 | 3 | HyDE | `hyde` | `BaseQueryTransformer` | LLM generates a hypothetical answer; retrieve on its embedding |
-| 4 | Multi-query | `multi_query` | `BaseQueryTransformer` | LLM generates N reformulations; union/fuse results |
+| 4 | Multi-query | `multi_query` | `BaseQueryTransformer` | LLM generates N reformulations; RRF-fuse results |
 
-HyDE embeds a generated hypothetical document instead of the raw
-query, on the rationale that an answer resembles its supporting
-passages more than the question does. Multi-query issues several
-reformulations in parallel and fuses their results, trading retrieval
-cost for recall. Both can derail when the LLM hallucinates — that
-trade-off is itself worth measuring on the advising corpus.
+What landed:
 
-Note: multi-query that *fuses* result lists reuses
+- `HyDEQueryTransformer` (`query_transform/hyde`) — emits one
+  hypothetical document by default (paper-canonical pure replacement),
+  with `num_hypotheticals`, `include_original`, `branch`, and
+  `original_branch` config knobs. Branch routing is opt-in (default
+  broadcast, like every transformer); the canonical HyDE+hybrid recipe
+  sets `branch="dense"` for the hypothetical and `original_branch="bm25"`
+  for the original.
+- `MultiQueryQueryTransformer` (`query_transform/multi_query`) — one
+  LLM call yields N reformulations (default 4, the RAG-Fusion count),
+  parsed by a tolerant numbered-list parser with a bare-line fallback.
+  All reformulations broadcast to every retriever (`branch=None`).
+- **Architectural prerequisites** (shipped as a foundation commit):
+  `TransformedQuery(text, branch)`, the `transform() ->
+  list[TransformedQuery]` interface change, `BaseRetriever.retrieve_multi`
+  (default loop+fuse) with a `HybridRetriever` override that routes by
+  branch and applies **two-level fusion** (intra-branch across
+  reformulations, then cross-branch across retrieval methods), a
+  dedicated `QueryTransformConfig` with a first-class `fusion` field,
+  and `core.fusion.max_score_dedup`.
+- Five experiment configs under `configs/experiments/query_transform/`:
+  `hyde_dense`, `hyde_hybrid`, `multi_query_dense`, `multi_query_hybrid`
+  (RAG-Fusion canonical), `multi_query_hybrid_rerank` (full stack).
+
+Note: multi-query and HyDE result fusion reuse
 `core.fusion.reciprocal_rank_fusion` (built in Phase A) — no new
 fusion code needed.
 
-**Milestone:** passthrough vs. contextualizer vs. HyDE vs. multi-query,
-each measured on the hybrid baseline.
+**Milestone reached:** passthrough vs. contextualizer vs. HyDE vs.
+multi-query are all runnable through the same harness on the hybrid
+baseline, landing in a single comparison table.
 
 ### Phase C — Standard Chunking Alternatives
 
@@ -361,7 +391,8 @@ are not yet implemented.
 
 | Variable | Config Location | Status |
 |----------|----------------|--------|
-| Query transform | `query.query_transform.type` | passthrough, contextualizer done; **HyDE, multi-query** pending |
+| Query transform | `query.query_transform.type` | done (passthrough, contextualizer, HyDE, multi-query) |
+| Multi-query fusion | `query.query_transform.fusion` | done (rrf, max) |
 | Retrieval method | `query.retrieval.type` | done (dense, BM25, hybrid) |
 | Fusion strategy | `query.retrieval.params.fusion` | done (RRF, weighted) |
 | Retrieval depth | `query.retrieval.top_k_retrieve` | done |
@@ -499,13 +530,18 @@ baseline is `configs/base.yaml` itself; no separate `dense.yaml`.
 | `cross_encoder` | reranking on/off |
 | `cross_encoder_topk{3,5,10}` | final-chunk count under reranking |
 
-### Query Optimization (Phase B)
+### Query Optimization (Phase B, done)
+
+All configs under `configs/experiments/query_transform/`. Compare
+against `base.yaml` (contextualizer) and the Phase A retrieval matrix.
 
 | Experiment | Isolates |
 |-----------|----------|
-| `qt_hyde` | HyDE vs. passthrough |
-| `qt_multi_query` | multi-query vs. passthrough |
-| `qt_contextualizer` | existing contextualizer |
+| `hyde_dense` | HyDE vs. baseline on dense (paper-canonical) |
+| `hyde_hybrid` | HyDE + per-branch routing (hypothetical→dense, original→bm25) |
+| `multi_query_dense` | multi-query vs. baseline on dense |
+| `multi_query_hybrid` | RAG-Fusion canonical (multi-query × hybrid, two-level RRF) |
+| `multi_query_hybrid_rerank` | full strong-baseline stack (+ cross-encoder) |
 
 ### Chunking (Phase C)
 

@@ -8,7 +8,7 @@ from components.defaults import (
     NoOpReranker,
     PassthroughQueryTransformer,
 )
-from core.types import Chunk, RetrievedChunk
+from core.types import Chunk, RetrievedChunk, TransformedQuery
 
 
 def _make_rc(chunk_id: str, score: float) -> RetrievedChunk:
@@ -27,13 +27,18 @@ class TestPassthroughQueryTransformer:
     def test_returns_same_query(self) -> None:
         qt = PassthroughQueryTransformer()
         result = qt.transform("What is X?")
-        assert result == ["What is X?"]
+        assert result == [TransformedQuery(text="What is X?")]
 
     def test_ignores_history(self) -> None:
         qt = PassthroughQueryTransformer()
         history = [{"role": "user", "content": "prior"}]
         result = qt.transform("Q?", history=history)
-        assert result == ["Q?"]
+        assert result == [TransformedQuery(text="Q?")]
+
+    def test_branch_is_none(self) -> None:
+        qt = PassthroughQueryTransformer()
+        result = qt.transform("Q?")
+        assert result[0].branch is None
 
 
 # -----------------------------------------------------------------------

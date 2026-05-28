@@ -105,7 +105,7 @@ src/
 │   ├── types.py          Data contracts between pipeline stages
 │   ├── config.py         Config dataclasses + YAML loading + validation
 │   ├── registry.py       Component registry (@register / get)
-│   ├── fusion.py         Rank-list fusion primitives (RRF + weighted)
+│   ├── fusion.py         Rank-list fusion primitives (RRF + weighted + max-dedup)
 │   └── git.py            Git SHA + dirty flag for reproducibility
 │
 ├── components/
@@ -119,7 +119,7 @@ src/
 │   ├── retrievers.py     DenseRetriever, BM25Retriever, HybridRetriever
 │   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator, OpenAIGenerator
 │   ├── prompts.py        ChatPromptTemplate
-│   ├── query_transforms.py  ContextualizerQueryTransformer
+│   ├── query_transforms.py  ContextualizerQueryTransformer, HyDEQueryTransformer, MultiQueryQueryTransformer
 │   ├── rerankers.py      CrossEncoderReranker
 │   ├── tools.py          (stub — Phase D)
 │   └── __init__.py       Imports all implementation files → triggers registration
@@ -188,12 +188,16 @@ list[EmbeddedChunk]
 User Query
     │
     ▼
-[QueryTransformer] ─── returns list[str] (1 for passthrough, N for multi-query)
-    │
+[QueryTransformer] ─── returns list[TransformedQuery] (1 for passthrough,
+    │                   1 hypothetical for HyDE, N for multi-query). Each
+    │                   carries an optional branch hint for hybrid routing.
     ▼
-[Retriever] ─── dense / BM25 / hybrid (composed children + fusion)
-    │             — dedup happens within a single retriever's output;
-    │               cross-retriever score merging is owned by hybrid fusion.
+[Retriever.retrieve_multi] ─── dense / BM25 / hybrid. Fuses per-query
+    │             rank lists via query_transform.fusion (rrf/max).
+    │             Hybrid routes each query to children by branch and
+    │             applies two-level fusion: across reformulations
+    │             (intra-branch), then across retrieval methods
+    │             (cross-branch, the hybrid's own fusion).
     ▼
 list[RetrievedChunk]  (top_k_retrieve candidates)
     │
@@ -253,6 +257,7 @@ All types live in `src/core/types.py`.
 | `Document` | Ingestor | Chunker |
 | `Chunk` | Chunker | Embedder |
 | `EmbeddedChunk` | Embedder | VectorStore |
+| `TransformedQuery` | QueryTransformer | Retriever (`retrieve_multi`) |
 | `RetrievedChunk` | VectorStore / Retriever | Reranker, PromptTemplate |
 | `GenerationResult` | Pipeline (assembled) | Evaluator |
 | `ToolResult` | BaseTool | AgentPipeline (future) |
@@ -260,6 +265,18 @@ All types live in `src/core/types.py`.
 | `EvalSample` | Evaluator | RAGAS |
 | `ScoredSample` | Evaluator | Result files (JSONL) |
 | `ExperimentResult` | Evaluator | `results.py` serialization |
+
+`TransformedQuery` is a frozen dataclass carrying a search-query string
+plus an optional `branch` hint. `branch=None` broadcasts to every
+retriever (the common case — passthrough, contextualizer, multi-query);
+a non-None branch (e.g. `"dense"`, `"bm25"`) routes the query to the
+matching child inside a `HybridRetriever`. All transformers broadcast
+by default; routing is opt-in. The canonical HyDE+hybrid config uses it
+to send the hypothetical document to the dense branch and the original
+question to BM25. Non-hybrid retrievers ignore the hint, so a
+branch-tagged config runs unchanged on a dense-only setup. A non-None
+branch that matches no child raises `ValueError` at retrieval time
+(the validator also catches explicitly-set mismatches up front).
 
 `Queryable` is a `@runtime_checkable Protocol` in `core/types.py`:
 
@@ -306,7 +323,7 @@ ExperimentConfig
 │   ├── vectorstore: ComponentConfig
 │   └── sparse_index: ComponentConfig  optional; e.g. {type: bm25}
 ├── QueryConfig                        (linear pipeline)
-│   ├── query_transform: ComponentConfig
+│   ├── query_transform: QueryTransformConfig  type + fusion + params
 │   ├── retrieval: RetrievalConfig     top_k_retrieve, top_k_final, filters
 │   ├── reranking: ComponentConfig
 │   ├── generation: ComponentConfig
@@ -329,6 +346,7 @@ ExperimentConfig
 | Type | Why Dedicated |
 |------|---------------|
 | `RetrievalConfig` | `top_k_retrieve`, `top_k_final`, and `filters` are too important to bury in a generic params dict. They are the most commonly changed retrieval variables. |
+| `QueryTransformConfig` | `fusion` (how N>1 transformer outputs are combined) is a first-class experimental variable, parallel to `RetrievalConfig`. Burying it in `params` would hide it from config diffs and the comparison snapshot. |
 | `PromptConfig` | `system_template`, `use_chain_of_thought`, `citation_style` are each independently testable. |
 | `LLMConfig` | Reused by generator, query transformer, reranker, evaluator, supervisor. Stable shared structure. |
 | `ComponentConfig` | For stages where params are implementation-specific and vary widely (chunkers, embedders, vectorstores). Passed to the implementation as `config: dict`. |
@@ -374,6 +392,10 @@ alongside the new sparse index, by design.
 construction (called in `scripts/run_experiment.py`). It checks:
 
 - Every component type referenced in config is registered
+- `query.query_transform.fusion` is one of `{rrf, max}`
+- Transformer `branch` / `original_branch` hints reference a real
+  hybrid child name (static check; only when retrieval is `hybrid`).
+  The runtime guard in `HybridRetriever.retrieve_multi` is authoritative
 - `top_k_final <= top_k_retrieve` and both are positive
 - `pipeline_mode: "agent"` has agents or tools defined
 - `evaluation.mode` is one of `{full, retrieval_only, none}`
@@ -410,7 +432,8 @@ All abstract base classes live in `src/components/base.py`.
 | | | `search(query, top_k, filters)` | `→ list[RetrievedChunk]` |
 | | | `save(dir)` / `load(dir)` | Persistence for caching |
 | `BaseRetriever` | `retrieval` | `retrieve(query, top_k, filters)` | `str → list[RetrievedChunk]` |
-| `BaseQueryTransformer` | `query_transform` | `transform(query, history)` | `str → list[str]` |
+| | | `retrieve_multi(queries, top_k, fusion, filters)` | `list[TransformedQuery] → list[RetrievedChunk]` |
+| `BaseQueryTransformer` | `query_transform` | `transform(query, history)` | `str → list[TransformedQuery]` |
 | `BaseReranker` | `reranking` | `rerank(query, chunks, top_k)` | `→ list[RetrievedChunk]` |
 | `BaseGenerator` | `generation` | `generate(prompt)` | `str\|list[dict] → GenerationResult` |
 | `BasePromptTemplate` | `prompts` | `format(query, chunks, history)` | `→ str\|list[dict]` |
@@ -441,17 +464,38 @@ plus a fusion strategy (RRF or weighted). Sub-retrievers are declared
 in YAML as a list of `{name, type, top_k, params}` entries; named
 weights (dict keyed by sub-retriever `name`) are used for weighted
 fusion so config diffs stay stable under list reordering. Nested
-hybrid retrievers are disallowed by the validator — multi-query
-fusion in Phase B will live at the pipeline level, not the retriever
-level, sharing the same `core.fusion` helpers. The fused output's
-`retrieval_method` is set to `"hybrid_rrf"` or `"hybrid_weighted"`
-rather than inheriting a child's label.
+hybrid retrievers are disallowed by the validator. Multi-query fusion
+(across query reformulations) is handled by `retrieve_multi`, which the
+hybrid layers *on top of* its cross-retriever fusion — see the
+two-level fusion note under Key Interface Decisions. Both levels share
+the same `core.fusion` helpers. The fused output's `retrieval_method`
+is set to `"hybrid_rrf"` or `"hybrid_weighted"` rather than inheriting
+a child's label.
 
-**BaseQueryTransformer always returns a list.** Even single-query
-transforms return `[query]`. The pipeline deduplicates results
-across all returned queries. This naturally supports passthrough
-(1 query), HyDE (1 transformed query), multi-query (N queries),
-and sub-question decomposition (N sub-queries).
+**BaseQueryTransformer always returns a list of `TransformedQuery`.**
+Even single-query transforms return `[TransformedQuery(text=query)]`.
+This naturally supports passthrough (1 query), HyDE (1 hypothetical,
+optionally tagged for a branch), multi-query (N queries), and
+sub-question decomposition (N sub-queries). The `branch` field lets a
+transformer route specific queries to specific hybrid children without
+the pipeline needing to know the transformer's internals.
+
+**Fusion across transformer outputs lives in `BaseRetriever.retrieve_multi`,
+not the pipeline.** The pipeline calls `retrieve_multi(transformed,
+top_k, fusion)` and the retriever owns the fan-out + fusion. The
+default implementation (dense, BM25) ignores branch hints, runs each
+query, and fuses the rank lists via `core.fusion`
+(`reciprocal_rank_fusion` for `rrf`, `max_score_dedup` for `max`; a
+single query short-circuits both since fusion is then a no-op).
+`HybridRetriever` overrides it
+to route queries by branch and apply **two-level fusion**: intra-branch
+(across reformulations within a child, using the pipeline-level
+`fusion`) then cross-branch (across children, using the hybrid's own
+`params.fusion`). Two-level is deliberate — a single flat RRF over all
+(query × retriever) lists would bias toward whichever branch received
+more queries; two-level preserves the hybrid's intended branch
+weighting regardless of reformulation count. A branch hint that matches
+no child raises `ValueError`.
 
 **BaseVectorStore.search() takes explicit filters.** Not buried
 in `**kwargs`. FAISS doesn't support native filtering, so its
@@ -477,6 +521,8 @@ metadata, and truncates.
 | `retrieval` | `hybrid` | `HybridRetriever` | `retrievers.py` |
 | `query_transform` | `passthrough` | `PassthroughQueryTransformer` | `defaults.py` |
 | `query_transform` | `contextualizer` | `ContextualizerQueryTransformer` | `query_transforms.py` |
+| `query_transform` | `hyde` | `HyDEQueryTransformer` | `query_transforms.py` |
+| `query_transform` | `multi_query` | `MultiQueryQueryTransformer` | `query_transforms.py` |
 | `reranking` | `none` | `NoOpReranker` | `defaults.py` |
 | `reranking` | `cross_encoder` | `CrossEncoderReranker` | `rerankers.py` |
 | `generation` | `ollama` | `OllamaGenerator` | `generators.py` |
@@ -544,12 +590,14 @@ component from the registry. Wiring is per-retriever-type:
   configuration. Hybrid-level filters propagate to every child.
 
 `run(query, history)` executes the pipeline. All top_k values and
-filters come from config — `run()` takes no override parameters.
-Within-retriever deduplication across multi-query results keeps the
-highest score per chunk_id and sorts descending; cross-retriever
-score merging is **not** done here (scores from dense and BM25 are
-not comparable) — that's the hybrid retriever's job, handled by
-`core.fusion`.
+filters come from config — `run()` takes no override parameters. The
+transformer returns `list[TransformedQuery]`, which the pipeline hands
+to `retriever.retrieve_multi(transformed, top_k_retrieve,
+fusion=qt_fusion)`. The retriever owns all fan-out and fusion: the
+pipeline no longer deduplicates or merges results itself. The
+`qt_fusion` value is read from `query.query_transform.fusion` at
+construction. Cross-retriever score merging (dense vs. BM25, not
+comparable) remains the hybrid retriever's job via `core.fusion`.
 
 ### AgentPipeline (`pipeline/agent.py`)
 
@@ -636,6 +684,7 @@ lives in `config.yaml`). Snapshot fields: `name`, `description`,
 `pipeline_mode`, `evaluation_mode`, `index_fingerprint`,
 `chunking_type`, `chunk_size`, `chunk_overlap`, `embedding_type`,
 `embedding_model`, `vectorstore_type`, `query_transform_type`,
+`query_transform_fusion`, `query_transform_num_queries`,
 `retrieval_type`, `top_k_retrieve`, `top_k_final`,
 `reranking_type`, `generation_type`, `generation_model`,
 `evaluator_embedding_type`.

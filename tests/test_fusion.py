@@ -6,7 +6,11 @@ import math
 
 import pytest
 
-from core.fusion import reciprocal_rank_fusion, weighted_score_fusion
+from core.fusion import (
+    max_score_dedup,
+    reciprocal_rank_fusion,
+    weighted_score_fusion,
+)
 
 
 class TestReciprocalRankFusion:
@@ -163,3 +167,36 @@ class TestWeightedScoreFusion:
     def test_rejects_unknown_normalize(self) -> None:
         with pytest.raises(ValueError, match="normalize"):
             weighted_score_fusion([[("a", 1.0)]], weights=[1.0], normalize="zscore")
+
+
+class TestMaxScoreDedup:
+    def test_single_list_preserved_descending(self) -> None:
+        result = max_score_dedup([[("a", 0.9), ("b", 0.5), ("c", 0.7)]])
+        ids = [doc for doc, _ in result]
+        assert ids == ["a", "c", "b"]
+
+    def test_keeps_highest_across_lists(self) -> None:
+        result = dict(
+            max_score_dedup(
+                [
+                    [("a", 0.5), ("b", 0.8)],
+                    [("a", 0.9), ("c", 0.6)],
+                ]
+            )
+        )
+        assert result["a"] == 0.9
+        assert result["b"] == 0.8
+        assert result["c"] == 0.6
+
+    def test_empty_inputs(self) -> None:
+        assert max_score_dedup([]) == []
+        assert max_score_dedup([[], []]) == []
+
+    def test_equal_scores_keep_one_entry(self) -> None:
+        result = max_score_dedup([[("a", 0.5)], [("a", 0.5)]])
+        assert result == [("a", 0.5)]
+
+    def test_descending_sort(self) -> None:
+        result = max_score_dedup([[("low", 0.1), ("hi", 0.9), ("mid", 0.5)]])
+        scores = [s for _, s in result]
+        assert scores == sorted(scores, reverse=True)

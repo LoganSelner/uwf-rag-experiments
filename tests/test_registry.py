@@ -164,6 +164,12 @@ class TestRegistrationInventory:
     def test_query_transform_contextualizer(self) -> None:
         assert registry.is_registered("query_transform", "contextualizer")
 
+    def test_query_transform_hyde(self) -> None:
+        assert registry.is_registered("query_transform", "hyde")
+
+    def test_query_transform_multi_query(self) -> None:
+        assert registry.is_registered("query_transform", "multi_query")
+
     def test_reranking_none(self) -> None:
         assert registry.is_registered("reranking", "none")
 

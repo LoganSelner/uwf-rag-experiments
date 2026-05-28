@@ -157,6 +157,36 @@ class RetrievalConfig:
 
 
 @dataclass
+class QueryTransformConfig:
+    """Query-transformer config with ``fusion`` as a first-class field.
+
+    Parallel to :class:`RetrievalConfig` — the fusion strategy applied
+    when a transformer emits N>1 search queries (HyDE, multi-query) is
+    too important to bury in a generic ``params`` dict. Promotes it to
+    a discoverable, validated experimental variable.
+
+    ``fusion`` is the *pipeline-level* fusion across transformer
+    outputs (the intra-branch fusion inside HybridRetriever.retrieve_multi).
+    It is independent of the hybrid retriever's own ``params.fusion``,
+    which combines results across retrieval methods.
+    """
+
+    type: str = "passthrough"
+    fusion: str = "rrf"
+    params: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> QueryTransformConfig:
+        if not data:
+            return cls()
+        return cls(
+            type=data.get("type", "passthrough"),
+            fusion=data.get("fusion", "rrf"),
+            params=data.get("params", {}),
+        )
+
+
+@dataclass
 class PromptConfig:
     """Prompt template config with independently testable fields."""
 
@@ -287,7 +317,7 @@ class IndexingConfig:
 class QueryConfig:
     """Config for the query pipeline (linear RAG mode)."""
 
-    query_transform: ComponentConfig = field(default_factory=ComponentConfig)
+    query_transform: QueryTransformConfig = field(default_factory=QueryTransformConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     reranking: ComponentConfig = field(default_factory=ComponentConfig)
     generation: ComponentConfig = field(default_factory=ComponentConfig)
@@ -299,7 +329,7 @@ class QueryConfig:
         if not data:
             return cls()
         return cls(
-            query_transform=ComponentConfig.from_dict(data.get("query_transform")),
+            query_transform=QueryTransformConfig.from_dict(data.get("query_transform")),
             retrieval=RetrievalConfig.from_dict(data.get("retrieval")),
             reranking=ComponentConfig.from_dict(data.get("reranking")),
             generation=ComponentConfig.from_dict(data.get("generation")),
@@ -551,6 +581,8 @@ _SUPPORTED_EVAL_LLM_PROVIDERS: frozenset[str] = frozenset(
 
 _SUPPORTED_EVAL_MODES: frozenset[str] = frozenset({"full", "retrieval_only", "none"})
 
+_SUPPORTED_QT_FUSION_MODES: frozenset[str] = frozenset({"rrf", "max"})
+
 
 def validate_config(config: ExperimentConfig, registry: Any) -> None:
     """Validate an ExperimentConfig against the component registry.
@@ -679,6 +711,13 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
             "query.query_transform.type",
         )
 
+        qt_fusion = config.query.query_transform.fusion
+        if qt_fusion not in _SUPPORTED_QT_FUSION_MODES:
+            errors.append(
+                f"query.query_transform.fusion: '{qt_fusion}' is not supported. "
+                f"Supported: {sorted(_SUPPORTED_QT_FUSION_MODES)}"
+            )
+
         _check_registered(
             errors,
             registry,
@@ -688,6 +727,7 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
         )
 
         _validate_retrieval_dependencies(errors, config, registry)
+        _validate_qt_branch_references(errors, config)
 
         rerank_type = config.query.reranking.type or "none"
         _check_registered(
@@ -948,3 +988,46 @@ def _validate_retrieval_dependencies(
                     "query.retrieval.params.weights must sum to > 0 "
                     f"(got {sum(weight_values)})"
                 )
+
+
+def _validate_qt_branch_references(
+    errors: list[str],
+    config: ExperimentConfig,
+) -> None:
+    """Static check that any transformer ``branch`` hints reference real
+    hybrid children.
+
+    Catches typos pre-runtime. The runtime guard in
+    :meth:`HybridRetriever.retrieve_multi` is authoritative — this is a
+    courtesy check that fails fast on a misconfiguration.
+
+    No-op when retrieval is not ``hybrid`` (branch hints are silently
+    ignored by non-hybrid retrievers, by design).
+    """
+    if config.query.retrieval.type != "hybrid":
+        return
+
+    children = config.query.retrieval.params.get("retrievers") or []
+    if not isinstance(children, list):
+        return  # the retrieval validator already flagged this.
+
+    known_branches: set[str] = set()
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        sub_type = child.get("type", "")
+        sub_name = str(child.get("name", sub_type))
+        if sub_name:
+            known_branches.add(sub_name)
+
+    qt_params = config.query.query_transform.params or {}
+    for key in ("branch", "original_branch"):
+        value = qt_params.get(key)
+        if value is None:
+            continue
+        if value not in known_branches:
+            errors.append(
+                f"query.query_transform.params.{key}: '{value}' does not "
+                f"match any hybrid child name. Known children: "
+                f"{sorted(known_branches)}"
+            )

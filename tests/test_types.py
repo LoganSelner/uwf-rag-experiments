@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
+import pytest
+
 from core.types import (
     AgentStep,
     Chunk,
@@ -13,6 +17,7 @@ from core.types import (
     RetrievedChunk,
     ScoredSample,
     ToolResult,
+    TransformedQuery,
 )
 
 
@@ -48,6 +53,27 @@ class TestRetrievedChunk:
         c = Chunk(content="x", chunk_id="1", metadata={})
         rc = RetrievedChunk(chunk=c, score=0.9)
         assert rc.retrieval_method == ""
+
+
+class TestTransformedQuery:
+    def test_defaults(self) -> None:
+        tq = TransformedQuery(text="What is X?")
+        assert tq.text == "What is X?"
+        assert tq.branch is None
+
+    def test_with_branch(self) -> None:
+        tq = TransformedQuery(text="hypothetical doc", branch="dense")
+        assert tq.branch == "dense"
+
+    def test_frozen(self) -> None:
+        tq = TransformedQuery(text="q")
+        with pytest.raises(FrozenInstanceError):
+            tq.text = "other"  # type: ignore[misc]
+
+    def test_equality(self) -> None:
+        a = TransformedQuery(text="q", branch=None)
+        b = TransformedQuery(text="q", branch=None)
+        assert a == b
 
 
 class TestGenerationResult:

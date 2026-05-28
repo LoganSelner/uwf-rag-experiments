@@ -22,7 +22,7 @@ Every component is swappable via config. No code changes needed.
 | **Vectorstore** | `faiss` (cosine/L2), `chroma` (cosine/L2/IP) | `indexing.vectorstore.type` |
 | **Sparse Index** | `bm25` (via [`bm25s`](https://github.com/xhluca/bm25s)) | `indexing.sparse_index.type` |
 | **Retrieval** | `dense` (single-vector similarity), `bm25` (lexical), `hybrid` (dense + sparse fusion: RRF or weighted) | `query.retrieval.type` |
-| **Query Transform** | `passthrough`, `contextualizer` (LLM reformulation) | `query.query_transform.type` |
+| **Query Transform** | `passthrough`, `contextualizer` (LLM reformulation), `hyde` (hypothetical document embeddings), `multi_query` (RAG-Fusion expansion) | `query.query_transform.type` |
 | **Reranking** | `none` (passthrough), `cross_encoder` (HF cross-encoder) | `query.reranking.type` |
 | **Generation** | `ollama` (local), `edenai` (cloud gateway), `google` (Gemini), `openai` | `query.generation.type` |
 | **Prompts** | `chat` (numbered/plain context, CoT, citation styles) | `query.prompt.type` |
@@ -131,6 +131,7 @@ Experiments that share the same indexing config reuse the cached index automatic
 | Parameter | Config Path | Default |
 |-----------|------------|---------|
 | Query transform | `query.query_transform.type` | `contextualizer` (Eden AI GPT-4.1) |
+| Multi-query fusion | `query.query_transform.fusion` | `rrf` (or `max`) |
 | Retrieval depth | `query.retrieval.top_k_retrieve` | 3 |
 | Final chunks | `query.retrieval.top_k_final` | 3 |
 | Reranker | `query.reranking.type` | `none` |
@@ -188,6 +189,22 @@ The canonical strong-baseline matrix — compare BM25 and hybrid fusion against 
 | `retrieval/hybrid_weighted.yaml` | dense + BM25 | weighted (0.5/0.5, min-max) | none |
 
 Per-branch `top_k=20` is the production-standard pre-fusion depth. Stage-level `top_k_retrieve` controls the count entering the reranker; `top_k_final` is what the generator sees.
+
+### Query Optimization (HyDE / multi-query)
+
+Standard pre-retrieval query transformations. Each changes only `query.query_transform` from the baseline. Compare against `base.yaml` (contextualizer) to isolate the transform's effect.
+
+| Config | Transform | Retrieval | Notes |
+|--------|-----------|-----------|-------|
+| `query_transform/hyde_dense.yaml` | HyDE (1 hypothetical) | dense | Paper-canonical: hypothetical answer replaces the query for embedding |
+| `query_transform/hyde_hybrid.yaml` | HyDE + per-branch routing | hybrid | Hypothetical → dense branch, original question → BM25 branch |
+| `query_transform/multi_query_dense.yaml` | multi-query (4 reformulations) | dense | RRF fusion across reformulations |
+| `query_transform/multi_query_hybrid.yaml` | multi-query (4) | hybrid | RAG-Fusion canonical (two-level RRF) |
+| `query_transform/multi_query_hybrid_rerank.yaml` | multi-query (4) | hybrid + cross-encoder | Full strong-baseline stack |
+
+**HyDE** ([Gao et al., 2022](https://arxiv.org/abs/2212.10496)) replaces the question with an LLM-generated hypothetical answer, on the rationale that an answer-shaped passage embeds closer to supporting documents than a question does. **Multi-query** ([RAG-Fusion](https://arxiv.org/abs/2402.03367)) issues several reformulations and fuses their rank lists. Both can derail when the LLM hallucinates — that trade-off is itself worth measuring on the advising corpus.
+
+Two transforms can emit more than one search query. When that happens, the per-query rank lists are fused via `query.query_transform.fusion` (`rrf` default, or `max`). With hybrid retrieval, fusion is **two-level**: across reformulations *within* each retriever (the `query_transform.fusion` setting), then across retrievers (the hybrid's own `params.fusion`). By default a transformed query broadcasts to every retriever; HyDE's `hyde_hybrid` config opts into `branch` routing (`TransformedQuery.branch`) to send the hypothetical to the dense child and the original to BM25 — branch hints are silently ignored by dense/BM25-only setups, so the same config works in both.
 
 ### Smoke Test
 

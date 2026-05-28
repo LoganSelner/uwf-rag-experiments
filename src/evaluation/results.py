@@ -51,6 +51,12 @@ def _build_config_snapshot(config: ExperimentConfig) -> dict[str, Any]:
         "embedding_model": config.indexing.embedding.params.get("model_name", ""),
         "vectorstore_type": config.indexing.vectorstore.type,
         "query_transform_type": config.query.query_transform.type or "passthrough",
+        "query_transform_fusion": config.query.query_transform.fusion,
+        "query_transform_num_queries": (
+            config.query.query_transform.params.get("num_queries")
+            or config.query.query_transform.params.get("num_hypotheticals")
+            or 1
+        ),
         "retrieval_type": config.query.retrieval.type,
         "top_k_retrieve": config.query.retrieval.top_k_retrieve,
         "top_k_final": config.query.retrieval.top_k_final,

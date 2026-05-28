@@ -11,6 +11,7 @@ from core.types import (
     Chunk,
     GenerationResult,
     RetrievedChunk,
+    TransformedQuery,
 )
 from pipeline.agent import AgentPipeline
 from pipeline.indexing import IndexArtifact
@@ -30,14 +31,17 @@ def _make_rc(chunk_id: str, score: float) -> RetrievedChunk:
 
 
 def _make_query_pipeline(
-    *, retrieval_only: bool = False
+    *, retrieval_only: bool = False, qt_fusion: str = "rrf"
 ) -> tuple[QueryPipeline, MagicMock, MagicMock, MagicMock, MagicMock]:
     """Build a QueryPipeline with all mocked components."""
     qt = MagicMock()
-    qt.transform.return_value = ["transformed query"]
+    qt.transform.return_value = [TransformedQuery(text="transformed query")]
 
     retriever = MagicMock()
-    retriever.retrieve.return_value = [_make_rc("c1", 0.9), _make_rc("c2", 0.8)]
+    retriever.retrieve_multi.return_value = [
+        _make_rc("c1", 0.9),
+        _make_rc("c2", 0.8),
+    ]
 
     reranker = MagicMock()
     reranker.rerank.side_effect = lambda q, chunks, k: chunks[:k]
@@ -57,6 +61,7 @@ def _make_query_pipeline(
         generator=None if retrieval_only else generator,
         prompt_template=None if retrieval_only else prompt,
         retrieval_only=retrieval_only,
+        qt_fusion=qt_fusion,
     )
     return pipeline, qt, retriever, reranker, generator
 
@@ -73,7 +78,7 @@ class TestQueryPipeline:
         assert isinstance(result, GenerationResult)
         assert result.answer == "Answer"
         qt.transform.assert_called_once()
-        retriever.retrieve.assert_called_once()
+        retriever.retrieve_multi.assert_called_once()
         reranker.rerank.assert_called_once()
         gen.generate.assert_called_once()
 
@@ -83,29 +88,37 @@ class TestQueryPipeline:
         assert result.answer == ""
         assert result.metadata.get("retrieval_only") is True
 
-    def test_deduplication(self) -> None:
-        pipeline, qt, retriever, _, _ = _make_query_pipeline()
-        # Two queries returning overlapping chunks
-        qt.transform.return_value = ["q1", "q2"]
-        retriever.retrieve.side_effect = [
-            [_make_rc("c1", 0.9), _make_rc("c2", 0.8)],
-            [_make_rc("c1", 0.7), _make_rc("c3", 0.6)],
-        ]
-        result = pipeline.run("Q?")
-        chunk_ids = [rc.chunk.chunk_id for rc in result.retrieved_chunks]
-        assert len(chunk_ids) == len(set(chunk_ids))
+    def test_pipeline_delegates_to_retrieve_multi(self) -> None:
+        """Pipeline forwards transformer output + qt_fusion to retrieve_multi.
 
-    def test_dedup_keeps_best_score(self) -> None:
-        pipeline, qt, retriever, reranker, _ = _make_query_pipeline()
-        qt.transform.return_value = ["q1", "q2"]
-        retriever.retrieve.side_effect = [
-            [_make_rc("c1", 0.5)],
-            [_make_rc("c1", 0.9)],
+        Replaces the old ``test_deduplication`` test — fusion + dedup now
+        live entirely inside ``BaseRetriever.retrieve_multi``. The
+        pipeline's job is to pass the right arguments through.
+        """
+        pipeline, qt, retriever, _, _ = _make_query_pipeline(qt_fusion="rrf")
+        qt.transform.return_value = [
+            TransformedQuery(text="q1"),
+            TransformedQuery(text="q2", branch="dense"),
         ]
-        reranker.rerank.side_effect = lambda q, chunks, k: chunks[:k]
-        result = pipeline.run("Q?")
-        c1_chunks = [rc for rc in result.retrieved_chunks if rc.chunk.chunk_id == "c1"]
-        assert c1_chunks[0].score == 0.9
+        retriever.retrieve_multi.return_value = [_make_rc("c1", 0.5)]
+
+        pipeline.run("Q?")
+
+        kwargs = retriever.retrieve_multi.call_args.kwargs
+        positional = retriever.retrieve_multi.call_args.args
+        transformed_arg = positional[0] if positional else kwargs["transformed_queries"]
+        assert transformed_arg == [
+            TransformedQuery(text="q1"),
+            TransformedQuery(text="q2", branch="dense"),
+        ]
+        assert kwargs.get("fusion") == "rrf"
+        assert kwargs.get("top_k_per_query") == 10  # from _make_query_pipeline
+
+    def test_qt_fusion_passed_through(self) -> None:
+        pipeline, _, retriever, _, _ = _make_query_pipeline(qt_fusion="max")
+        retriever.retrieve_multi.return_value = []
+        pipeline.run("Q?")
+        assert retriever.retrieve_multi.call_args.kwargs["fusion"] == "max"
 
 
 # -----------------------------------------------------------------------

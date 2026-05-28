@@ -1,0 +1,33 @@
+# Multi-query expansion on dense retrieval.
+#
+# Generates N reformulations of the user's question (default 4, the
+# RAG-Fusion paper count), retrieves with each one, and RRF-fuses the
+# rank lists. Compare against base.yaml to isolate multi-query's effect
+# on dense retrieval, and against multi_query_hybrid.yaml to see how
+# much fusion across retrieval methods adds on top.
+#
+# Variable changed: query.query_transform.type (contextualizer →
+# multi_query). The RRF fusion across N reformulations is configured by
+# query_transform.fusion = "rrf" (default).
+#
+# Cost note: 1 LLM call (to generate N reformulations) + N retrieval
+# calls per query. With N=4 and include_original=true, that's 5
+# retrieval calls per question.
+
+extends: ../../base.yaml
+
+name: "qt_multi_query_dense"
+description: "Multi-query expansion (4 reformulations, RRF) on dense retrieval"
+
+query:
+  query_transform:
+    type: "multi_query"
+    fusion: "rrf"
+    params:
+      generator_type: "edenai"
+      sub_provider: "openai"
+      num_queries: 4
+      include_original: true
+      llm:
+        model_name: "gpt-4.1"
+        temperature: 0.0

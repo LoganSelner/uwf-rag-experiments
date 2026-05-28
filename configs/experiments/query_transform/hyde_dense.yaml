@@ -1,0 +1,36 @@
+# Canonical HyDE (Hypothetical Document Embeddings) on dense retrieval.
+#
+# Replaces the user's question with a generated hypothetical answer for
+# the embedding-based search. The rationale (Gao et al., 2022): an
+# answer-shaped passage resembles supporting documents more closely than
+# a question does. Compare against base.yaml (passthrough/contextualizer
+# on the same dense stack) to isolate HyDE's effect.
+#
+# Variable changed: query.query_transform.type (contextualizer → hyde).
+# Retrieval is unchanged (dense — base.yaml). No branch routing is set:
+# the single hypothetical broadcasts to the (only) dense retriever.
+# Branch routing is opt-in and only matters for hybrid retrieval — see
+# hyde_hybrid.yaml.
+#
+# Notes:
+# - num_hypotheticals defaults to 1. Increasing it at temperature=0
+#   produces near-duplicate text; bump llm.temperature to 0.5+ if you
+#   want a meaningful sweep.
+
+extends: ../../base.yaml
+
+name: "qt_hyde_dense"
+description: "HyDE (1 hypothetical) on dense retrieval, paper-canonical"
+
+query:
+  query_transform:
+    type: "hyde"
+    fusion: "rrf"
+    params:
+      generator_type: "edenai"
+      sub_provider: "openai"
+      num_hypotheticals: 1
+      include_original: false
+      llm:
+        model_name: "gpt-4.1"
+        temperature: 0.0
