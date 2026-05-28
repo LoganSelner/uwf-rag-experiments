@@ -80,6 +80,7 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 | Ingest | `PDFIngestor` | `pdf` | PyMuPDF |
 | Chunking | `RecursiveChunker` | `recursive_custom` | Custom implementation |
 | Chunking | `LangChainRecursiveChunker` | `recursive_langchain` | `langchain-text-splitters` wrapper |
+| Chunking | `SemanticChunker` | `semantic` | Custom; embedding-breakpoint splits (no new dep) |
 | Embedding | `HuggingFaceEmbedder` | `huggingface` | sentence-transformers, bge-m3 default |
 | Embedding | `GoogleEmbedder` | `google` | `google-genai` SDK |
 | Embedding | `OpenAIEmbedder` | `openai` | `openai` SDK |
@@ -150,7 +151,7 @@ anatomy. Current coverage by stage:
 | Pipeline Stage | Standard Options | Have | Missing (standard) |
 |----------------|------------------|------|--------------------|
 | Ingestion | PDF, HTML, text | PDF | — (sufficient for now) |
-| Chunking | recursive, semantic, contextual | recursive | semantic, contextual enrichment |
+| Chunking | recursive, semantic, contextual | recursive, semantic | contextual enrichment |
 | Embedding | open + commercial | 4 providers | — (broad coverage) |
 | Vectorstore | dense ANN | FAISS, Chroma | — |
 | Sparse index | BM25 / SPLADE | BM25 | (SPLADE — advanced) |
@@ -159,11 +160,13 @@ anatomy. Current coverage by stage:
 | Reranking | cross-encoder, late-interaction, LLM | cross-encoder | (ColBERT/LLM — advanced) |
 | Generation | grounded gen, citation, abstention | chat + citation | abstention |
 
-With **Phases A and B complete**, the harness now covers the field's
-de facto strong-baseline retrieval matrix (dense + sparse + hybrid +
-reranking) *and* standard query optimization (HyDE, multi-query). The
-largest remaining gap relative to standard practice is **chunking**
-(semantic, contextual enrichment) — Phase C.
+With **Phases A and B complete** — and **Phase C Part 1** (chunk-size
+sweeps + the semantic chunker) landed — the harness now covers the
+field's de facto strong-baseline retrieval matrix (dense + sparse +
+hybrid + reranking), standard query optimization (HyDE, multi-query),
+and standard chunking (recursive at multiple sizes + semantic). The
+remaining standard-practice gap is **contextual enrichment** —
+Phase C Part 2.
 
 ---
 
@@ -281,10 +284,19 @@ chunking. The review notes that beyond a competent embedder, chunk
 sweeps on the existing recursive chunker are part of this phase, not
 just new chunkers.
 
-| # | Component | Registry | Interface | Library |
-|---|-----------|----------|-----------|---------|
-| 5 | Semantic chunker | `semantic` | `BaseChunker` | `langchain-experimental` SemanticChunker |
-| 6 | Contextual chunk enricher | `contextual` | `BaseChunkEnricher` | Custom (LLM prepends situating context per chunk) |
+Sequenced in two parts: **Part 1** (chunk-size sweeps + semantic
+chunker) is low-risk and needs no new pipeline stage; **Part 2**
+(contextual enrichment) needs the `BaseChunkEnricher` stage (§7.2) plus
+an `index_text` decoupling so the situating context affects retrieval
+only — neither Part 1 piece depends on it.
+
+| # | Component | Registry | Interface | Library | Status |
+|---|-----------|----------|-----------|---------|--------|
+| 5 | Semantic chunker | `semantic` | `BaseChunker` | Custom embedding-breakpoint split | ✅ Done (Part 1) |
+| 6 | Contextual chunk enricher | `contextual` | `BaseChunkEnricher` | Custom (LLM prepends situating context per chunk) | Part 2 |
+
+Part 1 also shipped chunk-size sweep configs (`chunk_size_{256,512,1024}`)
+and `chunk_semantic`, all under `configs/experiments/chunking/`.
 
 **Semantic chunker** splits on embedding-similarity breakpoints rather
 than fixed token counts.
@@ -381,7 +393,7 @@ are not yet implemented.
 | Variable | Config Location | Status |
 |----------|----------------|--------|
 | Source documents | `indexing.sources` | done |
-| Chunking strategy | `indexing.chunking.type` | recursive done; **semantic, contextual** pending |
+| Chunking strategy | `indexing.chunking.type` | recursive, semantic done; **contextual** pending |
 | Chunk size / overlap | `indexing.chunking.params` | done |
 | Embedding model | `indexing.embedding` | done (4 providers) |
 | Vectorstore | `indexing.vectorstore.type` | done (FAISS, Chroma) |
@@ -496,11 +508,15 @@ langchain-text-splitters  Recursive chunker
 ### Phase C additions
 
 ```
-langchain-experimental    Semantic chunker
+(none)
 ```
 
-(HyDE, multi-query, hybrid fusion, the chunk enricher, and the agent
-loop are custom — no new dependencies.)
+Phase C adds **no new dependencies**. The semantic chunker is a custom
+embedding-breakpoint implementation reusing `numpy` + the existing
+embedder (`langchain-experimental` was evaluated and rejected: its
+`SemanticChunker` forces a `langchain-community` bump that breaks the
+pinned RAGAS import, and the package is being sunset). HyDE, multi-query,
+hybrid fusion, the chunk enricher, and the agent loop are likewise custom.
 
 ---
 

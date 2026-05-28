@@ -112,7 +112,7 @@ src/
 │   ├── base.py           Abstract base classes (read-only contract)
 │   ├── defaults.py       Passthrough/no-op defaults (always available)
 │   ├── ingestors.py      PDFIngestor (PyMuPDF)
-│   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker
+│   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker, SemanticChunker
 │   ├── embedders.py      HuggingFaceEmbedder, GoogleEmbedder, OpenAIEmbedder, EdenAIEmbedder
 │   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
 │   ├── lexical_indexes.py   BM25LexicalIndex (bm25s + PyStemmer)
@@ -509,6 +509,7 @@ metadata, and truncates.
 | `ingest` | `pdf` | `PDFIngestor` | `ingestors.py` |
 | `chunking` | `recursive_langchain` | `LangChainRecursiveChunker` | `chunkers.py` |
 | `chunking` | `recursive_custom` | `CustomRecursiveChunker` | `chunkers.py` |
+| `chunking` | `semantic` | `SemanticChunker` | `chunkers.py` |
 | `embedding` | `huggingface` | `HuggingFaceEmbedder` | `embedders.py` |
 | `embedding` | `google` | `GoogleEmbedder` | `embedders.py` |
 | `embedding` | `openai` | `OpenAIEmbedder` | `embedders.py` |

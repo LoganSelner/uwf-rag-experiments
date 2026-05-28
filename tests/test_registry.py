@@ -110,6 +110,9 @@ class TestRegistrationInventory:
     def test_chunking_recursive_custom(self) -> None:
         assert registry.is_registered("chunking", "recursive_custom")
 
+    def test_chunking_semantic(self) -> None:
+        assert registry.is_registered("chunking", "semantic")
+
     def test_embedding_huggingface(self) -> None:
         assert registry.is_registered("embedding", "huggingface")
 

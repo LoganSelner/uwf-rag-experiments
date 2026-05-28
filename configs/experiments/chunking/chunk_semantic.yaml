@@ -1,0 +1,35 @@
+# Semantic chunking: split on embedding-similarity breakpoints instead of
+# fixed character counts.
+#
+# Custom embedding-breakpoint chunker (no langchain-experimental dep). A
+# small LOCAL model (bge-small) is used only for breakpoint detection —
+# independent of the indexing embedder (still text-embedding-3-small via
+# base.yaml).
+#
+# Variables changed from base.yaml:
+#   - indexing.chunking.type: recursive_langchain -> semantic
+#   - indexing.chunking.params: semantic knobs (breakpoint threshold, buffer)
+#
+# The recursive-only params (chunk_size / chunk_overlap / separators) are
+# explicitly nulled so they don't bleed in via inheritance and pollute the
+# config snapshot — the semantic chunker ignores them regardless.
+#
+# Compare against: chunk_size_{256,512,1024} (size sweep), base.yaml (recursive).
+
+extends: ../../base.yaml
+
+name: "chunk_semantic"
+description: "Semantic chunking (percentile breakpoints, bge-small detector)"
+
+indexing:
+  chunking:
+    type: "semantic"
+    params:
+      embedding_model: "BAAI/bge-small-en-v1.5"
+      breakpoint_threshold_type: "percentile"
+      breakpoint_threshold_amount: 95
+      buffer_size: 1
+      # Neutralize inherited recursive params (ignored by the semantic chunker):
+      chunk_size: null
+      chunk_overlap: null
+      separators: null
