@@ -245,9 +245,10 @@ What landed:
 - `HyDEQueryTransformer` (`query_transform/hyde`) — emits one
   hypothetical document by default (paper-canonical pure replacement),
   with `num_hypotheticals`, `include_original`, `branch`, and
-  `original_branch` config knobs. The hypothetical is tagged
-  `branch="dense"` and the original (when included) `branch="bm25"` for
-  the canonical HyDE+hybrid recipe.
+  `original_branch` config knobs. Branch routing is opt-in (default
+  broadcast, like every transformer); the canonical HyDE+hybrid recipe
+  sets `branch="dense"` for the hypothetical and `original_branch="bm25"`
+  for the original.
 - `MultiQueryQueryTransformer` (`query_transform/multi_query`) — one
   LLM call yields N reformulations (default 4, the RAG-Fusion count),
   parsed by a tolerant numbered-list parser with a bare-line fallback.
@@ -391,7 +392,7 @@ are not yet implemented.
 | Variable | Config Location | Status |
 |----------|----------------|--------|
 | Query transform | `query.query_transform.type` | done (passthrough, contextualizer, HyDE, multi-query) |
-| Multi-query fusion | `query.query_transform.fusion` | done (rrf, max, none) |
+| Multi-query fusion | `query.query_transform.fusion` | done (rrf, max) |
 | Retrieval method | `query.retrieval.type` | done (dense, BM25, hybrid) |
 | Fusion strategy | `query.retrieval.params.fusion` | done (RRF, weighted) |
 | Retrieval depth | `query.retrieval.top_k_retrieve` | done |

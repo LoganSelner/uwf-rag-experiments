@@ -405,6 +405,14 @@ class TestValidateConfig:
         cfg.query.query_transform.fusion = "max"
         validate_config(cfg, registry)  # should not raise
 
+    def test_qt_fusion_none_rejected(self) -> None:
+        # "none" was removed — it silently dropped queries 2..N for
+        # multi-emit transformers. Only "rrf" and "max" are valid.
+        cfg = self._make_valid_config()
+        cfg.query.query_transform.fusion = "none"
+        with pytest.raises(ConfigValidationError, match=r"query_transform\.fusion"):
+            validate_config(cfg, registry)
+
     def _make_hybrid_config(self, qt_params: dict) -> ExperimentConfig:
         """Build a minimal valid hybrid+HyDE-style config for branch tests."""
         return self._make_valid_config(

@@ -7,9 +7,9 @@
 # on the same dense stack) to isolate HyDE's effect.
 #
 # Variable changed: query.query_transform.type (contextualizer → hyde).
-# Retrieval is unchanged (dense — base.yaml). The branch hint defaults
-# to "dense" but is silently ignored by the dense retriever, so the
-# field is effectively a no-op here — the same config block works for
+# Retrieval is unchanged (dense — base.yaml). No branch routing is set:
+# the single hypothetical broadcasts to the (only) dense retriever.
+# Branch routing is opt-in and only matters for hybrid retrieval — see
 # hyde_hybrid.yaml.
 #
 # Notes:
@@ -31,7 +31,6 @@ query:
       sub_provider: "openai"
       num_hypotheticals: 1
       include_original: false
-      branch: "dense"
       llm:
         model_name: "gpt-4.1"
         temperature: 0.0

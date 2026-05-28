@@ -214,10 +214,9 @@ class BaseRetriever(ABC):
                 :class:`BaseQueryTransformer`. Empty list returns ``[]``.
             top_k_per_query: Per-query retrieval depth before fusion.
                 The fused output is also truncated to this size.
-            fusion: ``"rrf"`` (Reciprocal Rank Fusion across queries),
-                ``"max"`` (highest score per chunk across queries), or
-                ``"none"`` (single-query result returned as-is — only
-                valid when exactly one query is passed).
+            fusion: ``"rrf"`` (Reciprocal Rank Fusion across queries) or
+                ``"max"`` (highest score per chunk across queries). A
+                single query short-circuits both (fusion is a no-op).
             filters: Optional per-call filters forwarded to each
                 ``retrieve`` call. Merged with ``self._default_filters``
                 inside ``retrieve``.
@@ -246,8 +245,8 @@ class BaseRetriever(ABC):
             ranked_id_lists.append(ids)
             scored_lists.append(scored)
 
-        if len(transformed_queries) == 1 or fusion == "none":
-            # Preserve the single retrieval's order; no fusion needed.
+        if len(transformed_queries) == 1:
+            # Single query: fusion is a no-op, preserve the retrieval order.
             return [chunk_lookup[cid] for cid in ranked_id_lists[0]][:top_k_per_query]
 
         if fusion == "rrf":
@@ -257,7 +256,7 @@ class BaseRetriever(ABC):
         else:
             raise ValueError(
                 f"retrieve_multi: unknown fusion mode '{fusion}' "
-                "(expected 'rrf', 'max', or 'none')"
+                "(expected 'rrf' or 'max')"
             )
 
         out: list[RetrievedChunk] = []

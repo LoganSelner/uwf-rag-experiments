@@ -131,7 +131,7 @@ Experiments that share the same indexing config reuse the cached index automatic
 | Parameter | Config Path | Default |
 |-----------|------------|---------|
 | Query transform | `query.query_transform.type` | `contextualizer` (Eden AI GPT-4.1) |
-| Multi-query fusion | `query.query_transform.fusion` | `rrf` (or `max`, `none`) |
+| Multi-query fusion | `query.query_transform.fusion` | `rrf` (or `max`) |
 | Retrieval depth | `query.retrieval.top_k_retrieve` | 3 |
 | Final chunks | `query.retrieval.top_k_final` | 3 |
 | Reranker | `query.reranking.type` | `none` |
@@ -204,7 +204,7 @@ Standard pre-retrieval query transformations. Each changes only `query.query_tra
 
 **HyDE** ([Gao et al., 2022](https://arxiv.org/abs/2212.10496)) replaces the question with an LLM-generated hypothetical answer, on the rationale that an answer-shaped passage embeds closer to supporting documents than a question does. **Multi-query** ([RAG-Fusion](https://arxiv.org/abs/2402.03367)) issues several reformulations and fuses their rank lists. Both can derail when the LLM hallucinates — that trade-off is itself worth measuring on the advising corpus.
 
-Two transforms can emit more than one search query. When that happens, the per-query rank lists are fused via `query.query_transform.fusion` (`rrf` default, `max`, or `none`). With hybrid retrieval, fusion is **two-level**: across reformulations *within* each retriever (the `query_transform.fusion` setting), then across retrievers (the hybrid's own `params.fusion`). HyDE uses `branch` hints (`TransformedQuery.branch`) to route the hypothetical to the dense child and the original to BM25 — branch hints are silently ignored by dense/BM25-only setups, so the same config works in both.
+Two transforms can emit more than one search query. When that happens, the per-query rank lists are fused via `query.query_transform.fusion` (`rrf` default, or `max`). With hybrid retrieval, fusion is **two-level**: across reformulations *within* each retriever (the `query_transform.fusion` setting), then across retrievers (the hybrid's own `params.fusion`). By default a transformed query broadcasts to every retriever; HyDE's `hyde_hybrid` config opts into `branch` routing (`TransformedQuery.branch`) to send the hypothetical to the dense child and the original to BM25 — branch hints are silently ignored by dense/BM25-only setups, so the same config works in both.
 
 ### Smoke Test
 

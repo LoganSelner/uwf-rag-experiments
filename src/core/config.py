@@ -581,7 +581,7 @@ _SUPPORTED_EVAL_LLM_PROVIDERS: frozenset[str] = frozenset(
 
 _SUPPORTED_EVAL_MODES: frozenset[str] = frozenset({"full", "retrieval_only", "none"})
 
-_SUPPORTED_QT_FUSION_MODES: frozenset[str] = frozenset({"rrf", "max", "none"})
+_SUPPORTED_QT_FUSION_MODES: frozenset[str] = frozenset({"rrf", "max"})
 
 
 def validate_config(config: ExperimentConfig, registry: Any) -> None:

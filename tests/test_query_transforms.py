@@ -186,23 +186,30 @@ class TestContextualizerQueryTransformer:
 
 class TestHyDEQueryTransformer:
     @patch("components.query_transforms.registry")
-    def test_default_emits_one_hypothetical_branch_dense(
+    def test_default_emits_one_hypothetical_branch_none(
         self, mock_registry: MagicMock
     ) -> None:
+        # Default branch is None (broadcast) — consistent with all other
+        # transformers. Routing to a hybrid child is opt-in.
         mock_registry.get.return_value = _mock_generator_cls("A hypothetical doc.")
         qt = HyDEQueryTransformer(
             {"generator_type": "edenai", "llm": {"model_name": "m"}}
         )
         result = qt.transform("What is grade forgiveness?")
-        assert result == [TransformedQuery(text="A hypothetical doc.", branch="dense")]
+        assert result == [TransformedQuery(text="A hypothetical doc.", branch=None)]
 
     @patch("components.query_transforms.registry")
-    def test_include_original_prepends_original(self, mock_registry: MagicMock) -> None:
+    def test_include_original_canonical_hybrid_routing(
+        self, mock_registry: MagicMock
+    ) -> None:
+        # Canonical HyDE+hybrid recipe: hypothetical → dense, original → bm25.
+        # Both branches are set explicitly (routing is opt-in).
         mock_registry.get.return_value = _mock_generator_cls("Hypothesis.")
         qt = HyDEQueryTransformer(
             {
                 "generator_type": "edenai",
                 "include_original": True,
+                "branch": "dense",
                 "original_branch": "bm25",
                 "llm": {"model_name": "m"},
             }
@@ -214,7 +221,10 @@ class TestHyDEQueryTransformer:
         ]
 
     @patch("components.query_transforms.registry")
-    def test_original_branch_defaults_to_none(self, mock_registry: MagicMock) -> None:
+    def test_branches_default_to_none(self, mock_registry: MagicMock) -> None:
+        # With no explicit branch / original_branch, both the original and
+        # the hypothetical broadcast (branch=None) — consistent with every
+        # other transformer.
         mock_registry.get.return_value = _mock_generator_cls("Hyp.")
         qt = HyDEQueryTransformer(
             {
@@ -224,10 +234,8 @@ class TestHyDEQueryTransformer:
             }
         )
         result = qt.transform("Q?")
-        # branch=None means "broadcast to all hybrid children" or "ignored
-        # by single retrievers".
-        assert result[0].branch is None
-        assert result[1].branch == "dense"
+        assert result[0].branch is None  # original
+        assert result[1].branch is None  # hypothetical
 
     @patch("components.query_transforms.registry")
     def test_num_hypotheticals_makes_n_calls(self, mock_registry: MagicMock) -> None:
@@ -242,7 +250,7 @@ class TestHyDEQueryTransformer:
         result = qt.transform("Q?")
         assert qt._generator.generate.call_count == 3
         assert len(result) == 3
-        assert all(tq.branch == "dense" for tq in result)
+        assert all(tq.branch is None for tq in result)
 
     @patch("components.query_transforms.registry")
     def test_branch_override(self, mock_registry: MagicMock) -> None:

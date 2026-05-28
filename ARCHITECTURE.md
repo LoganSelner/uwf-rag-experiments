@@ -193,7 +193,7 @@ User Query
     │                   carries an optional branch hint for hybrid routing.
     ▼
 [Retriever.retrieve_multi] ─── dense / BM25 / hybrid. Fuses per-query
-    │             rank lists via query_transform.fusion (rrf/max/none).
+    │             rank lists via query_transform.fusion (rrf/max).
     │             Hybrid routes each query to children by branch and
     │             applies two-level fusion: across reformulations
     │             (intra-branch), then across retrieval methods
@@ -270,10 +270,13 @@ All types live in `src/core/types.py`.
 plus an optional `branch` hint. `branch=None` broadcasts to every
 retriever (the common case — passthrough, contextualizer, multi-query);
 a non-None branch (e.g. `"dense"`, `"bm25"`) routes the query to the
-matching child inside a `HybridRetriever`. HyDE uses this to send its
-hypothetical document to the dense branch and the original question to
-BM25. Non-hybrid retrievers ignore the hint, so a branch-tagged config
-runs unchanged on a dense-only setup.
+matching child inside a `HybridRetriever`. All transformers broadcast
+by default; routing is opt-in. The canonical HyDE+hybrid config uses it
+to send the hypothetical document to the dense branch and the original
+question to BM25. Non-hybrid retrievers ignore the hint, so a
+branch-tagged config runs unchanged on a dense-only setup. A non-None
+branch that matches no child raises `ValueError` at retrieval time
+(the validator also catches explicitly-set mismatches up front).
 
 `Queryable` is a `@runtime_checkable Protocol` in `core/types.py`:
 
@@ -389,7 +392,7 @@ alongside the new sparse index, by design.
 construction (called in `scripts/run_experiment.py`). It checks:
 
 - Every component type referenced in config is registered
-- `query.query_transform.fusion` is one of `{rrf, max, none}`
+- `query.query_transform.fusion` is one of `{rrf, max}`
 - Transformer `branch` / `original_branch` hints reference a real
   hybrid child name (static check; only when retrieval is `hybrid`).
   The runtime guard in `HybridRetriever.retrieve_multi` is authoritative
@@ -482,8 +485,9 @@ not the pipeline.** The pipeline calls `retrieve_multi(transformed,
 top_k, fusion)` and the retriever owns the fan-out + fusion. The
 default implementation (dense, BM25) ignores branch hints, runs each
 query, and fuses the rank lists via `core.fusion`
-(`reciprocal_rank_fusion` for `rrf`, `max_score_dedup` for `max`, or
-returns the single list for `none`/N=1). `HybridRetriever` overrides it
+(`reciprocal_rank_fusion` for `rrf`, `max_score_dedup` for `max`; a
+single query short-circuits both since fusion is then a no-op).
+`HybridRetriever` overrides it
 to route queries by branch and apply **two-level fusion**: intra-branch
 (across reformulations within a child, using the pipeline-level
 `fusion`) then cross-branch (across children, using the hybrid's own

@@ -310,6 +310,22 @@ class TestBaseRetrieverRetrieveMulti:
                 fusion="bogus",
             )
 
+    def test_none_fusion_rejected_for_multiple_queries(self) -> None:
+        # Regression: "none" used to silently return only the first
+        # query's results, dropping the rest. It's now an unknown mode
+        # and must raise rather than lose data.
+        retriever, mock_vs = self._wired()
+        mock_vs.search.side_effect = [
+            [_make_rc("a", 0.9)],
+            [_make_rc("b", 0.8)],
+        ]
+        with pytest.raises(ValueError, match="unknown fusion mode"):
+            retriever.retrieve_multi(
+                [TransformedQuery(text="q1"), TransformedQuery(text="q2")],
+                top_k_per_query=5,
+                fusion="none",
+            )
+
 
 # -----------------------------------------------------------------------
 # HybridRetriever.retrieve_multi — branch routing + two-level fusion

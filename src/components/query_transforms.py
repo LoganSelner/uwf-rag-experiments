@@ -101,11 +101,13 @@ class HyDEQueryTransformer(BaseQueryTransformer):
     the dense embedding similarity improves.
 
     Default behavior (paper-canonical): emit exactly one hypothetical
-    document and use it in place of the original query. With hybrid
-    retrieval, set ``branch="dense"`` so the hypothetical only flows
-    into the dense child; setting ``include_original=True`` with
-    ``original_branch="bm25"`` lets the original query flow into the
-    BM25 child — the canonical HyDE+hybrid recipe.
+    document and use it in place of the original query. By default the
+    hypothetical broadcasts to every retriever (``branch=None``, like all
+    other transformers). For the canonical HyDE+hybrid recipe, opt in to
+    routing: set ``branch="dense"`` so the hypothetical only flows into
+    the dense child, plus ``include_original=True`` with
+    ``original_branch="bm25"`` so the original question flows into the
+    BM25 child.
 
     Branch hints are silently ignored by non-hybrid retrievers, so the
     same config works in both dense-only and hybrid setups.
@@ -121,8 +123,8 @@ class HyDEQueryTransformer(BaseQueryTransformer):
         include_original: If True, also emit a TransformedQuery for the
             original user question (default False).
         branch: Branch hint attached to each hypothetical
-            TransformedQuery (default "dense" — pairs naturally with a
-            hybrid child named "dense"; ignored otherwise).
+            TransformedQuery (default None — broadcast to all retrievers).
+            Set to a hybrid child name (e.g. "dense") to route there.
         original_branch: Branch hint for the original query when
             ``include_original=True`` (default None — broadcasts to all
             branches; set to ``"bm25"`` for the canonical HyDE+hybrid
@@ -158,7 +160,7 @@ class HyDEQueryTransformer(BaseQueryTransformer):
             )
         self._num_hypotheticals: int = num_hyp
         self._include_original: bool = bool(self.config.get("include_original", False))
-        self._branch: str | None = self.config.get("branch", "dense")
+        self._branch: str | None = self.config.get("branch")
         self._original_branch: str | None = self.config.get("original_branch")
 
         gen_config = {k: v for k, v in self.config.items() if k not in self._OWN_KEYS}
