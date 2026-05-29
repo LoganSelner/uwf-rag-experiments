@@ -262,8 +262,8 @@ All types live in `src/core/types.py`.
 
 | Type | Produced By | Consumed By |
 |------|------------|-------------|
-| `Document` | Ingestor | Chunker |
-| `Chunk` | Chunker | Embedder |
+| `Document` | Ingestor | Chunker, ChunkEnricher |
+| `Chunk` | Chunker | ChunkEnricher, Embedder, LexicalIndex |
 | `EmbeddedChunk` | Embedder | VectorStore |
 | `TransformedQuery` | QueryTransformer | Retriever (`retrieve_multi`) |
 | `RetrievedChunk` | VectorStore / Retriever | Reranker, PromptTemplate |
@@ -273,6 +273,13 @@ All types live in `src/core/types.py`.
 | `EvalSample` | Evaluator | RAGAS |
 | `ScoredSample` | Evaluator | Result files (JSONL) |
 | `ExperimentResult` | Evaluator | `results.py` serialization |
+
+`Chunk` carries the canonical `content` plus an optional, build-time-only
+`index_text` (with a `text_for_index` accessor that falls back to `content`).
+A chunk enricher may set `index_text` so the embedder and lexical index use
+the enriched text, while the vector store still persists `content` — keeping
+the enrichment's effect isolated to retrieval. `index_text` is never persisted,
+so retrieved chunks always carry `index_text=None`.
 
 `TransformedQuery` is a frozen dataclass carrying a search-query string
 plus an optional `branch` hint. `branch=None` broadcasts to every
@@ -556,13 +563,17 @@ Builds the vector index — and any configured auxiliary indexes —
 from source documents.
 
 `from_config(config)` constructs per-source ingestors plus shared
-chunker, embedder, vectorstore, and (when `indexing.sparse_index.type`
-is set) a sparse index, all from the registry.
+chunker, embedder, vectorstore, and (when set) a sparse index
+(`indexing.sparse_index.type`) and a chunk enricher
+(`indexing.chunk_enricher.type`), all from the registry.
 
 `build()` iterates sources (ingest → tag source_name), chunks all
-documents, then runs **sparse indexing before embedding** so a
-misconfigured BM25 tokenizer/stemmer fails fast — before spending
-embedding API budget. After embedding, the vector store is populated.
+documents, optionally **enriches** them (the chunk enricher sets each
+chunk's `index_text` — e.g. contextual retrieval), then runs **sparse
+indexing before embedding** so a misconfigured BM25 tokenizer/stemmer
+fails fast — before spending embedding API budget. Enrichment runs
+before both the sparse index and the embedder, since both consume
+`Chunk.text_for_index`. After embedding, the vector store is populated.
 Returns an `IndexArtifact` carrying the vectorstore, embedder, and an
 `auxiliary_stores` dict (containing the BM25 index under `"bm25"`
 when configured).

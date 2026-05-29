@@ -182,8 +182,10 @@ The priority ordering reflects how standard each piece is:
 2. **Phase B — Standard query optimization** (HyDE, multi-query).
    ✅ **Done.** Both run as `BaseQueryTransformer` implementations with
    pipeline-level fusion and per-branch routing for hybrid setups.
-3. **Phase C — Standard chunking alternatives** (semantic, contextual
-   retrieval).
+3. **Phase C — Standard chunking alternatives** (chunk-size sweeps,
+   semantic, contextual retrieval). ✅ **Done.** Custom `semantic`
+   chunker + a `BaseChunkEnricher` stage with the `contextual` enricher
+   (situating context applied to retrieval text only).
 4. **Phase D — Agentic RAG** (single-agent ReAct, then multi-agent).
    Kept because agentic retrieval is now a standard paradigm, not
    because it replicates any prior version.
@@ -194,8 +196,9 @@ The priority ordering reflects how standard each piece is:
    if a concrete need arises.
 
 Phases A and B both landed within the existing linear pipeline; Phase C
-requires one well-scoped extension (Section 7.2). Phase D activates
-the dormant agent pipeline. Phases E–F are open-ended.
+added one well-scoped extension (Section 7.2 — the chunk-enricher stage)
+plus the `index_text` decoupling. Phase D activates the dormant agent
+pipeline. Phases E–F are open-ended.
 
 ---
 
