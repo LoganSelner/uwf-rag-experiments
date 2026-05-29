@@ -264,9 +264,16 @@ class SemanticChunker(BaseChunker):
             int(min_chunk_size) if min_chunk_size is not None else None
         )
 
-        # Injectable embedding seam (tests pass a deterministic fn). By
-        # default, build a local sentence-transformers embedder lazily.
-        self._embed_fn = embed_fn or self._build_embed_fn()
+        # Injectable embedding seam (tests pass a deterministic fn). Built
+        # lazily on first chunk() so constructing the chunker on the
+        # cache-load path never loads the breakpoint model — a cached
+        # semantic index loads without needing the model present.
+        self._embed_fn: Callable[[list[str]], list[list[float]]] | None = embed_fn
+
+    def _get_embed_fn(self) -> Callable[[list[str]], list[list[float]]]:
+        if self._embed_fn is None:
+            self._embed_fn = self._build_embed_fn()
+        return self._embed_fn
 
     def _build_embed_fn(self) -> Callable[[list[str]], list[list[float]]]:
         from components.embedders import HuggingFaceEmbedder
@@ -306,7 +313,7 @@ class SemanticChunker(BaseChunker):
             return [" ".join(sentences)]
 
         combined = self._combine_with_buffer(sentences)
-        embeddings = np.asarray(self._embed_fn(combined), dtype=np.float64)
+        embeddings = np.asarray(self._get_embed_fn()(combined), dtype=np.float64)
         distances = self._cosine_distances(embeddings)
         breakpoints = self._find_breakpoints(distances)
         groups = self._group_sentences(sentences, breakpoints)

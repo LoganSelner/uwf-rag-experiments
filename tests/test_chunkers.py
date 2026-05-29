@@ -208,6 +208,13 @@ class TestSemanticChunker:
 
         assert registry.get("chunking", "semantic") is SemanticChunker
 
+    def test_breakpoint_embedder_built_lazily(self) -> None:
+        # Construction must NOT load the breakpoint model — a cached semantic
+        # index must load (via from_config) without the model present. A bogus
+        # model name only matters once chunk() is actually called.
+        chunker = SemanticChunker(config={"embedding_model": "nonexistent/bogus-model"})
+        assert chunker._embed_fn is None
+
     def test_produces_chunks(self) -> None:
         chunker = self._chunker()
         chunks = chunker.chunk([Document(content=self._MULTI, metadata={})])
