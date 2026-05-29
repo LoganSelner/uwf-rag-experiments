@@ -24,11 +24,29 @@ class Document:
 
 @dataclass
 class Chunk:
-    """A piece of a document, produced by a chunker."""
+    """A piece of a document, produced by a chunker.
+
+    ``content`` is the canonical text: it is stored, retrieved, shown to the
+    generator, and scored by the evaluator. ``index_text`` is an optional,
+    build-time-only override for the text that gets **embedded and
+    lexically indexed** — set by a chunk enricher (e.g. contextual
+    retrieval) to prepend situating context without polluting what the
+    generator/evaluator sees. It is never persisted by the vector store, so
+    retrieved chunks always carry ``index_text=None``.
+    """
 
     content: str
     chunk_id: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    index_text: str | None = None
+
+    @property
+    def text_for_index(self) -> str:
+        """Text used for embedding and lexical indexing.
+
+        Falls back to ``content`` when no enricher has set ``index_text``.
+        """
+        return self.index_text if self.index_text is not None else self.content
 
 
 @dataclass

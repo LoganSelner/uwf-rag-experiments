@@ -50,6 +50,8 @@ def _build_config_snapshot(config: ExperimentConfig) -> dict[str, Any]:
         "breakpoint_threshold_type": config.indexing.chunking.params.get(
             "breakpoint_threshold_type"
         ),
+        "chunk_enricher_type": config.indexing.chunk_enricher.type,
+        "context_scope": config.indexing.chunk_enricher.params.get("context_scope"),
         "embedding_type": config.indexing.embedding.type,
         "embedding_model": config.indexing.embedding.params.get("model_name", ""),
         "vectorstore_type": config.indexing.vectorstore.type,

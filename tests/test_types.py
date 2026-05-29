@@ -39,6 +39,18 @@ class TestChunk:
         assert c.chunk_id == "abc"
         assert c.metadata == {"k": "v"}
 
+    def test_index_text_defaults_none_and_falls_back_to_content(self) -> None:
+        c = Chunk(content="raw chunk", chunk_id="abc")
+        assert c.index_text is None
+        assert c.text_for_index == "raw chunk"
+
+    def test_index_text_overrides_for_indexing_only(self) -> None:
+        c = Chunk(content="raw chunk", chunk_id="abc")
+        c.index_text = "context.\n\nraw chunk"
+        assert c.text_for_index == "context.\n\nraw chunk"
+        # content (stored / generated / scored) is untouched.
+        assert c.content == "raw chunk"
+
 
 class TestEmbeddedChunk:
     def test_carries_chunk(self) -> None:

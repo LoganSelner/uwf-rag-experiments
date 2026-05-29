@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from components.base import (
+    BaseChunkEnricher,
     BaseChunker,
     BaseEmbedder,
     BaseIngestor,
@@ -63,12 +64,14 @@ class IndexingPipeline:
         embedder: BaseEmbedder,
         vectorstore: BaseVectorStore,
         sparse_index: BaseLexicalIndex | None = None,
+        chunk_enricher: BaseChunkEnricher | None = None,
     ) -> None:
         self._ingestors = ingestors  # [(source_name, path, ingestor), ...]
         self._chunker = chunker
         self._embedder = embedder
         self._vectorstore = vectorstore
         self._sparse_index = sparse_index
+        self._chunk_enricher = chunk_enricher
 
     @classmethod
     def from_config(cls, config: ExperimentConfig) -> IndexingPipeline:
@@ -97,21 +100,30 @@ class IndexingPipeline:
             sparse_cls = registry.get("sparse_index", idx.sparse_index.type)
             sparse_index = sparse_cls(config=idx.sparse_index.params)
 
+        chunk_enricher: BaseChunkEnricher | None = None
+        if idx.chunk_enricher.type:
+            enricher_cls = registry.get("chunk_enricher", idx.chunk_enricher.type)
+            chunk_enricher = enricher_cls(config=idx.chunk_enricher.params)
+
         return cls(
             ingestors=ingestors,
             chunker=chunker,
             embedder=embedder,
             vectorstore=vectorstore,
             sparse_index=sparse_index,
+            chunk_enricher=chunk_enricher,
         )
 
     def build(self) -> IndexArtifact:
         """Run the full indexing pipeline.
 
-        Ordering: ingest → chunk → sparse index (if configured) →
-        embed → vector store. BM25 indexing happens *before* embedding
-        so a tokenizer/stemmer misconfiguration fails fast, before
-        spending embedding API budget.
+        Ordering: ingest → chunk → enrich (if configured) → sparse index
+        (if configured) → embed → vector store. The enricher may set each
+        chunk's ``index_text`` (e.g. contextual retrieval), which both the
+        sparse index and the embedder consume via ``Chunk.text_for_index``,
+        so it must run before either. BM25 indexing still happens *before*
+        embedding so a tokenizer/stemmer misconfiguration fails fast,
+        before spending embedding API budget.
         """
         all_documents: list[Document] = []
         source_counts: dict[str, int] = {}
@@ -135,6 +147,13 @@ class IndexingPipeline:
         chunks: list[Chunk] = self._chunker.chunk(all_documents)
         logger.info("Produced %d chunks", len(chunks))
 
+        # Enrich (e.g. contextual retrieval) — may set chunk.index_text,
+        # which the sparse index and embedder consume below. Runs before
+        # both so the enriched text is what gets indexed/embedded.
+        if self._chunk_enricher is not None:
+            chunks = self._chunk_enricher.enrich(all_documents, chunks)
+            logger.info("Enriched %d chunks", len(chunks))
+
         # Sparse index (BM25 etc.) — built before embedding so a bad
         # tokenizer/stemmer config doesn't waste embedding API calls.
         if self._sparse_index is not None:
@@ -154,6 +173,7 @@ class IndexingPipeline:
             "total_chunks": len(chunks),
             "source_counts": source_counts,
             "has_sparse_index": self._sparse_index is not None,
+            "has_chunk_enricher": self._chunk_enricher is not None,
         }
 
         auxiliary_stores: dict[str, BaseLexicalIndex | BaseVectorStore] = {}

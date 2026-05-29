@@ -113,6 +113,7 @@ src/
 │   ├── defaults.py       Passthrough/no-op defaults (always available)
 │   ├── ingestors.py      PDFIngestor (PyMuPDF)
 │   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker, SemanticChunker
+│   ├── enrichers.py      ContextualChunkEnricher (chunk_enricher) — sets index_text pre-embedding
 │   ├── embedders.py      HuggingFaceEmbedder, GoogleEmbedder, OpenAIEmbedder, EdenAIEmbedder
 │   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
 │   ├── lexical_indexes.py   BM25LexicalIndex (bm25s + PyStemmer)
@@ -170,11 +171,18 @@ list[Document]
     ▼
 list[Chunk] ─── each carries source_name in metadata
     │
-    ├──► [LexicalIndex (optional)] ─── BM25 etc.; built before embedding
-    │                                    so tokenizer errors fail fast.
-    │                                    Stored under IndexArtifact.auxiliary_stores
     ▼
-[Embedder] ─── produces float vectors
+[ChunkEnricher (optional)] ─── contextual retrieval; sets chunk.index_text
+    │                          (the embed/index text) without touching
+    │                          content (stored / generated / scored). Runs
+    │                          before the lexical index + embedder.
+    │
+    ├──► [LexicalIndex (optional)] ─── BM25 etc.; indexes text_for_index;
+    │                                    built before embedding so tokenizer
+    │                                    errors fail fast. Stored under
+    │                                    IndexArtifact.auxiliary_stores
+    ▼
+[Embedder] ─── embeds text_for_index → float vectors
     │
     ▼
 list[EmbeddedChunk]
@@ -321,7 +329,8 @@ ExperimentConfig
 │   ├── chunking: ComponentConfig      type + params
 │   ├── embedding: ComponentConfig
 │   ├── vectorstore: ComponentConfig
-│   └── sparse_index: ComponentConfig  optional; e.g. {type: bm25}
+│   ├── sparse_index: ComponentConfig  optional; e.g. {type: bm25}
+│   └── chunk_enricher: ComponentConfig  optional; e.g. {type: contextual}
 ├── QueryConfig                        (linear pipeline)
 │   ├── query_transform: QueryTransformConfig  type + fusion + params
 │   ├── retrieval: RetrievalConfig     top_k_retrieve, top_k_final, filters
@@ -367,8 +376,8 @@ Multi-level inheritance is supported (child → parent → grandparent).
 ### Index Fingerprinting
 
 `ExperimentConfig.index_fingerprint()` returns a 12-char hex SHA-256
-of: sources + chunking + embedding + vectorstore + sparse_index (when
-set) config.
+of: sources + chunking + embedding + vectorstore + sparse_index +
+chunk_enricher (the last two only when set) config.
 
 **Included:** Source names, paths, ingest types/params. Chunking,
 embedding, vectorstore types and all params. Sparse-index type and
@@ -423,6 +432,7 @@ All abstract base classes live in `src/components/base.py`.
 |-----------|------------------|----------------|-----------|
 | `BaseIngestor` | `ingest` | `ingest(path)` | `str → list[Document]` |
 | `BaseChunker` | `chunking` | `chunk(docs)` | `list[Document] → list[Chunk]` |
+| `BaseChunkEnricher` | `chunk_enricher` | `enrich(docs, chunks)` | `→ list[Chunk]` (may set `index_text`) |
 | `BaseEmbedder` | `embedding` | `embed_chunks(chunks)` | `list[Chunk] → list[EmbeddedChunk]` |
 | | | `embed_query(query)` | `str → list[float]` |
 | `BaseVectorStore` | `vectorstore` | `add(chunks)` | `list[EmbeddedChunk] → None` |
@@ -510,6 +520,8 @@ metadata, and truncates.
 | `chunking` | `recursive_langchain` | `LangChainRecursiveChunker` | `chunkers.py` |
 | `chunking` | `recursive_custom` | `CustomRecursiveChunker` | `chunkers.py` |
 | `chunking` | `semantic` | `SemanticChunker` | `chunkers.py` |
+| `chunk_enricher` | `none` | `NoOpChunkEnricher` | `defaults.py` |
+| `chunk_enricher` | `contextual` | `ContextualChunkEnricher` | `enrichers.py` |
 | `embedding` | `huggingface` | `HuggingFaceEmbedder` | `embedders.py` |
 | `embedding` | `google` | `GoogleEmbedder` | `embedders.py` |
 | `embedding` | `openai` | `OpenAIEmbedder` | `embedders.py` |

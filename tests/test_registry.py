@@ -113,6 +113,12 @@ class TestRegistrationInventory:
     def test_chunking_semantic(self) -> None:
         assert registry.is_registered("chunking", "semantic")
 
+    def test_chunk_enricher_none(self) -> None:
+        assert registry.is_registered("chunk_enricher", "none")
+
+    def test_chunk_enricher_contextual(self) -> None:
+        assert registry.is_registered("chunk_enricher", "contextual")
+
     def test_embedding_huggingface(self) -> None:
         assert registry.is_registered("embedding", "huggingface")
 

@@ -408,6 +408,73 @@ class TestIndexingPipelineSparse:
 
 
 # -----------------------------------------------------------------------
+# IndexingPipeline — chunk enricher plumbing
+# -----------------------------------------------------------------------
+
+
+class TestIndexingPipelineEnricher:
+    def test_enrich_runs_after_chunk_before_sparse_and_embed(self) -> None:
+        """The enricher must run before both the sparse index and embedder,
+        since both consume ``Chunk.text_for_index``."""
+        from pipeline.indexing import IndexingPipeline
+
+        call_order: list[str] = []
+
+        mock_ingestor = MagicMock()
+        mock_ingestor.ingest.return_value = [MagicMock(content="t", metadata={})]
+        chunks = [Chunk(content="c", chunk_id="1", metadata={})]
+        mock_chunker = MagicMock()
+        mock_chunker.chunk.side_effect = lambda d: call_order.append("chunk") or chunks
+        mock_enricher = MagicMock()
+        mock_enricher.enrich.side_effect = lambda docs, c: (
+            call_order.append("enrich") or c
+        )
+        mock_sparse = MagicMock()
+        mock_sparse.add.side_effect = lambda c: call_order.append("sparse")
+        mock_embedder = MagicMock()
+        mock_embedder.embed_chunks.side_effect = lambda c: (
+            call_order.append("embed") or [MagicMock()]
+        )
+        mock_vs = MagicMock()
+
+        pipeline = IndexingPipeline(
+            ingestors=[("src", "/f", mock_ingestor)],
+            chunker=mock_chunker,
+            embedder=mock_embedder,
+            vectorstore=mock_vs,
+            sparse_index=mock_sparse,
+            chunk_enricher=mock_enricher,
+        )
+        artifact = pipeline.build()
+
+        assert call_order == ["chunk", "enrich", "sparse", "embed"]
+        mock_enricher.enrich.assert_called_once()
+        assert artifact.stats["has_chunk_enricher"] is True
+
+    def test_build_without_enricher_unchanged(self) -> None:
+        from pipeline.indexing import IndexingPipeline
+
+        mock_ingestor = MagicMock()
+        mock_ingestor.ingest.return_value = [MagicMock(content="t", metadata={})]
+        mock_chunker = MagicMock()
+        mock_chunker.chunk.return_value = [
+            Chunk(content="c", chunk_id="1", metadata={})
+        ]
+        mock_embedder = MagicMock()
+        mock_embedder.embed_chunks.return_value = [MagicMock()]
+
+        pipeline = IndexingPipeline(
+            ingestors=[("src", "/f", mock_ingestor)],
+            chunker=mock_chunker,
+            embedder=mock_embedder,
+            vectorstore=MagicMock(),
+            chunk_enricher=None,
+        )
+        artifact = pipeline.build()
+        assert artifact.stats["has_chunk_enricher"] is False
+
+
+# -----------------------------------------------------------------------
 # QueryPipeline — hybrid wiring
 # -----------------------------------------------------------------------
 

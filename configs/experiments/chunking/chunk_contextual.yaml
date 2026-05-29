@@ -1,0 +1,39 @@
+# Contextual retrieval (Anthropic recipe): before embedding + BM25 indexing,
+# an LLM prepends a short blurb situating each chunk within its surrounding
+# document. The blurb is added to index_text ONLY — the stored chunk, the
+# generator input, and the RAGAS contexts stay as the original content, so
+# the measured effect is isolated to retrieval.
+#
+# Scope = window (±1 page): whole-document situating is infeasible here (the
+# corpus is ~1M tokens and our generators have no prompt caching), and the
+# PDF has no section outline, so a page-window is the cheapest feasible
+# stand-in for "surrounding document". Tune via context_scope / window_size.
+#
+# Cost note: one LLM call per chunk (~4,600 for the full corpus), one-time
+# per fingerprint and cached. max_workers bounds the concurrency. Use a
+# cheap generation model here — it is independent of the answer generator.
+#
+# Variables changed from base.yaml:
+#   - indexing.chunk_enricher: adds the contextual enricher (new fingerprint)
+#
+# Compare against: base.yaml (no enrichment). For the canonical strong stack,
+# layer this onto hybrid + rerank as a separate config.
+
+extends: ../../base.yaml
+
+name: "chunk_contextual"
+description: "Contextual retrieval enricher (window ±1 page, cheap LLM)"
+
+indexing:
+  chunk_enricher:
+    type: "contextual"
+    params:
+      generator_type: "edenai"
+      sub_provider: "openai"
+      context_scope: "window"
+      window_size: 1
+      max_workers: 8
+      llm:
+        model_name: "gpt-4.1-mini"
+        temperature: 0.0
+        max_tokens: 200

@@ -109,7 +109,7 @@ class BM25LexicalIndex(BaseLexicalIndex):
         if not self._chunks:
             return
 
-        texts = [c.content for c in self._chunks]
+        texts = [c.text_for_index for c in self._chunks]
         tokenized = self._tokenize(texts)
 
         retriever = bm25s.BM25(

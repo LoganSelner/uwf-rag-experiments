@@ -9,9 +9,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from components.base import BaseMemory, BaseQueryTransformer, BaseReranker
+from components.base import (
+    BaseChunkEnricher,
+    BaseMemory,
+    BaseQueryTransformer,
+    BaseReranker,
+)
 from core.registry import registry
-from core.types import RetrievedChunk, TransformedQuery
+from core.types import Chunk, Document, RetrievedChunk, TransformedQuery
 
 
 @registry.register("query_transform", "passthrough")
@@ -37,6 +42,18 @@ class NoOpReranker(BaseReranker):
         top_k: int,
     ) -> list[RetrievedChunk]:
         return chunks[:top_k]
+
+
+@registry.register("chunk_enricher", "none")
+class NoOpChunkEnricher(BaseChunkEnricher):
+    """Passes chunks through unchanged (no ``index_text`` set)."""
+
+    def enrich(
+        self,
+        documents: list[Document],
+        chunks: list[Chunk],
+    ) -> list[Chunk]:
+        return chunks
 
 
 @registry.register("memory", "none")

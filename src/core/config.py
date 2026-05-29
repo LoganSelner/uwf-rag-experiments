@@ -294,6 +294,7 @@ class IndexingConfig:
     embedding: ComponentConfig = field(default_factory=ComponentConfig)
     vectorstore: ComponentConfig = field(default_factory=ComponentConfig)
     sparse_index: ComponentConfig = field(default_factory=ComponentConfig)
+    chunk_enricher: ComponentConfig = field(default_factory=ComponentConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> IndexingConfig:
@@ -305,6 +306,7 @@ class IndexingConfig:
             embedding=ComponentConfig.from_dict(data.get("embedding")),
             vectorstore=ComponentConfig.from_dict(data.get("vectorstore")),
             sparse_index=ComponentConfig.from_dict(data.get("sparse_index")),
+            chunk_enricher=ComponentConfig.from_dict(data.get("chunk_enricher")),
         )
 
 
@@ -515,8 +517,9 @@ class ExperimentConfig:
     def index_fingerprint(self) -> str:
         """Compute a SHA-256 fingerprint (12 hex chars) of indexing config.
 
-        Includes: sources, chunking, embedding, vectorstore, and
-        ``sparse_index`` (the latter only when its ``type`` is set).
+        Includes: sources, chunking, embedding, vectorstore, and the
+        optional ``sparse_index`` / ``chunk_enricher`` (each only when its
+        ``type`` is set).
         Excludes: query, agent, evaluation, pipeline_mode.
 
         Empty-config canonicalization: any ``ComponentConfig`` with an
@@ -554,6 +557,11 @@ class ExperimentConfig:
             data["sparse_index"] = {
                 "type": self.indexing.sparse_index.type,
                 "params": self.indexing.sparse_index.params,
+            }
+        if self.indexing.chunk_enricher.type:
+            data["chunk_enricher"] = {
+                "type": self.indexing.chunk_enricher.type,
+                "params": self.indexing.chunk_enricher.params,
             }
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
@@ -697,6 +705,15 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
             config.indexing.sparse_index.type,
             "sparse_index",
             "indexing.sparse_index.type",
+        )
+
+    if config.indexing.chunk_enricher.type:
+        _check_registered(
+            errors,
+            registry,
+            config.indexing.chunk_enricher.type,
+            "chunk_enricher",
+            "indexing.chunk_enricher.type",
         )
 
     # --- Linear pipeline components ---
