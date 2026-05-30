@@ -112,7 +112,8 @@ src/
 │   ├── base.py           Abstract base classes (read-only contract)
 │   ├── defaults.py       Passthrough/no-op defaults (always available)
 │   ├── ingestors.py      PDFIngestor (PyMuPDF)
-│   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker
+│   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker, SemanticChunker
+│   ├── enrichers.py      ContextualChunkEnricher (chunk_enricher) — sets index_text pre-embedding
 │   ├── embedders.py      HuggingFaceEmbedder, GoogleEmbedder, OpenAIEmbedder, EdenAIEmbedder
 │   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
 │   ├── lexical_indexes.py   BM25LexicalIndex (bm25s + PyStemmer)
@@ -170,11 +171,18 @@ list[Document]
     ▼
 list[Chunk] ─── each carries source_name in metadata
     │
-    ├──► [LexicalIndex (optional)] ─── BM25 etc.; built before embedding
-    │                                    so tokenizer errors fail fast.
-    │                                    Stored under IndexArtifact.auxiliary_stores
     ▼
-[Embedder] ─── produces float vectors
+[ChunkEnricher (optional)] ─── contextual retrieval; sets chunk.index_text
+    │                          (the embed/index text) without touching
+    │                          content (stored / generated / scored). Runs
+    │                          before the lexical index + embedder.
+    │
+    ├──► [LexicalIndex (optional)] ─── BM25 etc.; indexes text_for_index;
+    │                                    built before embedding so tokenizer
+    │                                    errors fail fast. Stored under
+    │                                    IndexArtifact.auxiliary_stores
+    ▼
+[Embedder] ─── embeds text_for_index → float vectors
     │
     ▼
 list[EmbeddedChunk]
@@ -254,8 +262,8 @@ All types live in `src/core/types.py`.
 
 | Type | Produced By | Consumed By |
 |------|------------|-------------|
-| `Document` | Ingestor | Chunker |
-| `Chunk` | Chunker | Embedder |
+| `Document` | Ingestor | Chunker, ChunkEnricher |
+| `Chunk` | Chunker | ChunkEnricher, Embedder, LexicalIndex |
 | `EmbeddedChunk` | Embedder | VectorStore |
 | `TransformedQuery` | QueryTransformer | Retriever (`retrieve_multi`) |
 | `RetrievedChunk` | VectorStore / Retriever | Reranker, PromptTemplate |
@@ -265,6 +273,13 @@ All types live in `src/core/types.py`.
 | `EvalSample` | Evaluator | RAGAS |
 | `ScoredSample` | Evaluator | Result files (JSONL) |
 | `ExperimentResult` | Evaluator | `results.py` serialization |
+
+`Chunk` carries the canonical `content` plus an optional, build-time-only
+`index_text` (with a `text_for_index` accessor that falls back to `content`).
+A chunk enricher may set `index_text` so the embedder and lexical index use
+the enriched text, while the vector store still persists `content` — keeping
+the enrichment's effect isolated to retrieval. `index_text` is never persisted,
+so retrieved chunks always carry `index_text=None`.
 
 `TransformedQuery` is a frozen dataclass carrying a search-query string
 plus an optional `branch` hint. `branch=None` broadcasts to every
@@ -321,7 +336,8 @@ ExperimentConfig
 │   ├── chunking: ComponentConfig      type + params
 │   ├── embedding: ComponentConfig
 │   ├── vectorstore: ComponentConfig
-│   └── sparse_index: ComponentConfig  optional; e.g. {type: bm25}
+│   ├── sparse_index: ComponentConfig  optional; e.g. {type: bm25}
+│   └── chunk_enricher: ComponentConfig  optional; e.g. {type: contextual}
 ├── QueryConfig                        (linear pipeline)
 │   ├── query_transform: QueryTransformConfig  type + fusion + params
 │   ├── retrieval: RetrievalConfig     top_k_retrieve, top_k_final, filters
@@ -367,8 +383,8 @@ Multi-level inheritance is supported (child → parent → grandparent).
 ### Index Fingerprinting
 
 `ExperimentConfig.index_fingerprint()` returns a 12-char hex SHA-256
-of: sources + chunking + embedding + vectorstore + sparse_index (when
-set) config.
+of: sources + chunking + embedding + vectorstore + sparse_index +
+chunk_enricher (the last two only when set) config.
 
 **Included:** Source names, paths, ingest types/params. Chunking,
 embedding, vectorstore types and all params. Sparse-index type and
@@ -423,6 +439,7 @@ All abstract base classes live in `src/components/base.py`.
 |-----------|------------------|----------------|-----------|
 | `BaseIngestor` | `ingest` | `ingest(path)` | `str → list[Document]` |
 | `BaseChunker` | `chunking` | `chunk(docs)` | `list[Document] → list[Chunk]` |
+| `BaseChunkEnricher` | `chunk_enricher` | `enrich(docs, chunks)` | `→ list[Chunk]` (may set `index_text`) |
 | `BaseEmbedder` | `embedding` | `embed_chunks(chunks)` | `list[Chunk] → list[EmbeddedChunk]` |
 | | | `embed_query(query)` | `str → list[float]` |
 | `BaseVectorStore` | `vectorstore` | `add(chunks)` | `list[EmbeddedChunk] → None` |
@@ -509,6 +526,9 @@ metadata, and truncates.
 | `ingest` | `pdf` | `PDFIngestor` | `ingestors.py` |
 | `chunking` | `recursive_langchain` | `LangChainRecursiveChunker` | `chunkers.py` |
 | `chunking` | `recursive_custom` | `CustomRecursiveChunker` | `chunkers.py` |
+| `chunking` | `semantic` | `SemanticChunker` | `chunkers.py` |
+| `chunk_enricher` | `none` | `NoOpChunkEnricher` | `defaults.py` |
+| `chunk_enricher` | `contextual` | `ContextualChunkEnricher` | `enrichers.py` |
 | `embedding` | `huggingface` | `HuggingFaceEmbedder` | `embedders.py` |
 | `embedding` | `google` | `GoogleEmbedder` | `embedders.py` |
 | `embedding` | `openai` | `OpenAIEmbedder` | `embedders.py` |
@@ -543,13 +563,17 @@ Builds the vector index — and any configured auxiliary indexes —
 from source documents.
 
 `from_config(config)` constructs per-source ingestors plus shared
-chunker, embedder, vectorstore, and (when `indexing.sparse_index.type`
-is set) a sparse index, all from the registry.
+chunker, embedder, vectorstore, and (when set) a sparse index
+(`indexing.sparse_index.type`) and a chunk enricher
+(`indexing.chunk_enricher.type`), all from the registry.
 
 `build()` iterates sources (ingest → tag source_name), chunks all
-documents, then runs **sparse indexing before embedding** so a
-misconfigured BM25 tokenizer/stemmer fails fast — before spending
-embedding API budget. After embedding, the vector store is populated.
+documents, optionally **enriches** them (the chunk enricher sets each
+chunk's `index_text` — e.g. contextual retrieval), then runs **sparse
+indexing before embedding** so a misconfigured BM25 tokenizer/stemmer
+fails fast — before spending embedding API budget. Enrichment runs
+before both the sparse index and the embedder, since both consume
+`Chunk.text_for_index`. After embedding, the vector store is populated.
 Returns an `IndexArtifact` carrying the vectorstore, embedder, and an
 `auxiliary_stores` dict (containing the BM25 index under `"bm25"`
 when configured).

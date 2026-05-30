@@ -56,6 +56,37 @@ class BaseChunker(ABC):
         """
 
 
+class BaseChunkEnricher(ABC):
+    """Transforms chunks between chunking and embedding/indexing.
+
+    A build-time-only stage that may set each chunk's ``index_text`` (the
+    text that gets embedded + lexically indexed) without touching
+    ``content`` (what is stored, generated from, and scored). The default
+    implementation is a no-op; the contextual enricher prepends a
+    model-generated, document-situating blurb (the Anthropic contextual-
+    retrieval recipe).
+
+    Receives the source ``documents`` as well as the ``chunks`` so an
+    implementation can situate a chunk within its parent document/page via
+    provenance metadata (``source_path``, ``page_number``).
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        self.config = config or {}
+
+    @abstractmethod
+    def enrich(
+        self,
+        documents: list[Document],
+        chunks: list[Chunk],
+    ) -> list[Chunk]:
+        """Return chunks, optionally with ``index_text`` populated.
+
+        Must preserve each chunk's ``content`` and ``chunk_id``. May return
+        the same list (mutated in place) or a new list of the same length.
+        """
+
+
 class BaseEmbedder(ABC):
     """Produces embedding vectors for chunks and queries."""
 

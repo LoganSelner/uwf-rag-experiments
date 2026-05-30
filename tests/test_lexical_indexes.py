@@ -51,6 +51,20 @@ class TestBM25LexicalIndex:
         assert all(isinstance(r, RetrievedChunk) for r in results)
         assert results[0].retrieval_method == "bm25"
 
+    def test_indexes_index_text_when_set(self) -> None:
+        """BM25 indexes ``text_for_index`` (enriched), not raw content, but
+        returns chunks whose ``content`` is still the original."""
+        idx = BM25LexicalIndex()
+        chunk = Chunk(content="apple", chunk_id="x", metadata={})
+        chunk.index_text = "zebra situating context apple"
+        idx.add([chunk])
+        # A term present only in index_text retrieves the chunk.
+        results = idx.search("zebra", top_k=1)
+        assert len(results) == 1
+        assert results[0].chunk.chunk_id == "x"
+        # The returned chunk's content is the original (not the enriched text).
+        assert results[0].chunk.content == "apple"
+
     def test_search_empty_store(self) -> None:
         idx = BM25LexicalIndex()
         assert idx.search("anything", top_k=3) == []

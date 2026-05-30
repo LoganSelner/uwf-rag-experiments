@@ -642,6 +642,47 @@ class TestSparseIndexFingerprint:
         )
 
 
+class TestChunkEnricherFingerprint:
+    """Phase C Part 2 — chunk_enricher fingerprint canonicalization."""
+
+    def test_empty_chunk_enricher_does_not_change_fingerprint(
+        self, fixtures_dir: Path
+    ) -> None:
+        # An empty chunk_enricher must canonicalize to absence — adding the
+        # field must not invalidate existing (enricher-less) cached indexes.
+        cfg_no_key = ExperimentConfig.from_yaml(fixtures_dir / "base.yaml")
+        raw = load_yaml_with_inheritance(fixtures_dir / "base.yaml")
+        raw["indexing"]["chunk_enricher"] = {"type": "", "params": {}}
+        cfg_explicit_empty = ExperimentConfig.from_dict(raw)
+        assert cfg_no_key.index_fingerprint() == cfg_explicit_empty.index_fingerprint()
+
+    def test_chunk_enricher_set_changes_fingerprint(self, fixtures_dir: Path) -> None:
+        cfg_no = ExperimentConfig.from_yaml(fixtures_dir / "base.yaml")
+        raw = load_yaml_with_inheritance(fixtures_dir / "base.yaml")
+        raw["indexing"]["chunk_enricher"] = {
+            "type": "contextual",
+            "params": {"context_scope": "window"},
+        }
+        cfg_yes = ExperimentConfig.from_dict(raw)
+        assert cfg_no.index_fingerprint() != cfg_yes.index_fingerprint()
+
+    def test_chunk_enricher_params_change_fingerprint(self, fixtures_dir: Path) -> None:
+        raw1 = load_yaml_with_inheritance(fixtures_dir / "base.yaml")
+        raw1["indexing"]["chunk_enricher"] = {
+            "type": "contextual",
+            "params": {"context_scope": "page"},
+        }
+        raw2 = load_yaml_with_inheritance(fixtures_dir / "base.yaml")
+        raw2["indexing"]["chunk_enricher"] = {
+            "type": "contextual",
+            "params": {"context_scope": "window"},
+        }
+        assert (
+            ExperimentConfig.from_dict(raw1).index_fingerprint()
+            != ExperimentConfig.from_dict(raw2).index_fingerprint()
+        )
+
+
 class TestValidateConfigSparseAndHybrid:
     """Validator coverage for Phase A retrieval rules."""
 
@@ -703,6 +744,17 @@ class TestValidateConfigSparseAndHybrid:
         cfg.indexing.sparse_index.type = "bogus"
         with pytest.raises(ConfigValidationError, match="bogus"):
             validate_config(cfg, registry)
+
+    def test_chunk_enricher_unregistered_fails(self) -> None:
+        cfg = self._make_valid_dense_config()
+        cfg.indexing.chunk_enricher.type = "bogus_enricher"
+        with pytest.raises(ConfigValidationError, match="bogus_enricher"):
+            validate_config(cfg, registry)
+
+    def test_chunk_enricher_registered_passes(self) -> None:
+        cfg = self._make_valid_dense_config()
+        cfg.indexing.chunk_enricher.type = "contextual"
+        validate_config(cfg, registry)  # validation checks registration only
 
     def test_bm25_retriever_without_sparse_index_fails(self) -> None:
         cfg = self._make_valid_dense_config()

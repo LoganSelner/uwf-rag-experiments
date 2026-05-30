@@ -80,6 +80,9 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 | Ingest | `PDFIngestor` | `pdf` | PyMuPDF |
 | Chunking | `RecursiveChunker` | `recursive_custom` | Custom implementation |
 | Chunking | `LangChainRecursiveChunker` | `recursive_langchain` | `langchain-text-splitters` wrapper |
+| Chunking | `SemanticChunker` | `semantic` | Custom; embedding-breakpoint splits (no new dep) |
+| Chunk Enricher | `NoOpChunkEnricher` | `none` | No-op passthrough |
+| Chunk Enricher | `ContextualChunkEnricher` | `contextual` | LLM situating context; sets `index_text` only (retrieval-isolated) |
 | Embedding | `HuggingFaceEmbedder` | `huggingface` | sentence-transformers, bge-m3 default |
 | Embedding | `GoogleEmbedder` | `google` | `google-genai` SDK |
 | Embedding | `OpenAIEmbedder` | `openai` | `openai` SDK |
@@ -150,7 +153,7 @@ anatomy. Current coverage by stage:
 | Pipeline Stage | Standard Options | Have | Missing (standard) |
 |----------------|------------------|------|--------------------|
 | Ingestion | PDF, HTML, text | PDF | — (sufficient for now) |
-| Chunking | recursive, semantic, contextual | recursive | semantic, contextual enrichment |
+| Chunking | recursive, semantic, contextual | recursive, semantic, contextual | — |
 | Embedding | open + commercial | 4 providers | — (broad coverage) |
 | Vectorstore | dense ANN | FAISS, Chroma | — |
 | Sparse index | BM25 / SPLADE | BM25 | (SPLADE — advanced) |
@@ -159,11 +162,12 @@ anatomy. Current coverage by stage:
 | Reranking | cross-encoder, late-interaction, LLM | cross-encoder | (ColBERT/LLM — advanced) |
 | Generation | grounded gen, citation, abstention | chat + citation | abstention |
 
-With **Phases A and B complete**, the harness now covers the field's
+With **Phases A, B, and C complete**, the harness now covers the field's
 de facto strong-baseline retrieval matrix (dense + sparse + hybrid +
-reranking) *and* standard query optimization (HyDE, multi-query). The
-largest remaining gap relative to standard practice is **chunking**
-(semantic, contextual enrichment) — Phase C.
+reranking), standard query optimization (HyDE, multi-query), and standard
+chunking (recursive at multiple sizes + semantic + contextual enrichment).
+The standard pipeline is fully covered; remaining work is advanced
+paradigms (Phase D agentic) and evaluation depth (Phase E).
 
 ---
 
@@ -178,8 +182,10 @@ The priority ordering reflects how standard each piece is:
 2. **Phase B — Standard query optimization** (HyDE, multi-query).
    ✅ **Done.** Both run as `BaseQueryTransformer` implementations with
    pipeline-level fusion and per-branch routing for hybrid setups.
-3. **Phase C — Standard chunking alternatives** (semantic, contextual
-   retrieval).
+3. **Phase C — Standard chunking alternatives** (chunk-size sweeps,
+   semantic, contextual retrieval). ✅ **Done.** Custom `semantic`
+   chunker + a `BaseChunkEnricher` stage with the `contextual` enricher
+   (situating context applied to retrieval text only).
 4. **Phase D — Agentic RAG** (single-agent ReAct, then multi-agent).
    Kept because agentic retrieval is now a standard paradigm, not
    because it replicates any prior version.
@@ -190,8 +196,9 @@ The priority ordering reflects how standard each piece is:
    if a concrete need arises.
 
 Phases A and B both landed within the existing linear pipeline; Phase C
-requires one well-scoped extension (Section 7.2). Phase D activates
-the dormant agent pipeline. Phases E–F are open-ended.
+added one well-scoped extension (Section 7.2 — the chunk-enricher stage)
+plus the `index_text` decoupling. Phase D activates the dormant agent
+pipeline. Phases E–F are open-ended.
 
 ---
 
@@ -281,10 +288,18 @@ chunking. The review notes that beyond a competent embedder, chunk
 sweeps on the existing recursive chunker are part of this phase, not
 just new chunkers.
 
-| # | Component | Registry | Interface | Library |
-|---|-----------|----------|-----------|---------|
-| 5 | Semantic chunker | `semantic` | `BaseChunker` | `langchain-experimental` SemanticChunker |
-| 6 | Contextual chunk enricher | `contextual` | `BaseChunkEnricher` | Custom (LLM prepends situating context per chunk) |
+Delivered in two parts: **Part 1** (chunk-size sweeps + semantic chunker)
+needed no new pipeline stage; **Part 2** (contextual enrichment) added the
+`BaseChunkEnricher` stage (§7.2) plus the `index_text` decoupling so the
+situating context affects retrieval only.
+
+| # | Component | Registry | Interface | Library | Status |
+|---|-----------|----------|-----------|---------|--------|
+| 5 | Semantic chunker | `semantic` | `BaseChunker` | Custom embedding-breakpoint split | ✅ Done (Part 1) |
+| 6 | Contextual chunk enricher | `contextual` | `BaseChunkEnricher` | Custom (LLM prepends situating context per chunk) | ✅ Done (Part 2) |
+
+All Phase C experiment configs live under `configs/experiments/chunking/`:
+`chunk_size_{256,512,1024}`, `chunk_semantic`, and `chunk_contextual`.
 
 **Semantic chunker** splits on embedding-similarity breakpoints rather
 than fixed token counts.
@@ -381,11 +396,12 @@ are not yet implemented.
 | Variable | Config Location | Status |
 |----------|----------------|--------|
 | Source documents | `indexing.sources` | done |
-| Chunking strategy | `indexing.chunking.type` | recursive done; **semantic, contextual** pending |
+| Chunking strategy | `indexing.chunking.type` | done (recursive, semantic) |
 | Chunk size / overlap | `indexing.chunking.params` | done |
 | Embedding model | `indexing.embedding` | done (4 providers) |
 | Vectorstore | `indexing.vectorstore.type` | done (FAISS, Chroma) |
 | Sparse index | `indexing.sparse_index.type` | done (BM25) |
+| Chunk enricher | `indexing.chunk_enricher.type` | done (none, contextual) |
 
 ### 6.2 Query Variables
 
@@ -445,17 +461,22 @@ Shipped as part of Phase A. Final shape:
   config schema didn't disturb existing dense-only fingerprints.
 - BM25 is indexed before embedding (fail-fast on tokenizer config).
 
-### 7.2 Chunk-enricher stage (unblocks contextual retrieval in Phase C)
+### 7.2 Chunk-enricher stage (unblocks contextual retrieval) ✅ Done (Phase C Part 2)
 
-**Current:** chunks are embedded in isolation; there is no place for a
-post-chunking, pre-embedding transformation.
+Delivered. A `BaseChunkEnricher` stage (category `chunk_enricher`) runs
+between chunking and embedding/indexing; the no-op default (`none`) leaves
+existing configs unchanged, and `indexing.chunk_enricher` joins the
+fingerprint only when set (empty-config canonicalization), so dense/hybrid
+fingerprints were undisturbed. The `ContextualChunkEnricher` (`contextual`)
+implements the Anthropic recipe.
 
-**Plan:** introduce a `BaseChunkEnricher` stage between chunking and
-embedding in the indexing pipeline. Default is a no-op passthrough
-(registered as `none`), so existing configs are unchanged. The
-contextual enricher (Phase C) implements this interface. This is the
-clean home for any future pre-embedding transform (late chunking,
-proposition extraction, title-prepending).
+Coupled change: `Chunk.index_text` (with the `text_for_index` accessor)
+decouples the embed/index text from the stored `content`. Embedders and the
+BM25 index read `text_for_index`; the vector store still persists `content`,
+so the enrichment's effect is isolated to retrieval (the generator and RAGAS
+keep seeing the original chunk). This is the clean home for any future
+pre-embedding transform (late chunking, proposition extraction,
+title-prepending).
 
 ### Lower-priority gaps (unchanged)
 
@@ -496,11 +517,15 @@ langchain-text-splitters  Recursive chunker
 ### Phase C additions
 
 ```
-langchain-experimental    Semantic chunker
+(none)
 ```
 
-(HyDE, multi-query, hybrid fusion, the chunk enricher, and the agent
-loop are custom — no new dependencies.)
+Phase C adds **no new dependencies**. The semantic chunker is a custom
+embedding-breakpoint implementation reusing `numpy` + the existing
+embedder (`langchain-experimental` was evaluated and rejected: its
+`SemanticChunker` forces a `langchain-community` bump that breaks the
+pinned RAGAS import, and the package is being sunset). HyDE, multi-query,
+hybrid fusion, the chunk enricher, and the agent loop are likewise custom.
 
 ---
 

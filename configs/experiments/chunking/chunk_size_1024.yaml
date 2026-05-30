@@ -1,0 +1,22 @@
+# Chunk-size sweep: 1024-char recursive chunks (vs base.yaml's 1000).
+#
+# Isolates chunk SIZE on the recursive chunker. Near base's 1000 by
+# design — the sweep's upper anchor, completing the 256/512/1024 ladder.
+#
+# Variables changed from base.yaml:
+#   - indexing.chunking.params.chunk_size:   1000 -> 1024
+#   - indexing.chunking.params.chunk_overlap: 100 -> 100 (unchanged)
+# (type + separators inherited from base; distinct fingerprint => one rebuild.)
+#
+# Compare against: chunk_size_256, chunk_size_512, base.yaml (1000).
+
+extends: ../../base.yaml
+
+name: "chunk_size_1024"
+description: "Recursive chunking at 1024 chars (overlap 100)"
+
+indexing:
+  chunking:
+    params:
+      chunk_size: 1024
+      chunk_overlap: 100

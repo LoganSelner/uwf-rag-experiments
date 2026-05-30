@@ -16,6 +16,7 @@ from components import (  # noqa: F401
     chunkers,
     defaults,
     embedders,
+    enrichers,
     generators,
     ingestors,
     lexical_indexes,

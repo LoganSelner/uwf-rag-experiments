@@ -54,7 +54,7 @@ class HuggingFaceEmbedder(BaseEmbedder):
         self._model = SentenceTransformer(model_name)
 
     def embed_chunks(self, chunks: list[Chunk]) -> list[EmbeddedChunk]:
-        texts = [c.content for c in chunks]
+        texts = [c.text_for_index for c in chunks]
         embeddings = self._model.encode(
             texts,
             normalize_embeddings=self._normalize,
@@ -118,7 +118,7 @@ class GoogleEmbedder(BaseEmbedder):
         if not chunks:
             return []
 
-        texts = [c.content for c in chunks]
+        texts = [c.text_for_index for c in chunks]
         all_embeddings: list[list[float]] = []
 
         for i in range(0, len(texts), self._batch_size):
@@ -176,7 +176,7 @@ class OpenAIEmbedder(BaseEmbedder):
         if not chunks:
             return []
 
-        texts = [c.content for c in chunks]
+        texts = [c.text_for_index for c in chunks]
         all_embeddings: list[list[float]] = []
 
         for i in range(0, len(texts), self._batch_size):
@@ -281,7 +281,7 @@ class EdenAIEmbedder(BaseEmbedder):
         if not chunks:
             return []
 
-        texts = [c.content for c in chunks]
+        texts = [c.text_for_index for c in chunks]
         all_embeddings: list[list[float]] = []
 
         for i in range(0, len(texts), self._batch_size):

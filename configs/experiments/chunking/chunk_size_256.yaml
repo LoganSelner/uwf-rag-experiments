@@ -1,0 +1,23 @@
+# Chunk-size sweep: 256-char recursive chunks (vs base.yaml's 1000).
+#
+# Isolates chunk SIZE on the recursive chunker. Beyond a competent
+# embedder, chunk size often moves retrieval quality more than chunking
+# strategy — this sweep measures that directly.
+#
+# Variables changed from base.yaml:
+#   - indexing.chunking.params.chunk_size:   1000 -> 256
+#   - indexing.chunking.params.chunk_overlap: 100 -> 25
+# (type + separators inherited from base; distinct fingerprint => one rebuild.)
+#
+# Compare against: chunk_size_512, chunk_size_1024, base.yaml (1000).
+
+extends: ../../base.yaml
+
+name: "chunk_size_256"
+description: "Recursive chunking at 256 chars (overlap 25)"
+
+indexing:
+  chunking:
+    params:
+      chunk_size: 256
+      chunk_overlap: 25
