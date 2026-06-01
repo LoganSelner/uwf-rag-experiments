@@ -205,13 +205,20 @@ class AgentStep:
 
 @dataclass
 class EvalSample:
-    """One evaluation sample in the format RAGAS expects."""
+    """One evaluation sample in the format RAGAS expects.
+
+    ``metadata`` carries the producing pipeline's ``GenerationResult.metadata``
+    (e.g. the agent's iteration/tool-call/step trace, or a generator's
+    model/token counts) through to the saved per-sample output. RAGAS ignores
+    it — it exists so runs stay auditable from their artifacts.
+    """
 
     id: str
     query: str
     response: str
     retrieved_contexts: list[str]
     reference: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -227,12 +234,15 @@ class ScoredSample:
     retrieved_contexts: list[str]
     reference: str
     scores: dict[str, float | None]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_result_dict(self) -> dict[str, Any]:
         """Serialize to nested dict for JSONL output.
 
-        Follows the input/output/scores convention used by
-        AWS Bedrock and OpenAI Evals.
+        Follows the input/output/scores convention used by AWS Bedrock and
+        OpenAI Evals, plus a top-level ``metadata`` carrying the pipeline's
+        per-query provenance (e.g. the agent's iteration/tool-call/step trace)
+        so runs stay auditable from their artifacts.
         """
         return {
             "id": self.id,
@@ -242,6 +252,7 @@ class ScoredSample:
                 "retrieved_contexts": self.retrieved_contexts,
             },
             "scores": self.scores,
+            "metadata": self.metadata,
         }
 
 

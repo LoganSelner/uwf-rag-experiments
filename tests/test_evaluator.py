@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.config import EvaluationConfig
-from core.types import EvalSample
+from core.types import EvalSample, GenerationResult
 from evaluation.evaluator import Evaluator, _load_dataset
 
 # -----------------------------------------------------------------------
@@ -284,6 +284,34 @@ class TestComputeMetrics:
 
 
 # -----------------------------------------------------------------------
+# Evaluator._run_once — per-sample metadata capture
+# -----------------------------------------------------------------------
+
+
+class TestRunOnceMetadata:
+    def test_captures_pipeline_metadata(self) -> None:
+        """The producing pipeline's GenerationResult.metadata is carried onto
+        the EvalSample so it can reach the saved per-sample output."""
+        evaluator = Evaluator(EvaluationConfig.from_dict({"dataset": "d.jsonl"}))
+        pipeline = MagicMock()
+        pipeline.query.return_value = GenerationResult(
+            query="Q",
+            answer="A",
+            retrieved_chunks=[],
+            metadata={"mode": "agent", "iterations": 3, "num_tool_calls": 2},
+        )
+        samples = evaluator._run_once(
+            pipeline, [{"id": "1", "query": "Q", "reference": "R"}]
+        )
+        assert len(samples) == 1
+        assert samples[0].metadata == {
+            "mode": "agent",
+            "iterations": 3,
+            "num_tool_calls": 2,
+        }
+
+
+# -----------------------------------------------------------------------
 # Evaluator._build_evaluator_llm
 # -----------------------------------------------------------------------
 
@@ -493,6 +521,7 @@ class TestEvaluateNoneMode:
                 response=f"A{i}",
                 retrieved_contexts=[f"ctx{i}"],
                 reference=f"R{i}",
+                metadata={"mode": "agent", "iterations": i + 1},
             )
             for i in range(n)
         ]
@@ -536,3 +565,4 @@ class TestEvaluateNoneMode:
         for scored in result.per_run_samples[0]:
             assert scored.scores == {}
             assert scored.response  # pipeline output is preserved
+            assert scored.metadata.get("mode") == "agent"  # provenance threaded
