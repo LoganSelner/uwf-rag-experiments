@@ -105,6 +105,36 @@ class TestSaveExperiment:
         assert line["id"] == "1"
         assert line["scores"]["f"] == 0.9
 
+    def test_run_jsonl_persists_metadata(self, tmp_path: Path) -> None:
+        """Per-query pipeline provenance (e.g. the agent loop trace) reaches the
+        saved run_*.jsonl so agent runs are auditable from their artifacts."""
+        config = _make_config()
+        sample = ScoredSample(
+            id="1",
+            query="Q",
+            response="A",
+            retrieved_contexts=["ctx"],
+            reference="R",
+            scores={"f": 0.9},
+            metadata={
+                "mode": "agent",
+                "iterations": 2,
+                "num_tool_calls": 1,
+                "steps": [{"action": "tool_call", "tool_name": "knowledge_base"}],
+            },
+        )
+        result = ExperimentResult(
+            experiment_name="test_exp",
+            metrics={"f": 0.9},
+            per_run_samples=[[sample]],
+        )
+        save_experiment(config, result, tmp_path)
+
+        line = json.loads((tmp_path / "test_exp" / "run_1.jsonl").read_text().strip())
+        assert line["metadata"]["mode"] == "agent"
+        assert line["metadata"]["iterations"] == 2
+        assert line["metadata"]["steps"][0]["tool_name"] == "knowledge_base"
+
     def test_cleans_stale_run_files(self, tmp_path: Path) -> None:
         """When re-running with fewer runs, old run files are removed."""
         config = _make_config()

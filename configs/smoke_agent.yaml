@@ -1,0 +1,44 @@
+# Single-agent ReAct smoke test — verify the loop end-to-end with no paid APIs.
+#
+# Mirrors smoke.yaml (all-local stack, 1-question dataset, evaluation.mode:
+# "none" so per-sample output is written without an LLM judge), but flips to the
+# agent pipeline: a local Ollama model drives the ReAct loop and calls the
+# `knowledge_base` RAG tool over the cached local index.
+#
+# IMPORTANT: the reasoning model must support Ollama tool calling. qwen3 /
+# qwen2.5 / llama3.1 do; a non-tool-calling model will simply never call the
+# tool, and the loop's budget-exhaustion fallback still returns a (tool-less)
+# answer — so the smoke run won't hang, but it won't exercise retrieval.
+#
+# Usage:
+#   python scripts/run_experiment.py configs/smoke_agent.yaml -v
+#
+# Inspect results/<name>/run_1.jsonl — metadata.iterations /
+# retrieved_chunk_count confirm the loop and RAG tool fired.
+
+extends: smoke.yaml
+
+name: "smoke_agent"
+description: "Local single-agent ReAct smoke (Ollama tool calling, 1 question)"
+
+pipeline_mode: "agent"
+
+agent:
+  mode: "single"
+  max_iterations: 4
+  system_prompt: |
+    You are an advising assistant. You MUST call the `knowledge_base` search
+    tool to look up relevant passages BEFORE answering — do not answer from
+    prior knowledge. After searching, answer only from the retrieved passages.
+  llm:
+    provider: "ollama"
+    model_name: "qwen3:14b"
+    temperature: 0.0
+    params:
+      # WSL2 → Windows-host Ollama. Change to your server's address/port.
+      base_url: "http://localhost:11434"
+  memory:
+    type: "none"
+  tools:
+    - name: "knowledge_base"
+      type: "rag"

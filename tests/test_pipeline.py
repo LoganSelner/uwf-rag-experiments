@@ -11,6 +11,9 @@ from core.types import (
     Chunk,
     GenerationResult,
     RetrievedChunk,
+    ToolCall,
+    ToolResult,
+    ToolSpec,
     TransformedQuery,
 )
 from pipeline.agent import AgentPipeline
@@ -273,29 +276,218 @@ class TestRAGPipeline:
             with pytest.raises(ValueError, match="Unknown pipeline_mode"):
                 RAGPipeline.from_config(mock_config)
 
-    def test_agent_mode_not_implemented(self) -> None:
+    def test_agent_mode_builds_agent_pipeline(self) -> None:
         mock_config = MagicMock()
         mock_config.pipeline_mode = "agent"
+        agent = MagicMock()
 
         with patch("pipeline.rag.IndexingPipeline.run_or_load_cache"):
-            with pytest.raises(NotImplementedError, match="not yet implemented"):
-                RAGPipeline.from_config(mock_config)
+            with patch(
+                "pipeline.rag.AgentPipeline.from_config", return_value=agent
+            ) as mock_from:
+                rag = RAGPipeline.from_config(mock_config)
+
+        mock_from.assert_called_once()
+        assert rag.active_pipeline is agent
 
 
 # -----------------------------------------------------------------------
-# AgentPipeline
+# AgentPipeline — single-agent ReAct loop
 # -----------------------------------------------------------------------
+
+
+def _fake_tool(name: str = "knowledge_base") -> MagicMock:
+    """A BaseTool-shaped mock with a real ``.name`` string."""
+    tool = MagicMock()
+    tool.name = name  # assign after construction (MagicMock(name=...) is special)
+    return tool
+
+
+def _agent(
+    generator: MagicMock,
+    tools: list[MagicMock],
+    *,
+    max_iterations: int = 5,
+    top_k_final: int = 3,
+) -> AgentPipeline:
+    specs = [ToolSpec(name=t.name, description="d") for t in tools]
+    return AgentPipeline(
+        reasoning_generator=generator,
+        tools=tools,  # type: ignore[arg-type]
+        tool_specs=specs,
+        max_iterations=max_iterations,
+        top_k_final=top_k_final,
+        system_prompt="You are an advising agent.",
+    )
 
 
 class TestAgentPipeline:
-    def test_init_raises(self) -> None:
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
-            AgentPipeline(config=MagicMock(), index_artifact=MagicMock())
+    def test_reason_act_observe_finalize(self) -> None:
+        gen = MagicMock()
+        gen.generate.side_effect = [
+            GenerationResult(
+                query="",
+                answer="",
+                tool_calls=[ToolCall("c1", "knowledge_base", {"query": "grades"})],
+            ),
+            GenerationResult(query="", answer="final answer", tool_calls=[]),
+        ]
+        tool = _fake_tool()
+        tool.execute.return_value = ToolResult(
+            tool_name="knowledge_base",
+            content="ctx",
+            success=True,
+            retrieved_chunks=[_make_rc("c1", 0.9)],
+        )
 
-    def test_run_raises(self) -> None:
-        # Can't even construct, so test the class method directly
-        with pytest.raises(NotImplementedError):
-            AgentPipeline(config=MagicMock(), index_artifact=MagicMock())
+        result = _agent(gen, [tool]).run("How does grade forgiveness work?")
+
+        assert gen.generate.call_count == 2
+        tool.execute.assert_called_once_with("grades")
+        assert result.answer == "final answer"
+        assert [rc.chunk.chunk_id for rc in result.retrieved_chunks] == ["c1"]
+        assert result.metadata["iterations"] == 2
+        assert result.metadata["num_tool_calls"] == 1
+        assert result.metadata["forced_final"] is False
+        # First call advertised tools, and a tool-result turn was fed back.
+        assert gen.generate.call_args_list[0].kwargs.get("tools") is not None
+
+    def test_budget_exhaustion_forces_final_answer(self) -> None:
+        # The model keeps calling tools; after max_iterations a final answer
+        # is forced with tools=None (guaranteeing termination).
+        gen = MagicMock()
+        gen.generate.side_effect = [
+            GenerationResult(
+                query="", answer="", tool_calls=[ToolCall("c1", "knowledge_base", {})]
+            ),
+            GenerationResult(
+                query="", answer="", tool_calls=[ToolCall("c2", "knowledge_base", {})]
+            ),
+            GenerationResult(query="", answer="forced", tool_calls=[]),
+        ]
+        tool = _fake_tool()
+        tool.execute.return_value = ToolResult(
+            tool_name="knowledge_base", content="ctx", success=True
+        )
+
+        result = _agent(gen, [tool], max_iterations=2).run("Q?")
+
+        assert gen.generate.call_count == 3
+        assert gen.generate.call_args_list[-1].kwargs.get("tools") is None
+        assert result.answer == "forced"
+        assert result.metadata["forced_final"] is True
+        assert result.metadata["iterations"] == 2
+
+    def test_chunks_deduped_and_capped(self) -> None:
+        gen = MagicMock()
+        gen.generate.side_effect = [
+            GenerationResult(
+                query="", answer="", tool_calls=[ToolCall("c1", "knowledge_base", {})]
+            ),
+            GenerationResult(
+                query="", answer="", tool_calls=[ToolCall("c2", "knowledge_base", {})]
+            ),
+            GenerationResult(query="", answer="done", tool_calls=[]),
+        ]
+        tool = _fake_tool()
+        tool.execute.side_effect = [
+            ToolResult(
+                tool_name="knowledge_base",
+                content="ctx1",
+                success=True,
+                retrieved_chunks=[_make_rc("c1", 0.9), _make_rc("c2", 0.5)],
+            ),
+            ToolResult(
+                tool_name="knowledge_base",
+                content="ctx2",
+                success=True,
+                retrieved_chunks=[_make_rc("c1", 0.95), _make_rc("c3", 0.7)],
+            ),
+        ]
+
+        result = _agent(gen, [tool], top_k_final=2).run("Q?")
+
+        # dedup by id keeping max score (c1→0.95), sort desc, cap at 2.
+        assert [rc.chunk.chunk_id for rc in result.retrieved_chunks] == ["c1", "c3"]
+        assert result.retrieved_chunks[0].score == 0.95
+        assert result.metadata["retrieved_chunk_count"] == 2
+
+    def test_tool_failure_is_recoverable(self) -> None:
+        gen = MagicMock()
+        gen.generate.side_effect = [
+            GenerationResult(
+                query="", answer="", tool_calls=[ToolCall("c1", "knowledge_base", {})]
+            ),
+            GenerationResult(query="", answer="recovered", tool_calls=[]),
+        ]
+        tool = _fake_tool()
+        tool.execute.return_value = ToolResult(
+            tool_name="knowledge_base",
+            content="search failed",
+            success=False,
+            retrieved_chunks=[],
+        )
+
+        result = _agent(gen, [tool]).run("Q?")  # must not raise
+
+        assert result.answer == "recovered"
+        assert result.retrieved_chunks == []
+
+    def test_unknown_tool_is_recoverable(self) -> None:
+        gen = MagicMock()
+        gen.generate.side_effect = [
+            GenerationResult(
+                query="", answer="", tool_calls=[ToolCall("c1", "ghost_tool", {})]
+            ),
+            GenerationResult(query="", answer="done", tool_calls=[]),
+        ]
+        tool = _fake_tool()
+
+        result = _agent(gen, [tool]).run("Q?")
+
+        tool.execute.assert_not_called()
+        assert result.answer == "done"
+        # The observation fed back names the unknown tool.
+        observation = gen.generate.call_args_list[1].args[0][-1]
+        assert observation["role"] == "tool"
+        assert "ghost_tool" in observation["content"]
+
+    @patch("pipeline.agent.tool_to_spec")
+    @patch("pipeline.agent.registry")
+    def test_from_config_wires_generator_tools_and_budget(
+        self, mock_registry: MagicMock, mock_tool_to_spec: MagicMock
+    ) -> None:
+        from core.config import ExperimentConfig
+
+        gen_cls = MagicMock()
+        tool_cls = MagicMock()
+        mem_cls = MagicMock()
+        mock_registry.get.side_effect = lambda category, name: {
+            "generation": gen_cls,
+            "tool": tool_cls,
+            "memory": mem_cls,
+        }[category]
+
+        config = ExperimentConfig.from_dict(
+            {
+                "pipeline_mode": "agent",
+                "agent": {
+                    "mode": "single",
+                    "max_iterations": 7,
+                    "llm": {"provider": "ollama", "model_name": "qwen2.5"},
+                    "tools": [{"name": "knowledge_base", "type": "rag"}],
+                    "memory": {"type": "none"},
+                },
+                "query": {"retrieval": {"top_k_retrieve": 10, "top_k_final": 4}},
+            }
+        )
+
+        pipeline = AgentPipeline.from_config(config, MagicMock())
+
+        assert pipeline._max_iterations == 7  # type: ignore[attr-defined]
+        assert pipeline._top_k_final == 4  # type: ignore[attr-defined]
+        gen_cls.assert_called_once()  # reasoning generator built
+        tool_cls.from_config.assert_called_once()  # tool built from its entry
 
 
 # -----------------------------------------------------------------------

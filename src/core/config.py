@@ -368,10 +368,17 @@ class SupervisorConfig:
 
 @dataclass
 class AgentDefinitionConfig:
-    """Config for one agent or tool in the agent roster."""
+    """Config for one agent or tool in the agent roster.
+
+    For a D1 tool entry: ``type`` is the registry name in category ``tool``
+    (e.g. ``rag``), ``name`` is the agent-facing tool name the LLM sees, and
+    ``description`` overrides the tool's default description. ``retrieval`` /
+    ``prompt`` / ``tool`` are reserved for the D2 multi-agent roster.
+    """
 
     name: str = ""
     type: str = "rag"
+    description: str = ""
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     prompt: PromptConfig = field(default_factory=PromptConfig)
     tool: str = ""
@@ -383,6 +390,7 @@ class AgentDefinitionConfig:
         return cls(
             name=data.get("name", ""),
             type=data.get("type", "rag"),
+            description=data.get("description", ""),
             retrieval=RetrievalConfig.from_dict(data.get("retrieval")),
             prompt=PromptConfig.from_dict(data.get("prompt")),
             tool=data.get("tool", ""),
@@ -391,9 +399,17 @@ class AgentDefinitionConfig:
 
 @dataclass
 class AgentConfig:
-    """Config for agent-based pipelines (single or multi-agent)."""
+    """Config for agent-based pipelines (single or multi-agent).
+
+    ``max_iterations`` bounds the single-agent ReAct loop (reason→act→observe);
+    ``system_prompt`` is the agent's standing instruction. ``supervisor`` and
+    ``agents`` are for the multi-agent mode (Phase D2); single-agent mode reads
+    ``tools``.
+    """
 
     mode: str = "single"
+    max_iterations: int = 5
+    system_prompt: str = ""
     llm: LLMConfig = field(default_factory=LLMConfig)
     supervisor: SupervisorConfig = field(default_factory=SupervisorConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -406,6 +422,8 @@ class AgentConfig:
             return cls()
         return cls(
             mode=data.get("mode", "single"),
+            max_iterations=data.get("max_iterations", 5),
+            system_prompt=data.get("system_prompt", ""),
             llm=LLMConfig.from_dict(data.get("llm")),
             supervisor=SupervisorConfig.from_dict(data.get("supervisor")),
             memory=MemoryConfig.from_dict(data.get("memory")),
@@ -591,6 +609,8 @@ _SUPPORTED_EVAL_MODES: frozenset[str] = frozenset({"full", "retrieval_only", "no
 
 _SUPPORTED_QT_FUSION_MODES: frozenset[str] = frozenset({"rrf", "max"})
 
+_SUPPORTED_AGENT_MODES: frozenset[str] = frozenset({"single", "multi"})
+
 
 def validate_config(config: ExperimentConfig, registry: Any) -> None:
     """Validate an ExperimentConfig against the component registry.
@@ -735,15 +755,7 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
                 f"Supported: {sorted(_SUPPORTED_QT_FUSION_MODES)}"
             )
 
-        _check_registered(
-            errors,
-            registry,
-            config.query.retrieval.type,
-            "retrieval",
-            "query.retrieval.type",
-        )
-
-        _validate_retrieval_dependencies(errors, config, registry)
+        _validate_query_retrieval(errors, config, registry)
         _validate_qt_branch_references(errors, config)
 
         rerank_type = config.query.reranking.type or "none"
@@ -783,35 +795,9 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
                     "is not 'retrieval_only' — a model name is required for generation"
                 )
 
-        # top_k constraints
-        if config.query.retrieval.top_k_retrieve <= 0:
-            errors.append(
-                f"query.retrieval.top_k_retrieve must be > 0 "
-                f"(got {config.query.retrieval.top_k_retrieve})"
-            )
-        if config.query.retrieval.top_k_final <= 0:
-            errors.append(
-                f"query.retrieval.top_k_final must be > 0 "
-                f"(got {config.query.retrieval.top_k_final})"
-            )
-        if config.query.retrieval.top_k_final > config.query.retrieval.top_k_retrieve:
-            errors.append(
-                f"query.retrieval.top_k_final ({config.query.retrieval.top_k_final}) "
-                f"> query.retrieval.top_k_retrieve "
-                f"({config.query.retrieval.top_k_retrieve})"
-            )
-
     # --- Agent pipeline components ---
     elif config.pipeline_mode == "agent":
-        _check_registered(
-            errors,
-            registry,
-            config.agent.memory.type,
-            "memory",
-            "agent.memory.type",
-        )
-        if not config.agent.agents and not config.agent.tools:
-            errors.append("pipeline_mode is 'agent' but no agents or tools are defined")
+        _validate_agent(errors, config, registry)
 
     elif config.pipeline_mode not in ("linear", "agent"):
         errors.append(
@@ -843,6 +829,116 @@ def _check_registered(
         errors.append(
             f"{config_path}: '{type_name}' is not registered in "
             f"category '{category}'. Available: {available}"
+        )
+
+
+def _validate_query_retrieval(
+    errors: list[str],
+    config: ExperimentConfig,
+    registry: Any,
+) -> None:
+    """Validate the query-side retrieval stack shared by linear and agent modes.
+
+    The agent's RAG tool reuses ``config.query``'s retriever + reranker, so both
+    modes need the retrieval type registered, its dependencies (bm25/hybrid
+    wiring) satisfied, and the top_k budget well-formed.
+    """
+    _check_registered(
+        errors,
+        registry,
+        config.query.retrieval.type,
+        "retrieval",
+        "query.retrieval.type",
+    )
+    _validate_retrieval_dependencies(errors, config, registry)
+
+    retrieval = config.query.retrieval
+    if retrieval.top_k_retrieve <= 0:
+        errors.append(
+            f"query.retrieval.top_k_retrieve must be > 0 "
+            f"(got {retrieval.top_k_retrieve})"
+        )
+    if retrieval.top_k_final <= 0:
+        errors.append(
+            f"query.retrieval.top_k_final must be > 0 (got {retrieval.top_k_final})"
+        )
+    if retrieval.top_k_final > retrieval.top_k_retrieve:
+        errors.append(
+            f"query.retrieval.top_k_final ({retrieval.top_k_final}) "
+            f"> query.retrieval.top_k_retrieve ({retrieval.top_k_retrieve})"
+        )
+
+
+def _validate_agent(
+    errors: list[str],
+    config: ExperimentConfig,
+    registry: Any,
+) -> None:
+    """Validate agent-pipeline config (Phase D1: single-agent ReAct).
+
+    The single agent reasons over a roster of ``agent.tools`` (D2's supervisor
+    ``agent.agents`` are not implemented yet) using ``agent.llm`` as its
+    tool-calling reasoning model, and its RAG tool reuses the query retrieval +
+    rerank stack.
+    """
+    agent = config.agent
+
+    # Reasoning mode.
+    if agent.mode not in _SUPPORTED_AGENT_MODES:
+        errors.append(
+            f"agent.mode: '{agent.mode}' is not supported. "
+            f"Supported: {sorted(_SUPPORTED_AGENT_MODES)}"
+        )
+    elif agent.mode == "multi":
+        errors.append(
+            "agent.mode 'multi' (multi-agent supervisor) is not implemented yet "
+            "(Phase D2). Use 'single'."
+        )
+
+    # Reasoning LLM — must be a registered generator with a model name.
+    _check_registered(
+        errors, registry, agent.llm.provider, "generation", "agent.llm.provider"
+    )
+    if not agent.llm.model_name:
+        errors.append(
+            "agent.llm.model_name is empty — a model name is required for the "
+            "agent's reasoning LLM"
+        )
+
+    # Iteration budget.
+    if agent.max_iterations <= 0:
+        errors.append(f"agent.max_iterations must be > 0 (got {agent.max_iterations})")
+
+    # Memory.
+    _check_registered(
+        errors, registry, agent.memory.type, "memory", "agent.memory.type"
+    )
+
+    # Tool roster.
+    for i, tool in enumerate(agent.tools):
+        _check_registered(errors, registry, tool.type, "tool", f"agent.tools[{i}].type")
+    if not agent.agents and not agent.tools:
+        errors.append("pipeline_mode is 'agent' but no agents or tools are defined")
+    elif agent.mode == "single" and not agent.tools:
+        errors.append(
+            "agent.mode is 'single' but agent.tools is empty — a single agent "
+            "needs at least one tool"
+        )
+
+    # The RAG tool reuses the query retrieval + rerank stack, so validate it.
+    _validate_query_retrieval(errors, config, registry)
+    rerank_type = config.query.reranking.type or "none"
+    _check_registered(
+        errors, registry, rerank_type, "reranking", "query.reranking.type"
+    )
+
+    # Agent mode always produces an answer via tool use; retrieval_only (which
+    # skips generation) has no meaning here.
+    if config.evaluation.mode == "retrieval_only":
+        errors.append(
+            "evaluation.mode 'retrieval_only' is not compatible with "
+            "pipeline_mode 'agent' — the agent produces an answer via tool use; "
+            "use 'full' or 'none'"
         )
 
 

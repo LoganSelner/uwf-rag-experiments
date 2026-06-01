@@ -16,7 +16,9 @@ from core.types import (
     GenerationResult,
     RetrievedChunk,
     ScoredSample,
+    ToolCall,
     ToolResult,
+    ToolSpec,
     TransformedQuery,
 )
 
@@ -90,9 +92,54 @@ class TestTransformedQuery:
 
 class TestGenerationResult:
     def test_defaults(self) -> None:
+        # Two-arg positional construction must keep working after adding the
+        # tool-calling fields — the linear pipeline relies on it.
         r = GenerationResult(query="q", answer="a")
         assert r.retrieved_chunks == []
         assert r.metadata == {}
+        assert r.tool_calls == []
+        assert r.finish_reason == ""
+
+    def test_tool_calling_fields(self) -> None:
+        r = GenerationResult(
+            query="q",
+            answer="",
+            tool_calls=[ToolCall(id="c1", name="kb", arguments={"query": "x"})],
+            finish_reason="tool_calls",
+        )
+        assert r.finish_reason == "tool_calls"
+        assert r.tool_calls[0].name == "kb"
+
+    def test_mutable_defaults_independent(self) -> None:
+        a = GenerationResult(query="q", answer="a")
+        b = GenerationResult(query="q", answer="a")
+        a.tool_calls.append(ToolCall(id="c", name="kb"))
+        assert b.tool_calls == []
+
+
+class TestToolSpec:
+    def test_fields(self) -> None:
+        spec = ToolSpec(
+            name="knowledge_base",
+            description="Search the KB.",
+            parameters={"type": "object", "properties": {}},
+        )
+        assert spec.name == "knowledge_base"
+        assert spec.parameters["type"] == "object"
+
+    def test_parameters_default_empty(self) -> None:
+        assert ToolSpec(name="t", description="d").parameters == {}
+
+
+class TestToolCall:
+    def test_fields(self) -> None:
+        tc = ToolCall(id="c1", name="kb", arguments={"query": "x"})
+        assert tc.id == "c1"
+        assert tc.name == "kb"
+        assert tc.arguments == {"query": "x"}
+
+    def test_arguments_default_empty(self) -> None:
+        assert ToolCall(id="c1", name="kb").arguments == {}
 
 
 class TestToolResult:
@@ -120,6 +167,7 @@ class TestEvalSample:
         )
         assert s.id == "1"
         assert s.reference == "ref"
+        assert s.metadata == {}
 
 
 class TestScoredSample:
@@ -139,6 +187,25 @@ class TestScoredSample:
         assert d["output"]["response"] == "r"
         assert d["output"]["retrieved_contexts"] == ["c1", "c2"]
         assert d["scores"]["faithfulness"] == 0.9
+        # Metadata defaults to an empty dict and is always present.
+        assert d["metadata"] == {}
+
+    def test_to_result_dict_persists_metadata(self) -> None:
+        # Agent provenance (iterations, tool calls, step trace) must reach the
+        # saved per-sample output so runs are auditable.
+        s = ScoredSample(
+            id="1",
+            query="q",
+            response="r",
+            retrieved_contexts=["c"],
+            reference="ref",
+            scores={"f": 0.9},
+            metadata={"mode": "agent", "iterations": 2, "num_tool_calls": 1},
+        )
+        d = s.to_result_dict()
+        assert d["metadata"]["mode"] == "agent"
+        assert d["metadata"]["iterations"] == 2
+        assert d["metadata"]["num_tool_calls"] == 1
 
     def test_to_result_dict_with_none_scores(self) -> None:
         s = ScoredSample(

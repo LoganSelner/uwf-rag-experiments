@@ -25,8 +25,11 @@ Every component is swappable via config. No code changes needed.
 | **Retrieval** | `dense` (single-vector similarity), `bm25` (lexical), `hybrid` (dense + sparse fusion: RRF or weighted) | `query.retrieval.type` |
 | **Query Transform** | `passthrough`, `contextualizer` (LLM reformulation), `hyde` (hypothetical document embeddings), `multi_query` (RAG-Fusion expansion) | `query.query_transform.type` |
 | **Reranking** | `none` (passthrough), `cross_encoder` (HF cross-encoder) | `query.reranking.type` |
-| **Generation** | `ollama` (local), `edenai` (cloud gateway), `google` (Gemini), `openai` | `query.generation.type` |
+| **Generation** | `ollama` (local), `edenai` (cloud gateway), `google` (Gemini), `openai` — all support native tool calling | `query.generation.type` |
 | **Prompts** | `chat` (numbered/plain context, CoT, citation styles) | `query.prompt.type` |
+| **Pipeline Mode** | `linear`, `agent` (single-agent ReAct, native tool calling) | `pipeline_mode` |
+| **Agent Tools** | `rag` (knowledge-base search) | `agent.tools[].type` |
+| **Agent Memory** | `none`, `buffer_window` | `agent.memory.type` |
 
 ## Prerequisites
 
@@ -222,9 +225,25 @@ Standard chunking alternatives. Each changes only the indexing chunking config; 
 
 **Chunk size** often moves retrieval quality more than chunking *strategy*, so the sweep measures it directly against the `base.yaml` default (1000/100). **Semantic chunking** splits on embedding-similarity breakpoints (`percentile`/`standard_deviation`/`interquartile`/`gradient`) rather than fixed character counts, using a small local model for breakpoint detection independent of the indexing embedder. **Contextual retrieval** ([Anthropic](https://www.anthropic.com/news/contextual-retrieval)) prepends a short, LLM-generated blurb situating each chunk within its surrounding document — added to the embedded + BM25-indexed text only (via `Chunk.index_text`), so the stored chunk, generator input, and RAGAS contexts stay original and the measured effect is isolated to retrieval. Scope is configurable (`document` / `page` / `window`); the shipped config uses a ±1-page window since the corpus is ingested per page.
 
+### Agentic (single-agent ReAct)
+
+A single reasoning LLM drives a reason→act(tool)→observe loop via **native tool calling**, deciding for itself when to search and when it has enough evidence to answer. Its `knowledge_base` tool searches the *same* index + retrieval/rerank stack as the linear baseline (retrieval-only, query-transform forced to passthrough), so the comparison isolates the agentic control flow.
+
+| Config | Varies |
+|--------|--------|
+| `agent_single.yaml` (top-level) | `pipeline_mode: agent` — single-agent ReAct vs. the linear `base.yaml` |
+
+```bash
+python scripts/run_experiment.py configs/agent_single.yaml
+```
+
+Because `agent_single.yaml` inherits `base.yaml`'s indexing, it **shares base's cached index** (the fingerprint excludes agent/query/eval config) — so linear vs. single-agent run on identical retrieval and land in one comparison table. The agent unions the chunks retrieved across all tool calls (dedup by id, capped at `top_k_final`) into its result, so retrieval metrics (context precision/recall) score in agent mode just as in linear. `agent.max_iterations` bounds the loop; a final answer is forced if the budget is exhausted. Per-query loop traces (`iterations`, tool calls, chunk counts) land in `metadata` in the output JSONL.
+
 ### Smoke Test
 
 `configs/smoke.yaml` (top-level, not under `experiments/`) routes the entire pipeline through local Ollama + HuggingFace with a 1-question dataset and sets `evaluation.mode: "none"` — the pipeline runs end-to-end and writes per-sample outputs to `run_1.jsonl`, but no RAGAS scoring (and no judge-LLM call) occurs. Use it to verify the pipeline without spending API credits or waiting on a local judge. Its results are not comparable to formal experiments.
+
+`configs/smoke_agent.yaml` is the agent analog: the same all-local, no-judge setup but with `pipeline_mode: agent`, so the ReAct loop and `knowledge_base` tool run end-to-end on local Ollama. The reasoning model must support Ollama tool calling (qwen3 / qwen2.5 / llama3.1); if it doesn't, the loop's forced-final fallback still returns an answer.
 
 ## Output Format
 

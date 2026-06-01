@@ -200,6 +200,7 @@ class Evaluator:
                     retrieved_contexts=s.retrieved_contexts,
                     reference=s.reference,
                     scores=scores,
+                    metadata=s.metadata,
                 )
                 for s, scores in zip(samples, sample_scores, strict=True)
             ]
@@ -250,6 +251,7 @@ class Evaluator:
                         response=result.answer,
                         retrieved_contexts=contexts,
                         reference=item["reference"],
+                        metadata=result.metadata,
                     )
                 )
             except Exception:

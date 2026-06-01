@@ -10,6 +10,19 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
+# Shared aliases
+# ---------------------------------------------------------------------------
+
+# A single chat message in the neutral, OpenAI-style schema shared by every
+# generator. ``content`` is a string (or ``None`` on an assistant turn that
+# only carries tool calls); a tool-calling assistant turn additionally carries
+# ``tool_calls`` and a tool-result turn carries ``tool_call_id``. Kept as a
+# loose ``dict[str, Any]`` (rather than a TypedDict) because each generator
+# translates it to its own provider shape — see ``components/_tool_protocol``.
+Message = dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
 # Indexing-side types
 # ---------------------------------------------------------------------------
 
@@ -97,12 +110,20 @@ class GenerationResult:
 
     This is the common type consumed by the evaluator. Both
     QueryPipeline and AgentPipeline produce this.
+
+    ``tool_calls`` and ``finish_reason`` are populated only by a
+    tool-calling generator (``generate(prompt, tools=...)``); they are empty
+    on the linear path, so adding them leaves linear behavior unchanged. When
+    a model chooses to call a tool instead of answering, ``answer`` may be
+    ``""`` and ``tool_calls`` is non-empty — the agent loop branches on that.
     """
 
     query: str
     answer: str
     retrieved_chunks: list[RetrievedChunk] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    finish_reason: str = ""
 
 
 @runtime_checkable
@@ -120,6 +141,37 @@ class Queryable(Protocol):
 # ---------------------------------------------------------------------------
 # Agent-side types
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class ToolSpec:
+    """A tool advertised to a tool-calling LLM.
+
+    ``parameters`` is a JSON-Schema object describing the tool's arguments
+    (e.g. ``{"type": "object", "properties": {"query": {"type": "string"}},
+    "required": ["query"]}``). Each generator translates this into its
+    provider's tool/function-declaration format.
+    """
+
+    name: str
+    description: str
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ToolCall:
+    """A single tool invocation requested by a tool-calling LLM.
+
+    ``arguments`` is the **parsed** argument dict (not a JSON string) — each
+    generator handles the string↔dict conversion at its own provider boundary,
+    so the agent loop and tests work with an ergonomic dict. ``id`` correlates
+    the call with its result turn; providers that omit ids (Ollama, Gemini)
+    get a synthesized one.
+    """
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -153,13 +205,20 @@ class AgentStep:
 
 @dataclass
 class EvalSample:
-    """One evaluation sample in the format RAGAS expects."""
+    """One evaluation sample in the format RAGAS expects.
+
+    ``metadata`` carries the producing pipeline's ``GenerationResult.metadata``
+    (e.g. the agent's iteration/tool-call/step trace, or a generator's
+    model/token counts) through to the saved per-sample output. RAGAS ignores
+    it — it exists so runs stay auditable from their artifacts.
+    """
 
     id: str
     query: str
     response: str
     retrieved_contexts: list[str]
     reference: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -175,12 +234,15 @@ class ScoredSample:
     retrieved_contexts: list[str]
     reference: str
     scores: dict[str, float | None]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_result_dict(self) -> dict[str, Any]:
         """Serialize to nested dict for JSONL output.
 
-        Follows the input/output/scores convention used by
-        AWS Bedrock and OpenAI Evals.
+        Follows the input/output/scores convention used by AWS Bedrock and
+        OpenAI Evals, plus a top-level ``metadata`` carrying the pipeline's
+        per-query provenance (e.g. the agent's iteration/tool-call/step trace)
+        so runs stay auditable from their artifacts.
         """
         return {
             "id": self.id,
@@ -190,6 +252,7 @@ class ScoredSample:
                 "retrieved_contexts": self.retrieved_contexts,
             },
             "scores": self.scores,
+            "metadata": self.metadata,
         }
 
 
