@@ -122,13 +122,14 @@ src/
 │   ├── prompts.py        ChatPromptTemplate
 │   ├── query_transforms.py  ContextualizerQueryTransformer, HyDEQueryTransformer, MultiQueryQueryTransformer
 │   ├── rerankers.py      CrossEncoderReranker
-│   ├── tools.py          (stub — Phase D)
+│   ├── tools.py          RAGSearchTool (tool/rag) + tool_to_spec
+│   ├── _tool_protocol.py Pure helpers for the native tool-calling schema
 │   └── __init__.py       Imports all implementation files → triggers registration
 │
 ├── pipeline/
 │   ├── indexing.py        IndexArtifact + IndexingPipeline (vector + auxiliary stores)
 │   ├── query.py           QueryPipeline (linear RAG)
-│   ├── agent.py           AgentPipeline (stub — Phase D)
+│   ├── agent.py           AgentPipeline (single-agent ReAct, native tool calling)
 │   └── rag.py             RAGPipeline (top-level dispatcher)
 │
 └── evaluation/
@@ -268,8 +269,10 @@ All types live in `src/core/types.py`.
 | `TransformedQuery` | QueryTransformer | Retriever (`retrieve_multi`) |
 | `RetrievedChunk` | VectorStore / Retriever | Reranker, PromptTemplate |
 | `GenerationResult` | Pipeline (assembled) | Evaluator |
-| `ToolResult` | BaseTool | AgentPipeline (future) |
-| `AgentStep` | AgentPipeline (future) | Results / logging |
+| `ToolSpec` | AgentPipeline (from tools) | BaseGenerator (`generate(tools=…)`) |
+| `ToolCall` | BaseGenerator | AgentPipeline (loop) |
+| `ToolResult` | BaseTool | AgentPipeline |
+| `AgentStep` | AgentPipeline | Results / logging (metadata) |
 | `EvalSample` | Evaluator | RAGAS |
 | `ScoredSample` | Evaluator | Result files (JSONL) |
 | `ExperimentResult` | Evaluator | `results.py` serialization |
@@ -452,7 +455,7 @@ All abstract base classes live in `src/components/base.py`.
 | | | `retrieve_multi(queries, top_k, fusion, filters)` | `list[TransformedQuery] → list[RetrievedChunk]` |
 | `BaseQueryTransformer` | `query_transform` | `transform(query, history)` | `str → list[TransformedQuery]` |
 | `BaseReranker` | `reranking` | `rerank(query, chunks, top_k)` | `→ list[RetrievedChunk]` |
-| `BaseGenerator` | `generation` | `generate(prompt)` | `str\|list[dict] → GenerationResult` |
+| `BaseGenerator` | `generation` | `generate(prompt, tools=None)` | `str\|list[Message] → GenerationResult` (optional `tools` → tool-calling) |
 | `BasePromptTemplate` | `prompts` | `format(query, chunks, history)` | `→ str\|list[dict]` |
 | `BaseTool` | `tool` | `execute(query)` | `str → ToolResult` |
 | `BaseMemory` | `memory` | `add_turn()` / `get_history()` / `clear()` | Turn management |
@@ -463,6 +466,19 @@ All abstract base classes live in `src/components/base.py`.
 pipeline calls `PromptTemplate.format()` first. The generator is a
 pure LLM wrapper that knows nothing about retrieval context. This
 is what makes prompt config changes actually affect output.
+
+**Tool calling is an additive, optional capability.** `generate` grew an
+optional `tools: list[ToolSpec] | None` parameter; when omitted (the linear
+pipeline's only call) behavior is byte-for-byte unchanged and the result's
+`tool_calls` / `finish_reason` stay empty. When provided, the model may return
+`tool_calls` instead of an answer. The agent loop and generators exchange a
+**neutral OpenAI-style message schema** — assistant turns may carry
+`tool_calls`; a `tool`-role turn carries `tool_call_id` + `content`
+(`ToolCall.arguments` is a parsed dict; the JSON-string↔dict and per-provider
+shape translation lives inside each generator and the pure helpers in
+`components/_tool_protocol.py`). All four providers implement it (EdenAI via
+`ChatEdenAI.bind_tools`; Gemini keys tool results by function name; Ollama/
+Gemini omit ids, which the loop synthesizes).
 
 **BaseRetriever holds injected dependencies.** Dense retrievers
 receive vectorstore + embedder via `set_vectorstore()` /
@@ -552,6 +568,7 @@ metadata, and truncates.
 | `prompts` | `chat` | `ChatPromptTemplate` | `prompts.py` |
 | `memory` | `none` | `NoMemory` | `defaults.py` |
 | `memory` | `buffer_window` | `BufferWindowMemory` | `defaults.py` |
+| `tool` | `rag` | `RAGSearchTool` | `tools.py` |
 
 ---
 
@@ -625,16 +642,32 @@ comparable) remains the hybrid retriever's job via `core.fusion`.
 
 ### AgentPipeline (`pipeline/agent.py`)
 
-Stub. Defines the class interface (`__init__`, `run`, `query`)
-and raises `NotImplementedError`. Will support single-agent (ReAct)
-and multi-agent (supervisor-routed) modes in Phase D.
+Single-agent ReAct (Phase D1). One reasoning LLM drives a
+reason→act(tool)→observe loop via **native tool calling**:
+`from_config(config, index_artifact)` builds the reasoning generator
+(from `agent.llm`, via the same `generator_type` idiom the query
+transformers use), the tool roster (each `agent.tools` entry →
+`registry.get("tool", …).from_config(entry, config, index_artifact)`),
+and the loop budget (`agent.max_iterations`, `top_k_final`).
+
+`run(query)` seeds `[system?, user]` and loops up to `max_iterations`:
+`generate(messages, tools=specs)`; if the result has `tool_calls`, each is
+executed, its result appended as a `tool`-role message, and any
+`retrieved_chunks` accumulated; otherwise the result's text is the final
+answer. If the budget is exhausted, a final answer is forced with
+`tools=None`. The accumulated chunks are unioned (dedup by `chunk_id`, keep
+max score, cap at `top_k_final`) into the returned `GenerationResult`, so the
+evaluator scores retrieval in agent mode on the same metrics as linear; an
+`AgentStep` trace + counters land in `metadata`. A missing tool or a tool
+failure becomes a recoverable observation, not a crash. `query()` delegates to
+`run()`, satisfying `Queryable`. The loop is monolithic by design (one
+mechanism today); multi-agent supervisor mode is Phase D2.
 
 ### RAGPipeline (`pipeline/rag.py`)
 
 Top-level dispatcher. `from_config(config, no_cache)` builds the
 index via `IndexingPipeline.run_or_load_cache()`, then constructs
-either a `QueryPipeline` (linear mode) or raises
-`NotImplementedError` (agent mode).
+either a `QueryPipeline` (linear mode) or an `AgentPipeline` (agent mode).
 
 `query(question)` delegates to the active pipeline's `run()`.
 Satisfies the `Queryable` protocol.

@@ -1,0 +1,53 @@
+# Single-agent ReAct (Phase D1) — formal config.
+#
+# One reasoning LLM drives a reason→act(tool)→observe loop via NATIVE tool
+# calling, deciding for itself when it has enough evidence to answer. Its only
+# tool is `knowledge_base`, which searches the SAME index + retrieval/rerank
+# stack as the linear baseline (the RAG tool wraps a retrieval-only
+# QueryPipeline built from `query.*`, with the query transform forced to
+# passthrough since the agent already reformulates).
+#
+# Comparability: this inherits base.yaml's indexing, so it SHARES base's cached
+# index (the fingerprint excludes agent/query/eval config). It also inherits
+# base's dense retrieval, so linear (base.yaml) vs. single-agent isolates the
+# agentic control flow as the only variable. Evaluation (full mode, same
+# dataset + GPT-4.1 judge) is inherited unchanged, so both land in one table.
+#
+# Variables changed from base.yaml:
+#   - pipeline_mode: linear → agent
+#   - agent.*: reasoning LLM + max_iterations + the knowledge_base RAG tool
+#
+# Note: the reasoning LLM must support tool calling. Via Eden AI this means a
+# tool-capable sub_provider/model (the OpenAI sub-provider + gpt-4.1 do).
+
+extends: base.yaml
+
+name: "agent_single"
+description: "Single-agent ReAct (native tool calling) over the KB, vs linear base"
+
+pipeline_mode: "agent"
+
+agent:
+  mode: "single"
+  max_iterations: 5
+  system_prompt: |
+    You are an academic advising assistant for the University of West Florida.
+    You have a `knowledge_base` search tool over the official advising
+    documents. When a question needs factual information (policies, deadlines,
+    requirements, procedures), search the knowledge base before answering — you
+    may search more than once, refining the query, to gather enough evidence.
+    Answer ONLY from the retrieved passages; if the knowledge base does not
+    contain the answer, say so concisely. Do not invent policies, dates, course
+    numbers, or requirements.
+  llm:
+    provider: "edenai"
+    model_name: "gpt-4.1"
+    temperature: 0.0
+    max_tokens: 1024
+    params:
+      sub_provider: "openai"
+  memory:
+    type: "none"
+  tools:
+    - name: "knowledge_base"
+      type: "rag"

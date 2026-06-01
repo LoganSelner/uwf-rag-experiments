@@ -8,6 +8,7 @@ import pytest
 
 from core.config import (
     AgentConfig,
+    AgentDefinitionConfig,
     ComponentConfig,
     ConfigValidationError,
     EvaluationConfig,
@@ -268,6 +269,25 @@ class TestSpecificConfigs:
         assert cfg.mode == "multi"
         assert len(cfg.agents) == 1
         assert len(cfg.tools) == 1
+
+    def test_agent_config_defaults(self) -> None:
+        cfg = AgentConfig.from_dict(None)
+        assert cfg.mode == "single"
+        assert cfg.max_iterations == 5
+        assert cfg.system_prompt == ""
+
+    def test_agent_config_max_iterations_and_system_prompt(self) -> None:
+        cfg = AgentConfig.from_dict(
+            {"max_iterations": 8, "system_prompt": "You are an advising agent."}
+        )
+        assert cfg.max_iterations == 8
+        assert cfg.system_prompt == "You are an advising agent."
+
+    def test_agent_definition_description_round_trip(self) -> None:
+        cfg = AgentConfig.from_dict(
+            {"tools": [{"name": "kb", "type": "rag", "description": "Search docs."}]}
+        )
+        assert cfg.tools[0].description == "Search docs."
 
 
 # -----------------------------------------------------------------------
@@ -973,3 +993,140 @@ class TestValidateConfigSparseAndHybrid:
             ],
         )
         validate_config(cfg, registry)
+
+
+# -----------------------------------------------------------------------
+# Phase D1 — agent pipeline validation
+# -----------------------------------------------------------------------
+
+
+class TestValidateAgentConfig:
+    """Validator coverage for the single-agent (ReAct) pipeline."""
+
+    def _make_valid_agent_config(self, **overrides: object) -> ExperimentConfig:
+        data: dict = {
+            "name": "agent_test",
+            "pipeline_mode": "agent",
+            "indexing": {
+                "sources": [{"name": "s", "path": "", "ingest": {"type": "pdf"}}],
+                "chunking": {"type": "recursive_langchain"},
+                "embedding": {"type": "huggingface"},
+                "vectorstore": {"type": "faiss"},
+            },
+            "query": {
+                "retrieval": {"type": "dense", "top_k_retrieve": 10, "top_k_final": 5},
+                "reranking": {"type": "none"},
+            },
+            "agent": {
+                "mode": "single",
+                "max_iterations": 5,
+                "llm": {"provider": "ollama", "model_name": "qwen2.5"},
+                "memory": {"type": "none"},
+                "tools": [{"name": "knowledge_base", "type": "rag"}],
+            },
+            "evaluation": {
+                "dataset": "",
+                "mode": "full",
+                "evaluator_embedding": {"type": "huggingface"},
+            },
+        }
+        for key, value in overrides.items():
+            parts = key.split(".")
+            d = data
+            for p in parts[:-1]:
+                d = d[p]
+            d[parts[-1]] = value
+        return ExperimentConfig.from_dict(data)
+
+    def test_valid_agent_config_passes(self) -> None:
+        validate_config(self._make_valid_agent_config(), registry)  # should not raise
+
+    def test_max_iterations_must_be_positive(self) -> None:
+        cfg = self._make_valid_agent_config(**{"agent.max_iterations": 0})
+        with pytest.raises(ConfigValidationError, match="max_iterations must be > 0"):
+            validate_config(cfg, registry)
+
+    def test_mode_multi_not_implemented(self) -> None:
+        cfg = self._make_valid_agent_config(**{"agent.mode": "multi"})
+        with pytest.raises(ConfigValidationError, match="not implemented yet"):
+            validate_config(cfg, registry)
+
+    def test_unknown_mode_rejected(self) -> None:
+        cfg = self._make_valid_agent_config(**{"agent.mode": "bogus"})
+        with pytest.raises(ConfigValidationError, match=r"agent\.mode"):
+            validate_config(cfg, registry)
+
+    def test_llm_provider_must_be_registered_generator(self) -> None:
+        cfg = self._make_valid_agent_config(
+            **{"agent.llm": {"provider": "anthropic", "model_name": "x"}}
+        )
+        with pytest.raises(ConfigValidationError, match=r"agent\.llm\.provider"):
+            validate_config(cfg, registry)
+
+    def test_llm_model_name_required(self) -> None:
+        cfg = self._make_valid_agent_config(
+            **{"agent.llm": {"provider": "ollama", "model_name": ""}}
+        )
+        with pytest.raises(
+            ConfigValidationError, match=r"agent\.llm\.model_name is empty"
+        ):
+            validate_config(cfg, registry)
+
+    def test_tool_type_must_be_registered(self) -> None:
+        cfg = self._make_valid_agent_config(
+            **{"agent.tools": [{"name": "kb", "type": "bogus_tool"}]}
+        )
+        with pytest.raises(ConfigValidationError, match="bogus_tool"):
+            validate_config(cfg, registry)
+
+    def test_single_mode_requires_tools(self) -> None:
+        # A single agent with agents-but-no-tools is degenerate (agents are
+        # for D2's supervisor): the single loop needs at least one tool.
+        cfg = self._make_valid_agent_config()
+        cfg.agent.tools = []
+        cfg.agent.agents = [AgentDefinitionConfig(name="a", type="rag")]
+        with pytest.raises(
+            ConfigValidationError, match=r"single.*needs at least one tool"
+        ):
+            validate_config(cfg, registry)
+
+    def test_no_tools_or_agents_rejected(self) -> None:
+        cfg = self._make_valid_agent_config()
+        cfg.agent.tools = []
+        cfg.agent.agents = []
+        with pytest.raises(ConfigValidationError, match="no agents or tools"):
+            validate_config(cfg, registry)
+
+    def test_memory_type_must_be_registered(self) -> None:
+        cfg = self._make_valid_agent_config(**{"agent.memory": {"type": "bogus_mem"}})
+        with pytest.raises(ConfigValidationError, match="bogus_mem"):
+            validate_config(cfg, registry)
+
+    def test_retrieval_only_incompatible_with_agent(self) -> None:
+        cfg = self._make_valid_agent_config(**{"evaluation.mode": "retrieval_only"})
+        with pytest.raises(
+            ConfigValidationError, match=r"retrieval_only.*not compatible"
+        ):
+            validate_config(cfg, registry)
+
+    def test_agent_reuses_query_retrieval_validation(self) -> None:
+        # The RAG tool depends on query.retrieval, so its top_k budget is
+        # validated in agent mode too.
+        cfg = self._make_valid_agent_config()
+        cfg.query.retrieval.top_k_final = 99
+        cfg.query.retrieval.top_k_retrieve = 5
+        with pytest.raises(ConfigValidationError, match="top_k_final"):
+            validate_config(cfg, registry)
+
+    def test_agent_hybrid_rag_tool_requires_sparse_index(self) -> None:
+        # Agent RAG tool can use hybrid retrieval; its bm25 dependency is
+        # validated through the shared retrieval-core check.
+        cfg = self._make_valid_agent_config()
+        cfg.query.retrieval.type = "bm25"
+        with pytest.raises(ConfigValidationError, match=r"indexing\.sparse_index"):
+            validate_config(cfg, registry)
+
+    def test_none_eval_mode_passes(self) -> None:
+        cfg = self._make_valid_agent_config(**{"evaluation.mode": "none"})
+        cfg.evaluation.evaluator_embedding.type = ""
+        validate_config(cfg, registry)  # should not raise

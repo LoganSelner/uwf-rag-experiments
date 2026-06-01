@@ -16,7 +16,9 @@ from core.types import (
     GenerationResult,
     RetrievedChunk,
     ScoredSample,
+    ToolCall,
     ToolResult,
+    ToolSpec,
     TransformedQuery,
 )
 
@@ -90,9 +92,54 @@ class TestTransformedQuery:
 
 class TestGenerationResult:
     def test_defaults(self) -> None:
+        # Two-arg positional construction must keep working after adding the
+        # tool-calling fields — the linear pipeline relies on it.
         r = GenerationResult(query="q", answer="a")
         assert r.retrieved_chunks == []
         assert r.metadata == {}
+        assert r.tool_calls == []
+        assert r.finish_reason == ""
+
+    def test_tool_calling_fields(self) -> None:
+        r = GenerationResult(
+            query="q",
+            answer="",
+            tool_calls=[ToolCall(id="c1", name="kb", arguments={"query": "x"})],
+            finish_reason="tool_calls",
+        )
+        assert r.finish_reason == "tool_calls"
+        assert r.tool_calls[0].name == "kb"
+
+    def test_mutable_defaults_independent(self) -> None:
+        a = GenerationResult(query="q", answer="a")
+        b = GenerationResult(query="q", answer="a")
+        a.tool_calls.append(ToolCall(id="c", name="kb"))
+        assert b.tool_calls == []
+
+
+class TestToolSpec:
+    def test_fields(self) -> None:
+        spec = ToolSpec(
+            name="knowledge_base",
+            description="Search the KB.",
+            parameters={"type": "object", "properties": {}},
+        )
+        assert spec.name == "knowledge_base"
+        assert spec.parameters["type"] == "object"
+
+    def test_parameters_default_empty(self) -> None:
+        assert ToolSpec(name="t", description="d").parameters == {}
+
+
+class TestToolCall:
+    def test_fields(self) -> None:
+        tc = ToolCall(id="c1", name="kb", arguments={"query": "x"})
+        assert tc.id == "c1"
+        assert tc.name == "kb"
+        assert tc.arguments == {"query": "x"}
+
+    def test_arguments_default_empty(self) -> None:
+        assert ToolCall(id="c1", name="kb").arguments == {}
 
 
 class TestToolResult:

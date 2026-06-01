@@ -19,8 +19,10 @@ from core.types import (
     Document,
     EmbeddedChunk,
     GenerationResult,
+    Message,
     RetrievedChunk,
     ToolResult,
+    ToolSpec,
     TransformedQuery,
 )
 
@@ -351,11 +353,25 @@ class BaseGenerator(ABC):
         self.config = config or {}
 
     @abstractmethod
-    def generate(self, prompt: str | list[dict[str, str]]) -> GenerationResult:
+    def generate(
+        self,
+        prompt: str | list[Message],
+        tools: list[ToolSpec] | None = None,
+    ) -> GenerationResult:
         """Generate a response from a formatted prompt.
 
         Returns a GenerationResult with answer and metadata populated.
         The pipeline is responsible for attaching query and chunks.
+
+        When ``tools`` is ``None`` (the linear pipeline's only call), this is
+        a plain free-text completion and the result's ``tool_calls`` /
+        ``finish_reason`` stay empty — behavior is identical to before tool
+        support existed. When ``tools`` is provided, the model may instead
+        request tool calls: the result carries them in ``tool_calls`` (with
+        ``answer`` possibly empty) and the caller (the agent loop) executes
+        them and feeds results back via the neutral message schema. ``prompt``
+        may then contain assistant turns with ``tool_calls`` and ``tool``-role
+        turns with ``tool_call_id`` (see :data:`core.types.Message`).
         """
 
 

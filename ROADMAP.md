@@ -324,19 +324,40 @@ This is **not** framed as replicating any prior agent version.
 
 #### Phase D1 — Single-Agent (ReAct)
 
-| # | Component | Location | Notes |
-|---|-----------|----------|-------|
-| 7 | ReAct agent loop | `pipeline/agent.py` | Reason → act (tool) → observe → repeat |
-| 8 | RAG tool wrapper | `components/tools.py` | Wraps a QueryPipeline as a callable tool |
-| 9 | Web search tool | `components/tools.py` | `BaseTool`; external search via API |
+| # | Component | Location | Status |
+|---|-----------|----------|--------|
+| 7 | ReAct agent loop | `pipeline/agent.py` | ✅ Done — reason → act (tool) → observe → repeat |
+| 8 | RAG tool wrapper | `components/tools.py` | ✅ Done — wraps a retrieval-only QueryPipeline |
+| 9 | Web search tool | `components/tools.py` | Pending (end of D1) — `BaseTool`; external API |
 
 The agent treats retrieval as one tool among several, deciding for
-itself when it has gathered enough evidence. The RAG tool wraps a
-`QueryPipeline` (full hybrid + rerank stack) and produces a
-`ToolResult` with `retrieved_chunks` populated, so the evaluator can
-still assess retrieval quality in agent mode. The loop runs up to
-`agent.max_iterations` steps. Chief risk to measure: error propagation
-from a bad early step.
+itself when it has gathered enough evidence. **Mechanism: native
+tool/function calling** (not text-protocol parsing) — `BaseGenerator.generate`
+gained an optional `tools` parameter, implemented for all four providers
+(OpenAI, Google, Ollama, and EdenAI via `ChatEdenAI.bind_tools`); the
+experimental variable is *agentic control flow vs. linear*, so a robust
+mechanism avoids confounding the measurement. The agent and the generators
+exchange messages in a neutral OpenAI-style schema (assistant turns carry
+`tool_calls`; tool results carry `tool_call_id`); each generator translates it
+to its provider.
+
+The RAG tool wraps a `QueryPipeline` (the experiment's retrieval + rerank
+stack, in retrieval-only mode, query-transform forced to passthrough) and
+returns the raw retrieved chunks as the observation while populating
+`ToolResult.retrieved_chunks`; the agent unions those across calls (dedup by
+`chunk_id`, cap at `top_k_final`) into the final `GenerationResult`, so the
+evaluator scores retrieval in agent mode on the same metrics as linear. The
+loop runs up to `agent.max_iterations` steps, forcing a final answer
+(`tools=None`) if the budget is exhausted; tool failures become recoverable
+observations. Chief risk to measure: error propagation from a bad early step.
+
+Architectural prerequisites shipped as a foundation first (mirroring Phase B):
+`ToolSpec`/`ToolCall` types + the `GenerationResult.tool_calls` extension, the
+`generate(prompt, tools=None)` interface change, `AgentConfig.max_iterations` /
+`system_prompt`, the `tool` registry category, and agent-mode config
+validation. Experiment config: `configs/agent_single.yaml` (shares
+`base.yaml`'s cached index, so linear-vs-agent isolates control flow);
+`configs/smoke_agent.yaml` for a free local Ollama smoke.
 
 #### Phase D2 — Multi-Agent Supervisor
 
@@ -421,11 +442,12 @@ are not yet implemented.
 
 | Variable | Config Location | Status |
 |----------|----------------|--------|
-| Pipeline mode | `pipeline_mode` | linear done; **agent** pending |
-| Agent mode | `agent.mode` | **pending (single/multi)** |
-| Max iterations | `agent.max_iterations` | **pending** |
-| Tool roster | `agent.tools` | **pending** |
-| Memory | `agent.memory.type` | none, buffer_window done (unused until agent) |
+| Pipeline mode | `pipeline_mode` | linear + **agent (single)** done |
+| Agent mode | `agent.mode` | single done; **multi** pending (D2) |
+| Max iterations | `agent.max_iterations` | done |
+| Reasoning LLM | `agent.llm` | done (native tool calling, 4 providers) |
+| Tool roster | `agent.tools` | done (`rag`; **web_search** pending — end of D1) |
+| Memory | `agent.memory.type` | none, buffer_window done (plumbed; single-turn loop) |
 
 ### 6.4 Evaluation Variables
 

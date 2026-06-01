@@ -24,8 +24,6 @@ from components import (  # noqa: F401
     query_transforms,
     rerankers,
     retrievers,
+    tools,
     vectorstores,
 )
-
-# Stub files (no registrations yet — implementations in future branches):
-# from components import tools
