@@ -11,7 +11,13 @@ import logging
 import re
 from typing import Any
 
-from uwf_rag.components.base import BaseGenerator, BaseQueryTransformer
+from pydantic import Field
+
+from uwf_rag.components.base import (
+    BaseGenerator,
+    BaseQueryTransformer,
+    ComponentParams,
+)
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import TransformedQuery
 
@@ -42,6 +48,9 @@ class ContextualizerQueryTransformer(BaseQueryTransformer):
         system_prompt: Override the default reformulation prompt.
     """
 
+    class Params(ComponentParams):
+        system_prompt: str = _DEFAULT_SYSTEM_PROMPT
+
     def __init__(
         self,
         config: dict[str, Any] | None = None,
@@ -54,9 +63,8 @@ class ContextualizerQueryTransformer(BaseQueryTransformer):
                 "ContextualizerQueryTransformer requires a generator. Configure "
                 "query.query_transform.generator (an LLMConfig) in YAML."
             )
-        self._system_prompt: str = self.config.get(
-            "system_prompt", _DEFAULT_SYSTEM_PROMPT
-        )
+        self.p = self.Params.model_validate(self.config)
+        self._system_prompt = self.p.system_prompt
 
     def transform(
         self,
@@ -128,6 +136,13 @@ class HyDEQueryTransformer(BaseQueryTransformer):
             recipe).
     """
 
+    class Params(ComponentParams):
+        system_prompt: str = _DEFAULT_HYDE_SYSTEM_PROMPT
+        num_hypotheticals: int = Field(default=1, ge=1)
+        include_original: bool = False
+        branch: str | None = None
+        original_branch: str | None = None
+
     def __init__(
         self,
         config: dict[str, Any] | None = None,
@@ -141,19 +156,12 @@ class HyDEQueryTransformer(BaseQueryTransformer):
                 "query.query_transform.generator (an LLMConfig) in YAML."
             )
 
-        num_hyp = int(self.config.get("num_hypotheticals", 1))
-        if num_hyp < 1:
-            raise ValueError(
-                f"HyDEQueryTransformer 'num_hypotheticals' must be >= 1 (got {num_hyp})"
-            )
-        self._num_hypotheticals: int = num_hyp
-        self._include_original: bool = bool(self.config.get("include_original", False))
-        self._branch: str | None = self.config.get("branch")
-        self._original_branch: str | None = self.config.get("original_branch")
-
-        self._system_prompt: str = self.config.get(
-            "system_prompt", _DEFAULT_HYDE_SYSTEM_PROMPT
-        )
+        self.p = self.Params.model_validate(self.config)
+        self._num_hypotheticals = self.p.num_hypotheticals
+        self._include_original = self.p.include_original
+        self._branch = self.p.branch
+        self._original_branch = self.p.original_branch
+        self._system_prompt = self.p.system_prompt
 
     def transform(
         self,
@@ -277,6 +285,12 @@ class MultiQueryQueryTransformer(BaseQueryTransformer):
             (default None — broadcast to all hybrid children).
     """
 
+    class Params(ComponentParams):
+        system_prompt: str = _DEFAULT_MULTI_QUERY_SYSTEM_PROMPT
+        num_queries: int = Field(default=4, ge=1)
+        include_original: bool = True
+        branch: str | None = None
+
     def __init__(
         self,
         config: dict[str, Any] | None = None,
@@ -290,19 +304,11 @@ class MultiQueryQueryTransformer(BaseQueryTransformer):
                 "query.query_transform.generator (an LLMConfig) in YAML."
             )
 
-        num_queries = int(self.config.get("num_queries", 4))
-        if num_queries < 1:
-            raise ValueError(
-                f"MultiQueryQueryTransformer 'num_queries' must be >= 1 "
-                f"(got {num_queries})"
-            )
-        self._num_queries: int = num_queries
-        self._include_original: bool = bool(self.config.get("include_original", True))
-        self._branch: str | None = self.config.get("branch")
-
-        self._system_prompt: str = self.config.get(
-            "system_prompt", _DEFAULT_MULTI_QUERY_SYSTEM_PROMPT
-        )
+        self.p = self.Params.model_validate(self.config)
+        self._num_queries = self.p.num_queries
+        self._include_original = self.p.include_original
+        self._branch = self.p.branch
+        self._system_prompt = self.p.system_prompt
 
     def transform(
         self,
