@@ -452,18 +452,20 @@ class TestAgentPipeline:
         assert observation["role"] == "tool"
         assert "ghost_tool" in observation["content"]
 
+    @patch("uwf_rag.pipeline.agent.build_generator")
     @patch("uwf_rag.pipeline.agent.tool_to_spec")
     @patch("uwf_rag.pipeline.agent.registry")
     def test_from_config_wires_generator_tools_and_budget(
-        self, mock_registry: MagicMock, mock_tool_to_spec: MagicMock
+        self,
+        mock_registry: MagicMock,
+        mock_tool_to_spec: MagicMock,
+        mock_build_generator: MagicMock,
     ) -> None:
         from uwf_rag.core.config import ExperimentConfig
 
-        gen_cls = MagicMock()
         tool_cls = MagicMock()
         mem_cls = MagicMock()
         mock_registry.get.side_effect = lambda category, name: {
-            "generation": gen_cls,
             "tool": tool_cls,
             "memory": mem_cls,
         }[category]
@@ -486,7 +488,7 @@ class TestAgentPipeline:
 
         assert pipeline._max_iterations == 7  # type: ignore[attr-defined]
         assert pipeline._top_k_final == 4  # type: ignore[attr-defined]
-        gen_cls.assert_called_once()  # reasoning generator built
+        mock_build_generator.assert_called_once()  # reasoning generator built
         tool_cls.from_config.assert_called_once()  # tool built from its entry
 
 
@@ -720,8 +722,7 @@ class TestQueryPipelineHybridWiring:
                         ],
                     },
                 },
-                "generation": {"type": "ollama"},
-                "generation_llm": {"model_name": "x"},
+                "generator": {"provider": "ollama", "model_name": "x"},
                 "prompt": {"type": "chat"},
             }
         )
@@ -745,8 +746,7 @@ class TestQueryPipelineHybridWiring:
                     "top_k_retrieve": 5,
                     "top_k_final": 5,
                 },
-                "generation": {"type": "ollama"},
-                "generation_llm": {"model_name": "x"},
+                "generator": {"provider": "ollama", "model_name": "x"},
                 "prompt": {"type": "chat"},
             }
         )

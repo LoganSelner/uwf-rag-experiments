@@ -31,11 +31,8 @@ query:
       llm:
         model_name: "gemini-2.0-flash"
 
-  generation:
-    type: "edenai"
-    params:
-      sub_provider: "google"
-
-  generation_llm:
+  generator:
     provider: "edenai"
     model_name: "gemini-2.0-flash"
+    params:
+      sub_provider: "google"

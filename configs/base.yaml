@@ -65,16 +65,13 @@ query:
   reranking:
     type: "none"
 
-  generation:
-    type: "edenai"
-    params:
-      sub_provider: "openai"
-
-  generation_llm:
+  generator:
     provider: "edenai"
     model_name: "gpt-4.1"
     temperature: 0.0
     max_tokens: 1024
+    params:
+      sub_provider: "openai"
 
   prompt:
     type: "chat"

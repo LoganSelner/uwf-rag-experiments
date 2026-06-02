@@ -39,14 +39,12 @@ query:
       base_url: "http://localhost:11434"
       llm:
         model_name: "qwen3:14b"
-  generation:
-    type: "ollama"
+  generator:
+    provider: "ollama"
+    model_name: "qwen3:14b"
     params:
       # Change this if your Ollama server is not running on the default local port.
       base_url: "http://localhost:11434"
-  generation_llm:
-    provider: "ollama"
-    model_name: "qwen3:14b"
 
 evaluation:
   dataset: "data/datasets/testKB_dataset.jsonl"

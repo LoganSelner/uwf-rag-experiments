@@ -332,8 +332,7 @@ class TestValidateConfig:
             },
             "query": {
                 "retrieval": {"type": "dense", "top_k_retrieve": 10, "top_k_final": 5},
-                "generation": {"type": "ollama"},
-                "generation_llm": {"model_name": "test-model"},
+                "generator": {"provider": "ollama", "model_name": "test-model"},
                 "prompt": {"type": "chat"},
             },
             "evaluation": {
@@ -513,13 +512,13 @@ class TestValidateConfig:
 
     def test_retrieval_only_skips_generation_check(self) -> None:
         cfg = self._make_valid_config()
-        cfg.query.generation.type = ""
+        cfg.query.generator.provider = ""
         cfg.evaluation.mode = "retrieval_only"
         validate_config(cfg, registry)  # should not raise
 
     def test_full_mode_requires_generation(self) -> None:
         cfg = self._make_valid_config()
-        cfg.query.generation.type = ""
+        cfg.query.generator.provider = ""
         cfg.evaluation.mode = "full"
         with pytest.raises(ConfigValidationError, match="generator is required"):
             validate_config(cfg, registry)
@@ -533,7 +532,7 @@ class TestValidateConfig:
     def test_none_mode_still_requires_generation(self) -> None:
         cfg = self._make_valid_config()
         cfg.evaluation.mode = "none"
-        cfg.query.generation.type = ""
+        cfg.query.generator.provider = ""
         with pytest.raises(ConfigValidationError, match="generator is required"):
             validate_config(cfg, registry)
 
@@ -557,7 +556,7 @@ class TestValidateConfig:
 
     def test_generation_llm_model_name_empty(self) -> None:
         cfg = self._make_valid_config()
-        cfg.query.generation_llm.model_name = ""
+        cfg.query.generator.model_name = ""
         with pytest.raises(ConfigValidationError, match="model_name is empty"):
             validate_config(cfg, registry)
 
@@ -723,8 +722,7 @@ class TestValidateConfigSparseAndHybrid:
                         "top_k_retrieve": 10,
                         "top_k_final": 5,
                     },
-                    "generation": {"type": "ollama"},
-                    "generation_llm": {"model_name": "x"},
+                    "generator": {"provider": "ollama", "model_name": "x"},
                     "prompt": {"type": "chat"},
                 },
                 "evaluation": {

@@ -20,6 +20,7 @@ from uwf_rag.components.base import (
     BaseReranker,
     BaseRetriever,
 )
+from uwf_rag.components.generators import build_generator
 from uwf_rag.components.retrievers import HybridRetriever
 from uwf_rag.core.config import QueryConfig
 from uwf_rag.core.registry import registry
@@ -99,18 +100,8 @@ class QueryPipeline:
         generator: BaseGenerator | None = None
         prompt_template: BasePromptTemplate | None = None
         if not retrieval_only:
-            if config.generation.type:
-                gen_cls = registry.get("generation", config.generation.type)
-                gen_config: dict[str, Any] = {
-                    **config.generation.params,
-                    "llm": {
-                        "provider": config.generation_llm.provider,
-                        "model_name": config.generation_llm.model_name,
-                        "temperature": config.generation_llm.temperature,
-                        "max_tokens": config.generation_llm.max_tokens,
-                    },
-                }
-                generator = gen_cls(config=gen_config)
+            if config.generator.provider:
+                generator = build_generator(config.generator)
 
             if config.prompt.type:
                 prompt_cls = registry.get("prompts", config.prompt.type)

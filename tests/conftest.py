@@ -136,8 +136,11 @@ def minimal_config_dict(fixtures_dir: Path) -> dict:
         "query": {
             "retrieval": {"type": "dense", "top_k_retrieve": 5, "top_k_final": 3},
             "reranking": {"type": "none"},
-            "generation": {"type": "ollama"},
-            "generation_llm": {"model_name": "test-model", "temperature": 0.0},
+            "generator": {
+                "provider": "ollama",
+                "model_name": "test-model",
+                "temperature": 0.0,
+            },
             "prompt": {"type": "chat"},
         },
         "evaluation": {

@@ -23,6 +23,7 @@ from tenacity import (
 
 from uwf_rag.components._tool_protocol import parse_arguments, to_openai_tools
 from uwf_rag.components.base import BaseGenerator
+from uwf_rag.core.config import LLMConfig
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import GenerationResult, Message, ToolCall, ToolSpec
 
@@ -38,6 +39,30 @@ _retry_decorator = retry(
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
+
+
+def build_generator(llm: LLMConfig) -> BaseGenerator:
+    """Construct a generator from an :class:`LLMConfig` via the registry.
+
+    The single construction path for every generator in the harness — used by
+    the linear pipeline, the agent's reasoning model, and any component that
+    needs an LLM (query transformers, the contextual enricher). ``llm.provider``
+    is the ``generation`` registry name; ``llm.params`` carries provider-specific
+    extras (EdenAI ``sub_provider``, Ollama ``base_url``) that land at the top
+    level of the generator config, alongside the nested ``llm`` block each
+    generator reads.
+    """
+    gen_cls = registry.get("generation", llm.provider)
+    config: dict[str, Any] = {
+        **llm.params,
+        "llm": {
+            "provider": llm.provider,
+            "model_name": llm.model_name,
+            "temperature": llm.temperature,
+            "max_tokens": llm.max_tokens,
+        },
+    }
+    return gen_cls(config=config)
 
 
 @registry.register("generation", "ollama")

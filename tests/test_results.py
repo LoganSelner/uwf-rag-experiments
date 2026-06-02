@@ -24,8 +24,7 @@ def _make_config() -> ExperimentConfig:
             },
             "query": {
                 "retrieval": {"type": "dense"},
-                "generation": {"type": "ollama"},
-                "generation_llm": {"model_name": "m"},
+                "generator": {"provider": "ollama", "model_name": "m"},
                 "prompt": {"type": "chat"},
             },
             "evaluation": {"dataset": "d.jsonl"},

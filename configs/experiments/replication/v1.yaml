@@ -68,10 +68,7 @@ query:
   reranking:
     type: "none"
 
-  generation:
-    type: "google"
-
-  generation_llm:
+  generator:
     provider: "google"
     model_name: "gemini-1.0-pro"
     temperature: 0.0

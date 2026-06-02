@@ -65,8 +65,8 @@ def _build_config_snapshot(config: ExperimentConfig) -> dict[str, Any]:
         "top_k_retrieve": config.query.retrieval.top_k_retrieve,
         "top_k_final": config.query.retrieval.top_k_final,
         "reranking_type": config.query.reranking.type or "none",
-        "generation_type": config.query.generation.type,
-        "generation_model": config.query.generation_llm.model_name,
+        "generation_type": config.query.generator.provider,
+        "generation_model": config.query.generator.model_name,
         "evaluator_embedding_type": config.evaluation.evaluator_embedding.type,
     }
 

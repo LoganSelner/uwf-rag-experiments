@@ -265,13 +265,19 @@ class IndexingConfig(BaseModel):
 
 
 class QueryConfig(BaseModel):
-    """Config for the query pipeline (linear RAG mode)."""
+    """Config for the query pipeline (linear RAG mode).
+
+    ``generator`` is a single :class:`LLMConfig` describing the answer model:
+    ``generator.provider`` is the ``generation`` registry name and
+    ``generator.params`` holds provider extras (e.g. EdenAI ``sub_provider``).
+    It replaces the former redundant ``generation`` (type) + ``generation_llm``
+    (provider/model) pair — the two always named the same provider.
+    """
 
     query_transform: QueryTransformConfig = Field(default_factory=QueryTransformConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     reranking: ComponentConfig = Field(default_factory=ComponentConfig)
-    generation: ComponentConfig = Field(default_factory=ComponentConfig)
-    generation_llm: LLMConfig = Field(default_factory=LLMConfig)
+    generator: LLMConfig = Field(default_factory=LLMConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
 
     @classmethod
@@ -634,18 +640,18 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
 
         retrieval_only = config.evaluation.mode == "retrieval_only"
         if not retrieval_only:
-            if not config.query.generation.type:
+            if not config.query.generator.provider:
                 errors.append(
-                    "query.generation.type is empty but evaluation.mode "
+                    "query.generator.provider is empty but evaluation.mode "
                     "is not 'retrieval_only' — a generator is required"
                 )
             else:
                 _check_registered(
                     errors,
                     registry,
-                    config.query.generation.type,
+                    config.query.generator.provider,
                     "generation",
-                    "query.generation.type",
+                    "query.generator.provider",
                 )
             _check_registered(
                 errors,
@@ -654,9 +660,9 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
                 "prompts",
                 "query.prompt.type",
             )
-            if not config.query.generation_llm.model_name:
+            if not config.query.generator.model_name:
                 errors.append(
-                    "query.generation_llm.model_name is empty but evaluation.mode "
+                    "query.generator.model_name is empty but evaluation.mode "
                     "is not 'retrieval_only' — a model name is required for generation"
                 )
 
