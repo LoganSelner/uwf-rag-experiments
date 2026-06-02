@@ -11,7 +11,7 @@ after the initial design is finalized.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -27,6 +27,10 @@ from uwf_rag.core.types import (
     ToolSpec,
     TransformedQuery,
 )
+
+if TYPE_CHECKING:
+    from uwf_rag.components.build import BuildContext
+    from uwf_rag.core.config import AgentDefinitionConfig, ValidateContext
 
 
 class ComponentParams(BaseModel):
@@ -216,22 +220,37 @@ class BaseRetriever(ABC):
         self._default_filters: dict[str, Any] = default_filters or {}
 
     @classmethod
+    @abstractmethod
+    def build(
+        cls,
+        *,
+        params: dict[str, Any],
+        default_filters: dict[str, Any] | None,
+        ctx: BuildContext,
+    ) -> BaseRetriever:
+        """Construct this retriever, pulling its index dependencies from ``ctx``.
+
+        Each retriever owns its own wiring: dense pulls the vector store +
+        embedder from ``ctx.index``; BM25 pulls its lexical index; hybrid
+        recurses through ``ctx.registry`` to build its children. The pipeline
+        calls ``registry.get("retrieval", type).build(...)`` and never branches
+        on a concrete retriever type.
+        """
+
+    @classmethod
     def validate_params(
         cls,
         params: dict[str, Any],
-        *,
-        registry: Any,
-        sparse_index_type: str,
-        top_k_retrieve: int,
+        ctx: ValidateContext,
     ) -> list[str]:
         """Return config-validation error strings for this retriever's params.
 
         Default: no retriever-specific checks. Overridden by retrievers whose
         params have structure to validate (BM25 needs a sparse index; hybrid
         has a child roster + fusion settings). Keeps that knowledge in the
-        component rather than in ``core.validate_config``. ``registry`` and the
-        cross-config values (``sparse_index_type``, ``top_k_retrieve``) are
-        supplied by the caller so the component never reaches into config.
+        component rather than in ``core.validate_config``. The cross-config
+        context (registry, configured sparse-index type, retrieve budget)
+        arrives via ``ctx`` so the component never reaches into global config.
         """
         return []
 
@@ -438,10 +457,18 @@ class BasePromptTemplate(ABC):
 
 
 class BaseTool(ABC):
-    """An external tool usable by agent pipelines."""
+    """An external tool usable by agent pipelines.
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        self.config = config or {}
+    Tools are constructed through :meth:`build` (resolved from the ``tool``
+    registry category and given a :class:`BuildContext`), not via a generic
+    ``config`` dict — a tool typically wraps live dependencies (a retrieval
+    sub-pipeline, an API client) rather than a flat param bag.
+    """
+
+    @classmethod
+    @abstractmethod
+    def build(cls, cfg: AgentDefinitionConfig, ctx: BuildContext) -> BaseTool:
+        """Construct this tool from its roster entry + the build context."""
 
     @property
     @abstractmethod

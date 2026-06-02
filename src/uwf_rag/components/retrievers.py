@@ -8,7 +8,7 @@ relevant chunks for a query.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from uwf_rag.components.base import (
     BaseEmbedder,
@@ -16,9 +16,14 @@ from uwf_rag.components.base import (
     BaseRetriever,
     BaseVectorStore,
 )
+from uwf_rag.components.build import BM25_AUX_KEY
 from uwf_rag.core.fusion import reciprocal_rank_fusion, weighted_score_fusion
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import RetrievedChunk, TransformedQuery
+
+if TYPE_CHECKING:
+    from uwf_rag.components.build import BuildContext
+    from uwf_rag.core.config import ValidateContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +52,26 @@ class DenseRetriever(BaseRetriever):
         super().__init__(config, default_filters=default_filters)
         self._vectorstore = vectorstore
         self._embedder = embedder
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        params: dict[str, Any],
+        default_filters: dict[str, Any] | None,
+        ctx: BuildContext,
+    ) -> DenseRetriever:
+        if ctx.index is None:
+            raise RuntimeError(
+                "DenseRetriever.build requires a populated index in the "
+                "BuildContext (ctx.index is None)."
+            )
+        return cls(
+            config=params,
+            vectorstore=ctx.index.vectorstore,
+            embedder=ctx.index.embedder,
+            default_filters=default_filters,
+        )
 
     def retrieve(
         self,
@@ -83,15 +108,37 @@ class BM25Retriever(BaseRetriever):
         self._sparse_index = sparse_index
 
     @classmethod
+    def build(
+        cls,
+        *,
+        params: dict[str, Any],
+        default_filters: dict[str, Any] | None,
+        ctx: BuildContext,
+    ) -> BM25Retriever:
+        sparse = ctx.index.auxiliary_stores.get(BM25_AUX_KEY) if ctx.index else None
+        if sparse is None:
+            raise RuntimeError(
+                "BM25 retriever requires a sparse index, but the index has none "
+                f"under auxiliary_stores['{BM25_AUX_KEY}']. Ensure "
+                "indexing.sparse_index is configured."
+            )
+        if not isinstance(sparse, BaseLexicalIndex):
+            raise RuntimeError(
+                f"auxiliary_stores['{BM25_AUX_KEY}'] is not a BaseLexicalIndex"
+            )
+        return cls(
+            config=params,
+            sparse_index=sparse,
+            default_filters=default_filters,
+        )
+
+    @classmethod
     def validate_params(
         cls,
         params: dict[str, Any],
-        *,
-        registry: Any,
-        sparse_index_type: str,
-        top_k_retrieve: int,
+        ctx: ValidateContext,
     ) -> list[str]:
-        if not sparse_index_type:
+        if not ctx.sparse_index_type:
             return [
                 "query.retrieval.type is 'bm25' but indexing.sparse_index "
                 "is not configured"
@@ -152,13 +199,46 @@ class HybridRetriever(BaseRetriever):
         self._method_label = f"hybrid_{fusion}"
 
     @classmethod
+    def build(
+        cls,
+        *,
+        params: dict[str, Any],
+        default_filters: dict[str, Any] | None,
+        ctx: BuildContext,
+    ) -> HybridRetriever:
+        """Build the hybrid + its child sub-retrievers, recursing through ``ctx``.
+
+        Each child spec is ``{name, type, top_k, params}``; the child is built
+        via ``ctx.registry.get("retrieval", type).build(...)`` so the dispatch
+        lives in the registry, not here. The hybrid's ``default_filters`` are
+        injected into every child too, keeping per-branch filter semantics
+        consistent with the standalone retrievers.
+        """
+        children: list[tuple[str, BaseRetriever, int]] = []
+        for spec in params.get("retrievers", []):
+            sub_cls = ctx.registry.get("retrieval", spec["type"])
+            child = sub_cls.build(
+                params=spec.get("params", {}),
+                default_filters=default_filters,
+                ctx=ctx,
+            )
+            children.append((spec.get("name", spec["type"]), child, int(spec["top_k"])))
+
+        return cls(
+            config=params,
+            children=children,
+            fusion=params.get("fusion", "rrf"),
+            rrf_k=int(params.get("rrf_k", 60)),
+            weights={k: float(v) for k, v in params.get("weights", {}).items()},
+            normalize=params.get("normalize", "min_max"),
+            default_filters=default_filters,
+        )
+
+    @classmethod
     def validate_params(
         cls,
         params: dict[str, Any],
-        *,
-        registry: Any,
-        sparse_index_type: str,
-        top_k_retrieve: int,
+        ctx: ValidateContext,
     ) -> list[str]:
         """Validate a hybrid's raw ``params`` (child roster + fusion settings).
 
@@ -166,9 +246,12 @@ class HybridRetriever(BaseRetriever):
         ``validate_config``: the child roster shape, no nested hybrid, unique
         names, per-child positive top_k, the bm25-child-needs-sparse-index
         rule, fusion mode + rrf_k, and the weighted-fusion weights. The
-        cross-config values (``sparse_index_type``, ``top_k_retrieve``) and the
-        ``registry`` are supplied by the caller.
+        cross-config context (registry, configured sparse-index type, retrieve
+        budget) arrives via ``ctx``.
         """
+        registry = ctx.registry
+        sparse_index_type = ctx.sparse_index_type
+        top_k_retrieve = ctx.top_k_retrieve
         errors: list[str] = []
         params = params or {}
         children = params.get("retrievers")
@@ -324,9 +407,7 @@ class HybridRetriever(BaseRetriever):
         merged_filters = {**self._default_filters, **(filters or {})}
         active_filters = merged_filters if merged_filters else None
 
-        # Gather per-branch results. Maintain a chunk_id -> RetrievedChunk
-        # map across branches so fused ids can be mapped back to chunks
-        # without re-querying.
+        # Gather per-branch results, then fuse + rebind via the shared helper.
         per_branch_ids: list[list[str]] = []
         per_branch_scored: list[list[tuple[str, float]]] = []
         per_branch_names: list[str] = []
@@ -334,21 +415,62 @@ class HybridRetriever(BaseRetriever):
 
         for name, child, branch_top_k in self._children:
             results = child.retrieve(query, branch_top_k, active_filters)
-            ids: list[str] = []
-            scored: list[tuple[str, float]] = []
-            for rc in results:
-                cid = rc.chunk.chunk_id
-                ids.append(cid)
-                scored.append((cid, rc.score))
-                # First occurrence wins for chunk lookup; identical
-                # chunk objects across branches differ only in score,
-                # which fusion is replacing anyway.
-                chunk_lookup.setdefault(cid, rc)
-            per_branch_ids.append(ids)
-            per_branch_scored.append(scored)
-            per_branch_names.append(name)
+            self._accumulate_branch(
+                name,
+                results,
+                per_branch_ids,
+                per_branch_scored,
+                per_branch_names,
+                chunk_lookup,
+            )
 
-        # Fuse.
+        return self._fuse_branches(
+            per_branch_ids, per_branch_scored, per_branch_names, chunk_lookup, top_k
+        )
+
+    @staticmethod
+    def _accumulate_branch(
+        name: str,
+        results: list[RetrievedChunk],
+        per_branch_ids: list[list[str]],
+        per_branch_scored: list[list[tuple[str, float]]],
+        per_branch_names: list[str],
+        chunk_lookup: dict[str, RetrievedChunk],
+    ) -> None:
+        """Record one branch's rank list into the parallel fusion inputs.
+
+        First occurrence wins for chunk lookup; identical chunk objects across
+        branches differ only in score, which fusion is replacing anyway.
+        """
+        ids: list[str] = []
+        scored: list[tuple[str, float]] = []
+        for rc in results:
+            cid = rc.chunk.chunk_id
+            ids.append(cid)
+            scored.append((cid, rc.score))
+            chunk_lookup.setdefault(cid, rc)
+        per_branch_ids.append(ids)
+        per_branch_scored.append(scored)
+        per_branch_names.append(name)
+
+    def _fuse_branches(
+        self,
+        per_branch_ids: list[list[str]],
+        per_branch_scored: list[list[tuple[str, float]]],
+        per_branch_names: list[str],
+        chunk_lookup: dict[str, RetrievedChunk],
+        top_k: int,
+    ) -> list[RetrievedChunk]:
+        """Cross-branch fusion + rebind shared by ``retrieve`` / ``retrieve_multi``.
+
+        Combines the per-branch rank lists via the hybrid's own ``self._fusion``
+        (RRF or weighted), then rebinds the fused ids to ``RetrievedChunk``
+        objects carrying the fused score and the hybrid's method label (not
+        whatever a child set), truncated to ``top_k``.
+        """
+        if not per_branch_ids:
+            return []
+
         if self._fusion == "rrf":
             fused = reciprocal_rank_fusion(per_branch_ids, k=self._rrf_k)
         elif self._fusion == "weighted":
@@ -364,8 +486,6 @@ class HybridRetriever(BaseRetriever):
                 f"(expected 'rrf' or 'weighted')"
             )
 
-        # Rebind to RetrievedChunk objects with fused scores and a
-        # method label that names the fusion, not whatever a child set.
         out: list[RetrievedChunk] = []
         for cid, fused_score in fused[:top_k]:
             base = chunk_lookup[cid]
@@ -461,43 +581,19 @@ class HybridRetriever(BaseRetriever):
                 fusion=fusion,
                 filters=active_filters,
             )
-            ids: list[str] = []
-            scored: list[tuple[str, float]] = []
-            for rc in results:
-                cid = rc.chunk.chunk_id
-                ids.append(cid)
-                scored.append((cid, rc.score))
-                chunk_lookup.setdefault(cid, rc)
-            per_branch_ids.append(ids)
-            per_branch_scored.append(scored)
-            per_branch_names.append(name)
-
-        if not per_branch_ids:
-            return []
-
-        if self._fusion == "rrf":
-            fused = reciprocal_rank_fusion(per_branch_ids, k=self._rrf_k)
-        elif self._fusion == "weighted":
-            ordered_weights = [self._weights[n] for n in per_branch_names]
-            fused = weighted_score_fusion(
+            self._accumulate_branch(
+                name,
+                results,
+                per_branch_ids,
                 per_branch_scored,
-                ordered_weights,
-                normalize=self._normalize,
-            )
-        else:
-            raise ValueError(
-                f"HybridRetriever: unknown fusion mode '{self._fusion}' "
-                f"(expected 'rrf' or 'weighted')"
+                per_branch_names,
+                chunk_lookup,
             )
 
-        out: list[RetrievedChunk] = []
-        for cid, fused_score in fused[:top_k_per_query]:
-            base = chunk_lookup[cid]
-            out.append(
-                RetrievedChunk(
-                    chunk=base.chunk,
-                    score=fused_score,
-                    retrieval_method=self._method_label,
-                )
-            )
-        return out
+        return self._fuse_branches(
+            per_branch_ids,
+            per_branch_scored,
+            per_branch_names,
+            chunk_lookup,
+            top_k_per_query,
+        )

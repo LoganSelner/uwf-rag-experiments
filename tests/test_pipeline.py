@@ -489,7 +489,7 @@ class TestAgentPipeline:
         assert pipeline._max_iterations == 7  # type: ignore[attr-defined]
         assert pipeline._top_k_final == 4  # type: ignore[attr-defined]
         mock_build_generator.assert_called_once()  # reasoning generator built
-        tool_cls.from_config.assert_called_once()  # tool built from its entry
+        tool_cls.build.assert_called_once()  # tool built from its entry
 
 
 # -----------------------------------------------------------------------

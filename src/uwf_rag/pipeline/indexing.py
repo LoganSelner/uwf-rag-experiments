@@ -22,6 +22,7 @@ from uwf_rag.components.base import (
     BaseLexicalIndex,
     BaseVectorStore,
 )
+from uwf_rag.components.build import BM25_AUX_KEY
 from uwf_rag.core.config import ExperimentConfig
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import Chunk, Document
@@ -29,11 +30,6 @@ from uwf_rag.core.types import Chunk, Document
 logger = logging.getLogger(__name__)
 
 INDEX_CACHE_DIR = Path("data/indexes")
-
-# Key under which the BM25 lexical index lives inside
-# ``IndexArtifact.auxiliary_stores``. Names the implementation (per
-# ROADMAP §7.1) so a future SPLADE store can coexist under its own key.
-BM25_AUX_KEY = "bm25"
 
 
 @dataclass

@@ -42,6 +42,19 @@ base class defining what goes in and what comes out. Implementations
 are registered by name and resolved from config at runtime.
 Swapping a component never requires changing pipeline code.
 
+**One construction contract.** The registry resolves a *class* by name. A
+dependency-free stage is then constructed directly (`cls(config=params)`) — it
+needs nothing but its params. A stage that needs runtime dependencies goes
+through one seam: `BuildContext` (`components/build.py`) + a polymorphic
+`build(...)` classmethod. The component pulls what it needs from the context
+inside its own `build` (a retriever pulls the index; a tool pulls the query
+stack), so the pipeline calls `registry.get(category, type).build(...)` and
+**never branches on a concrete implementation name** — the previous
+`if retrieval_type == "bm25"` dispatch is gone. Components that compose others
+(the hybrid retriever; the planned multi-agent supervisor) recurse through the
+same seam. Validation is symmetric: a `ValidateContext` carries the cross-config
+values a component needs to check its own params.
+
 **Separated indexing and querying.** The index (chunking + embedding + vectorstore)
 is built once and cached. Query-side experiments
 (retrieval strategy, reranking, prompt, LLM) reuse the cached
@@ -125,6 +138,7 @@ src/uwf_rag/
 │
 ├── components/
 │   ├── base.py           Abstract base classes + ComponentParams (read-only contract)
+│   ├── build.py          BuildContext + IndexHandle (construction seam; BM25_AUX_KEY)
 │   ├── defaults.py       Passthrough/no-op defaults (always available)
 │   ├── ingestors.py      PDFIngestor (PyMuPDF)
 │   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker, SemanticChunker
@@ -370,10 +384,10 @@ ExperimentConfig
 │   ├── reranking: ComponentConfig
 │   ├── generator: LLMConfig           provider (= registry name), model, temperature, params
 │   └── prompt: PromptConfig           system_template, CoT, citation style
-├── AgentConfig                        (agent pipeline)
-│   ├── mode, llm, supervisor, memory
-│   ├── agents: list[AgentDefinitionConfig]
-│   └── tools: list[AgentDefinitionConfig]
+├── AgentConfig                        (agent pipeline — single-agent ReAct)
+│   ├── mode, max_iterations, system_prompt, llm, memory
+│   └── tools: list[AgentDefinitionConfig]    roster the single agent reasons over
+│       (mode: "multi" + the supervisor/agent-roster config arrive with Phase D2)
 └── EvaluationConfig
     ├── dataset, mode, num_runs
     ├── metrics, retrieval_only_metrics
@@ -452,7 +466,7 @@ construction (called in `scripts/run_experiment.py`). It checks:
   hybrid child name (static check; only when retrieval is `hybrid`).
   The runtime guard in `HybridRetriever.retrieve_multi` is authoritative
 - `top_k_final <= top_k_retrieve` and both are positive
-- `pipeline_mode: "agent"` has agents or tools defined
+- `pipeline_mode: "agent"` has at least one tool defined
 - `evaluation.mode` is one of `{full, retrieval_only, none}`
 - Modes other than `retrieval_only` require a prompt type and a
   `query.generator` with both `provider` and `model_name`
@@ -467,10 +481,11 @@ construction (called in `scripts/run_experiment.py`). It checks:
 retriever needs `indexing.sparse_index`; a `hybrid` retriever's child roster,
 nesting ban, fusion mode, rrf_k, and weights) are *not* hard-coded in
 `core/config.py`. `validate_config` resolves the retriever class from the
-registry and calls its `validate_params(params, *, registry, sparse_index_type,
-top_k_retrieve)` classmethod, folding the returned strings into the same error
-list. Component knowledge stays in the component; core only supplies the
-cross-config context.
+registry and calls its `validate_params(params, ctx)` classmethod — where `ctx`
+is a `ValidateContext` carrying the registry plus the cross-config values
+(`sparse_index_type`, `top_k_retrieve`) — folding the returned strings into the
+same error list. Component knowledge stays in the component; core only supplies
+the context.
 
 All errors are collected into a list and raised as a single
 `ConfigValidationError` with a readable bullet-list message. This
@@ -540,17 +555,19 @@ shape translation lives inside each generator and the pure helpers in
 `ChatEdenAI.bind_tools`; Gemini keys tool results by function name; Ollama/
 Gemini omit ids, which the loop synthesizes).
 
-**BaseRetriever receives its dependencies through the constructor.**
-`DenseRetriever(vectorstore=…, embedder=…)`, `BM25Retriever(sparse_index=…)`
-(the BM25 index lives in `IndexArtifact.auxiliary_stores["bm25"]`), and
-`HybridRetriever(children=…)` are each built fully-formed by
-`QueryPipeline._build_retriever` — there is no post-construction `set_*`
-wiring, so a retriever is never in a half-built, unusable state. Default
-filters (`query.retrieval.filters`) are constructor-injected too and the
-hybrid passes them to every child at retrieve time, keeping per-branch
-over-retrieve + filter semantics consistent with the single-retriever paths.
-Retrieval-type-specific config validation lives on each retriever as a
-`validate_params` classmethod (see Validation), not in core.
+**BaseRetriever builds itself from the context; dependencies arrive through
+the constructor.** Each retriever implements `build(*, params, default_filters,
+ctx)`: `DenseRetriever` pulls `ctx.index.vectorstore` + `embedder`,
+`BM25Retriever` pulls `ctx.index.auxiliary_stores["bm25"]`, and
+`HybridRetriever` recurses through `ctx.registry` to build its children. The
+pipeline calls `registry.get("retrieval", type).build(...)` — it does **not**
+branch on the retriever type. Each is constructed fully-formed (no
+post-construction `set_*` wiring), so a retriever is never half-built. Default
+filters (`query.retrieval.filters`) are injected too, and the hybrid passes
+them to every child at retrieve time, keeping per-branch over-retrieve + filter
+semantics consistent with the single-retriever paths. Retrieval-type-specific
+config validation lives on each retriever as a `validate_params(params, ctx)`
+classmethod (see Validation), not in core.
 
 **HybridRetriever composes children; fusion lives in `core.fusion`.**
 The hybrid retriever holds an ordered list of named child retrievers
@@ -677,23 +694,24 @@ not bugs.
 
 Linear RAG: transform → retrieve → rerank → format → generate.
 
-`from_config(config, index_artifact, retrieval_only)` builds each
-component from the registry. `_build_retriever` constructs the retriever with
-its sources injected, per-retriever-type:
+`from_config(config, index_artifact, retrieval_only)` assembles a
+`BuildContext` (the index, this query stack, the generator factory, the
+registry) and builds each component through it. The retriever is built by
+`registry.get("retrieval", config.retrieval.type).build(params=…,
+default_filters=…, ctx=ctx)` — the pipeline never branches on the retriever
+type:
 
-- **`dense`** retrievers are built with `index_artifact.vectorstore` and
-  `index_artifact.embedder` as constructor args.
-- **`bm25`** retrievers are built with `index_artifact.auxiliary_stores["bm25"]`
-  as a constructor arg. A missing sparse index raises at
-  pipeline-construction time — caught earlier by `validate_config`
-  for typo'd configs, but the runtime guard is the source of truth.
-- **`hybrid`** retrievers construct each declared sub-retriever from
-  `params["retrievers"]`, recursively apply the dispatch above to
-  each child, then assemble a `HybridRetriever` with the fusion
-  configuration. Hybrid-level filters are injected into every child.
+- **`dense`** retrievers pull `ctx.index.vectorstore` + `ctx.index.embedder`.
+- **`bm25`** retrievers pull `ctx.index.auxiliary_stores["bm25"]`. A missing
+  sparse index raises at build time — caught earlier by `validate_config` for
+  typo'd configs, but the runtime guard is the source of truth.
+- **`hybrid`** retrievers build each declared sub-retriever by recursing
+  through `ctx.registry` (the same `build` path), then assemble a
+  `HybridRetriever` with the fusion configuration. Hybrid-level filters are
+  injected into every child.
 
 The reasoning LLM for an LLM-backed query transformer is built here via
-`build_generator(query.query_transform.generator)` and injected into the
+`ctx.make_generator(query.query_transform.generator)` and injected into the
 transformer; the answer generator is `build_generator(query.generator)`.
 
 `run(query, history)` executes the pipeline. All top_k values and
@@ -710,11 +728,12 @@ comparable) remains the hybrid retriever's job via `core.fusion`.
 
 Single-agent ReAct (Phase D1). One reasoning LLM drives a
 reason→act(tool)→observe loop via **native tool calling**:
-`from_config(config, index_artifact)` builds the reasoning generator
-(`build_generator(agent.llm)` — the same factory the linear pipeline and
-query transformers use), the tool roster (each `agent.tools` entry →
-`registry.get("tool", …).from_config(entry, config, index_artifact)`),
-and the loop budget (`agent.max_iterations`, `top_k_final`).
+`from_config(config, index_artifact)` assembles a `BuildContext` (the index,
+`config.query` as the query stack, the generator factory, the registry), then
+builds the reasoning generator (`ctx.make_generator(agent.llm)`), the tool
+roster (each `agent.tools` entry → `registry.get("tool", …).build(entry,
+ctx)`), and the loop budget (`agent.max_iterations`, `top_k_final`). That same
+context is the recursion point multi-agent (D2) will build its sub-agents on.
 
 `run(query)` seeds `[system?, user]` and loops up to `max_iterations`:
 `generate(messages, tools=specs)`; if the result has `tool_calls`, each is
@@ -841,8 +860,11 @@ registrations are triggered by importing `components/__init__.py`,
 which imports every implementation file.
 
 **Resolution:** `registry.get("category", "name")` returns the
-class (not an instance). Construction happens at the call site:
-`cls = registry.get(...); instance = cls(config=params)`.
+class (not an instance). A dependency-free stage is constructed directly
+(`cls(config=params)`); a stage needing runtime dependencies is built through
+its `build(cfg, ctx)` classmethod with a `BuildContext` (see *One construction
+contract* under Design Principles). Either way the pipeline resolves by name and
+never branches on a concrete implementation.
 
 **Introspection:** `registry.list_category("chunking")` returns
 registered names. `registry.is_registered(...)` checks existence.
@@ -888,11 +910,15 @@ scripts/run_experiment.py
 2. Inherit from the base class, implement required methods
 3. Declare a nested `class Params(ComponentParams)` for its config and read
    `self.p` (validate it in `__init__` with `self.Params.model_validate(self.config)`)
-4. Decorate with `@registry.register("category", "name")`
-5. Ensure the file is imported in `src/uwf_rag/components/__init__.py`
-6. Add an inventory assertion in `tests/test_registry.py`
-7. Reference `type: "name"` in a YAML experiment config
-8. Run `make qa` to verify
+4. If the component needs runtime dependencies (the index, a sub-LLM, the query
+   stack), override `build(...)` to pull them from the `BuildContext` instead of
+   relying on the default `cls(config=params)`. Retrievers and tools must;
+   most stages don't.
+5. Decorate with `@registry.register("category", "name")`
+6. Ensure the file is imported in `src/uwf_rag/components/__init__.py`
+7. Add an inventory assertion in `tests/test_registry.py`
+8. Reference `type: "name"` in a YAML experiment config
+9. Run `make qa` to verify
 
 No pipeline code changes. No config system changes. No evaluation
 changes.

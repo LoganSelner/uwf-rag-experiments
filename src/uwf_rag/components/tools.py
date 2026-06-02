@@ -17,16 +17,13 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from uwf_rag.components.base import BaseTool
-from uwf_rag.core.config import (
-    AgentDefinitionConfig,
-    ExperimentConfig,
-    QueryTransformConfig,
-)
+from uwf_rag.core.config import QueryTransformConfig
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import RetrievedChunk, ToolResult, ToolSpec
 
 if TYPE_CHECKING:
-    from uwf_rag.pipeline.indexing import IndexArtifact
+    from uwf_rag.components.build import BuildContext
+    from uwf_rag.core.config import AgentDefinitionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -97,30 +94,33 @@ class RAGSearchTool(BaseTool):
         self._description = description
 
     @classmethod
-    def from_config(
-        cls,
-        entry: AgentDefinitionConfig,
-        experiment_config: ExperimentConfig,
-        index_artifact: IndexArtifact,
-    ) -> RAGSearchTool:
-        """Build a retrieval-only QueryPipeline from the experiment's query stack.
+    def build(cls, cfg: AgentDefinitionConfig, ctx: BuildContext) -> RAGSearchTool:
+        """Build a retrieval-only QueryPipeline from the active query stack.
 
-        ``QueryPipeline`` is imported lazily here so this component module never
+        Reuses ``ctx.query`` (the experiment's retrieval + rerank stack) over
+        ``ctx.index`` in retrieval-only mode, with the query transform forced to
+        passthrough — the agent has already decided what to search for.
+        ``QueryPipeline`` is imported lazily so this component module never
         depends on the pipeline layer at import time (keeping the dependency
         graph pointing inward).
         """
         from uwf_rag.pipeline.query import QueryPipeline
 
-        query_config = experiment_config.query.model_copy(
+        if ctx.query is None or ctx.index is None:
+            raise RuntimeError(
+                "RAGSearchTool.build requires both ctx.query (the query stack) "
+                "and ctx.index (the populated index) in the BuildContext."
+            )
+        query_config = ctx.query.model_copy(
             update={"query_transform": QueryTransformConfig(type="passthrough")},
         )
         pipeline = QueryPipeline.from_config(
-            query_config, index_artifact, retrieval_only=True
+            query_config, ctx.index, retrieval_only=True
         )
         return cls(
             pipeline=pipeline,
-            name=entry.name or "knowledge_base",
-            description=entry.description or _DEFAULT_RAG_DESCRIPTION,
+            name=cfg.name or "knowledge_base",
+            description=cfg.description or _DEFAULT_RAG_DESCRIPTION,
         )
 
     @property

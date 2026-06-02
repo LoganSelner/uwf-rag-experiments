@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from uwf_rag.components.build import BuildContext
 from uwf_rag.components.tools import RAGSearchTool, tool_to_spec
 from uwf_rag.core.config import AgentDefinitionConfig, ExperimentConfig
+from uwf_rag.core.registry import registry
 from uwf_rag.core.types import Chunk, GenerationResult, RetrievedChunk, ToolResult
 
 
@@ -67,7 +69,7 @@ class TestRAGSearchTool:
         assert "failed" in result.content.lower()
 
     @patch("uwf_rag.pipeline.query.QueryPipeline.from_config")
-    def test_from_config_forces_passthrough_transform(
+    def test_build_forces_passthrough_transform(
         self, mock_from_config: MagicMock
     ) -> None:
         mock_from_config.return_value = MagicMock()
@@ -85,7 +87,10 @@ class TestRAGSearchTool:
             }
         )
         entry = AgentDefinitionConfig(name="knowledge_base", type="rag")
-        tool = RAGSearchTool.from_config(entry, experiment_config, MagicMock())
+        ctx = BuildContext(
+            registry=registry, index=MagicMock(), query=experiment_config.query
+        )
+        tool = RAGSearchTool.build(entry, ctx)
 
         assert tool.name == "knowledge_base"
         passed_query_config = mock_from_config.call_args[0][0]
@@ -98,12 +103,15 @@ class TestRAGSearchTool:
         assert mock_from_config.call_args.kwargs.get("retrieval_only") is True
 
     @patch("uwf_rag.pipeline.query.QueryPipeline.from_config", return_value=MagicMock())
-    def test_from_config_default_name_and_description(
+    def test_build_default_name_and_description(
         self, _mock_from_config: MagicMock
     ) -> None:
         entry = AgentDefinitionConfig(type="rag")  # no name / description
-        tool = RAGSearchTool.from_config(
-            entry, ExperimentConfig.from_dict({}), MagicMock()
+        ctx = BuildContext(
+            registry=registry,
+            index=MagicMock(),
+            query=ExperimentConfig.from_dict({}).query,
         )
+        tool = RAGSearchTool.build(entry, ctx)
         assert tool.name == "knowledge_base"
         assert "knowledge base" in tool.description.lower()

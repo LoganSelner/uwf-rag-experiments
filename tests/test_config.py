@@ -8,7 +8,6 @@ import pytest
 
 from uwf_rag.core.config import (
     AgentConfig,
-    AgentDefinitionConfig,
     ComponentConfig,
     ConfigValidationError,
     EvaluationConfig,
@@ -291,14 +290,16 @@ class TestSpecificConfigs:
     def test_agent_config_nested(self) -> None:
         cfg = AgentConfig.from_dict(
             {
-                "mode": "multi",
-                "agents": [{"name": "rag_agent", "type": "rag"}],
-                "tools": [{"name": "search", "type": "rag", "tool": "search"}],
+                "mode": "single",
+                "tools": [
+                    {"name": "search", "type": "rag"},
+                    {"name": "kb", "type": "rag"},
+                ],
             }
         )
-        assert cfg.mode == "multi"
-        assert len(cfg.agents) == 1
-        assert len(cfg.tools) == 1
+        assert cfg.mode == "single"
+        assert len(cfg.tools) == 2
+        assert cfg.tools[0].name == "search"
 
     def test_agent_config_defaults(self) -> None:
         cfg = AgentConfig.from_dict(None)
@@ -425,12 +426,11 @@ class TestValidateConfig:
         assert any("bad1" in e for e in exc_info.value.errors)
         assert any("bad2" in e for e in exc_info.value.errors)
 
-    def test_agent_mode_no_agents_or_tools(self) -> None:
+    def test_agent_mode_no_tools(self) -> None:
         cfg = self._make_valid_config()
         cfg.pipeline_mode = "agent"
-        cfg.agent.agents = []
         cfg.agent.tools = []
-        with pytest.raises(ConfigValidationError, match="no agents or tools"):
+        with pytest.raises(ConfigValidationError, match=r"needs at least one tool"):
             validate_config(cfg, registry)
 
     def test_empty_query_transform_defaults_to_passthrough(self) -> None:
@@ -1108,21 +1108,12 @@ class TestValidateAgentConfig:
             validate_config(cfg, registry)
 
     def test_single_mode_requires_tools(self) -> None:
-        # A single agent with agents-but-no-tools is degenerate (agents are
-        # for D2's supervisor): the single loop needs at least one tool.
+        # The single ReAct loop needs at least one tool to act with.
         cfg = self._make_valid_agent_config()
         cfg.agent.tools = []
-        cfg.agent.agents = [AgentDefinitionConfig(name="a", type="rag")]
         with pytest.raises(
-            ConfigValidationError, match=r"single.*needs at least one tool"
+            ConfigValidationError, match=r"agent\.tools is empty.*at least one tool"
         ):
-            validate_config(cfg, registry)
-
-    def test_no_tools_or_agents_rejected(self) -> None:
-        cfg = self._make_valid_agent_config()
-        cfg.agent.tools = []
-        cfg.agent.agents = []
-        with pytest.raises(ConfigValidationError, match="no agents or tools"):
             validate_config(cfg, registry)
 
     def test_memory_type_must_be_registered(self) -> None:
