@@ -367,7 +367,7 @@ class BaseQueryTransformer(ABC):
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
         """Transform the query into one or more search queries."""
 
@@ -432,8 +432,8 @@ class BasePromptTemplate(ABC):
         self,
         query: str,
         chunks: list[RetrievedChunk],
-        history: list[dict[str, str]] | None = None,
-    ) -> str | list[dict[str, str]]:
+        history: list[Message] | None = None,
+    ) -> str | list[Message]:
         """Format components into a prompt string or message list."""
 
 
@@ -469,7 +469,7 @@ class BaseMemory(ABC):
         """Record a conversation turn."""
 
     @abstractmethod
-    def get_history(self) -> list[dict[str, str]]:
+    def get_history(self) -> list[Message]:
         """Return conversation history (windowed by implementation)."""
 
     @abstractmethod

@@ -24,7 +24,7 @@ from uwf_rag.components.generators import build_generator
 from uwf_rag.components.retrievers import HybridRetriever
 from uwf_rag.core.config import QueryConfig, RetrievalConfig
 from uwf_rag.core.registry import registry
-from uwf_rag.core.types import GenerationResult
+from uwf_rag.core.types import GenerationResult, Message
 from uwf_rag.pipeline.indexing import BM25_AUX_KEY, IndexArtifact
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ class QueryPipeline:
     def run(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> GenerationResult:
         """Run the query pipeline end-to-end.
 

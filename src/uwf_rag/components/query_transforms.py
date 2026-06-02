@@ -19,7 +19,7 @@ from uwf_rag.components.base import (
     ComponentParams,
 )
 from uwf_rag.core.registry import registry
-from uwf_rag.core.types import TransformedQuery
+from uwf_rag.core.types import Message, TransformedQuery
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +69,12 @@ class ContextualizerQueryTransformer(BaseQueryTransformer):
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
         if not history:
             return [TransformedQuery(text=query)]
 
-        messages: list[dict[str, str]] = [
+        messages: list[Message] = [
             {"role": "system", "content": self._system_prompt},
             *history,
             {"role": "user", "content": query},
@@ -166,9 +166,9 @@ class HyDEQueryTransformer(BaseQueryTransformer):
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
-        messages: list[dict[str, str]] = [
+        messages: list[Message] = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": query},
         ]
@@ -313,12 +313,12 @@ class MultiQueryQueryTransformer(BaseQueryTransformer):
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
         system_prompt = self._system_prompt.replace(
             "{num_queries}", str(self._num_queries)
         )
-        messages: list[dict[str, str]] = [
+        messages: list[Message] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": query},
         ]

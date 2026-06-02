@@ -12,7 +12,7 @@ from pydantic import Field
 
 from uwf_rag.components.base import BasePromptTemplate, ComponentParams
 from uwf_rag.core.registry import registry
-from uwf_rag.core.types import RetrievedChunk
+from uwf_rag.core.types import Message, RetrievedChunk
 
 
 def _format_chunks_numbered(chunks: list[RetrievedChunk]) -> str:
@@ -68,10 +68,10 @@ class ChatPromptTemplate(BasePromptTemplate):
         self,
         query: str,
         chunks: list[RetrievedChunk],
-        history: list[dict[str, str]] | None = None,
-    ) -> list[dict[str, str]]:
+        history: list[Message] | None = None,
+    ) -> list[Message]:
         """Build a chat message list: system + history + user."""
-        messages: list[dict[str, str]] = []
+        messages: list[Message] = []
 
         # System message
         system = self._build_system_message(chunks)
