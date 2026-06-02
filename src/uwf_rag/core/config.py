@@ -158,6 +158,7 @@ class QueryTransformConfig(BaseModel):
 
     type: str = "passthrough"
     fusion: str = "rrf"
+    generator: LLMConfig = Field(default_factory=LLMConfig)
     params: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod

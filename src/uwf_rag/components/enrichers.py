@@ -13,6 +13,8 @@ import logging
 from typing import Any
 
 from uwf_rag.components.base import BaseChunkEnricher
+from uwf_rag.components.generators import build_generator
+from uwf_rag.core.config import LLMConfig
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import Chunk, Document
 
@@ -43,8 +45,10 @@ class ContextualChunkEnricher(BaseChunkEnricher):
     effect is isolated to retrieval.
 
     Config params:
-        generator_type: Registry name of the generator (required).
-        llm / sub_provider / ...: forwarded to the generator constructor.
+        generator: An LLMConfig (provider + model_name [+ params]) for the
+            situating LLM (required). Built lazily via ``build_generator`` on
+            the first ``enrich()`` call, so constructing the enricher on the
+            cache-load path never needs the generator's API key.
         context_scope: "document" (default), "page", or "window" — the unit
             of surrounding text shown to the LLM. ``document`` = the whole
             source; ``page`` = the chunk's own page; ``window`` = the
@@ -55,27 +59,17 @@ class ContextualChunkEnricher(BaseChunkEnricher):
             (must contain ``{doc_content}`` / ``{chunk_content}``).
     """
 
-    _OWN_KEYS = frozenset(
-        {
-            "generator_type",
-            "context_scope",
-            "window_size",
-            "max_workers",
-            "document_prompt",
-            "chunk_prompt",
-        }
-    )
-
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
 
-        self._generator_type: str = self.config.get("generator_type", "")
-        if not self._generator_type:
+        gen_cfg = self.config.get("generator")
+        if not gen_cfg:
             raise ValueError(
-                "ContextualChunkEnricher requires 'generator_type' in config "
-                "(e.g. 'edenai', 'google', 'ollama'). Set it via "
-                "indexing.chunk_enricher.params.generator_type in YAML."
+                "ContextualChunkEnricher requires a 'generator' config (an "
+                "LLMConfig: provider + model_name [+ params]). Set it via "
+                "indexing.chunk_enricher.params.generator in YAML."
             )
+        self._generator_llm = LLMConfig.from_dict(gen_cfg)
 
         self._scope: str = self.config.get("context_scope", "document")
         if self._scope not in _VALID_SCOPES:
@@ -108,9 +102,7 @@ class ContextualChunkEnricher(BaseChunkEnricher):
         self._generator: Any = None
 
     def _build_generator(self) -> Any:
-        gen_config = {k: v for k, v in self.config.items() if k not in self._OWN_KEYS}
-        gen_cls = registry.get("generation", self._generator_type)
-        return gen_cls(config=gen_config)
+        return build_generator(self._generator_llm)
 
     def enrich(
         self,

@@ -49,13 +49,14 @@ indexing:
 query:
   query_transform:
     type: "contextualizer"
+    generator:
+      provider: "edenai"
+      model_name: "gpt-4.1"
+      temperature: 0.0
+      params:
+        sub_provider: "openai"
     params:
-      generator_type: "edenai"
-      sub_provider: "openai"
       system_prompt: "Given a chat history and the latest user question, rewrite it as a standalone question."
-      llm:
-        model_name: "gpt-4.1"
-        temperature: 0.0
 
   retrieval:
     type: "dense"

@@ -312,10 +312,35 @@ class BaseQueryTransformer(ABC):
     single-query transforms. This naturally supports passthrough (1
     query), HyDE (1 query, optionally branch-tagged for hybrid routing),
     multi-query (N queries), and sub-question decomposition (N queries).
+
+    LLM-backed transformers receive their reasoning ``generator`` via
+    constructor injection (built by the pipeline through
+    ``build_generator``); a transformer never constructs its own generator
+    or touches the registry. Passthrough ignores it.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        generator: BaseGenerator | None = None,
+    ) -> None:
         self.config = config or {}
+        self._generator = generator
+
+    @property
+    def _llm(self) -> BaseGenerator:
+        """The injected reasoning generator (LLM-backed transformers only).
+
+        LLM-backed transformers require a generator and enforce it in their
+        ``__init__``; this accessor narrows the optional for callers and fails
+        loudly if one is reached without an injected generator.
+        """
+        if self._generator is None:
+            raise RuntimeError(
+                f"{type(self).__name__} requires a generator but none was injected."
+            )
+        return self._generator
 
     @abstractmethod
     def transform(

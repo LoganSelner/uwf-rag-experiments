@@ -69,11 +69,18 @@ class QueryPipeline:
             index_artifact: The IndexArtifact from the indexing pipeline.
             retrieval_only: If True, skip generator/prompt construction.
         """
-        # Query transformer
+        # Query transformer — its reasoning LLM (if any) is built here via the
+        # shared factory and injected; the transformer never touches the registry.
         qt_type = config.query_transform.type or "passthrough"
         qt_cls = registry.get("query_transform", qt_type)
+        qt_generator = (
+            build_generator(config.query_transform.generator)
+            if config.query_transform.generator.provider
+            else None
+        )
         query_transformer: BaseQueryTransformer = qt_cls(
-            config=config.query_transform.params
+            config=config.query_transform.params,
+            generator=qt_generator,
         )
 
         # Retriever — wire to vectorstore / embedder / sparse index
