@@ -14,18 +14,16 @@ from typing import Any
 
 from uwf_rag.components.base import (
     BaseGenerator,
-    BaseLexicalIndex,
     BasePromptTemplate,
     BaseQueryTransformer,
     BaseReranker,
     BaseRetriever,
 )
+from uwf_rag.components.build import BuildContext, IndexHandle
 from uwf_rag.components.generators import build_generator
-from uwf_rag.components.retrievers import HybridRetriever
-from uwf_rag.core.config import QueryConfig, RetrievalConfig
+from uwf_rag.core.config import QueryConfig
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import GenerationResult, Message
-from uwf_rag.pipeline.indexing import BM25_AUX_KEY, IndexArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -59,22 +57,33 @@ class QueryPipeline:
     def from_config(
         cls,
         config: QueryConfig,
-        index_artifact: IndexArtifact,
+        index_artifact: IndexHandle,
         retrieval_only: bool = False,
     ) -> QueryPipeline:
         """Build a QueryPipeline from config and a pre-built index.
 
         Args:
             config: The query section of the experiment config.
-            index_artifact: The IndexArtifact from the indexing pipeline.
+            index_artifact: The populated index (an ``IndexArtifact``, accepted
+                structurally as an ``IndexHandle``).
             retrieval_only: If True, skip generator/prompt construction.
         """
-        # Query transformer — its reasoning LLM (if any) is built here via the
+        # The build context carries the runtime dependencies components may
+        # need (the populated index, the generator factory, this query stack)
+        # plus the registry for recursive child construction.
+        ctx = BuildContext(
+            registry=registry,
+            index=index_artifact,
+            query=config,
+            make_generator=build_generator,
+        )
+
+        # Query transformer — its reasoning LLM (if any) is built via the
         # shared factory and injected; the transformer never touches the registry.
         qt_type = config.query_transform.type or "passthrough"
         qt_cls = registry.get("query_transform", qt_type)
         qt_generator = (
-            build_generator(config.query_transform.generator)
+            ctx.make_generator(config.query_transform.generator)
             if config.query_transform.generator.provider
             else None
         )
@@ -83,10 +92,15 @@ class QueryPipeline:
             generator=qt_generator,
         )
 
-        # Retriever — built with its index sources (and default filters)
-        # injected at construction. Hybrid retrievers compose child
-        # retrievers, each built the same way.
-        retriever = cls._build_retriever(config.retrieval, index_artifact)
+        # Retriever — each retriever's ``build`` pulls its own index
+        # dependencies from the context; the pipeline never branches on the
+        # concrete retriever type (hybrid recurses to build its children).
+        retriever_cls = registry.get("retrieval", config.retrieval.type)
+        retriever: BaseRetriever = retriever_cls.build(
+            params=config.retrieval.params,
+            default_filters=config.retrieval.filters or None,
+            ctx=ctx,
+        )
 
         # Reranker
         rerank_type = config.reranking.type or "none"
@@ -180,103 +194,3 @@ class QueryPipeline:
         result.query = query
         result.retrieved_chunks = reranked
         return result
-
-    @classmethod
-    def _build_retriever(
-        cls,
-        retrieval: RetrievalConfig,
-        index_artifact: IndexArtifact,
-    ) -> BaseRetriever:
-        """Build the retriever (single or hybrid) with its sources injected."""
-        default_filters = retrieval.filters or None
-        if retrieval.type == "hybrid":
-            return cls._build_hybrid_retriever(
-                retrieval.params, index_artifact, default_filters
-            )
-        return cls._build_single_retriever(
-            retrieval.type, retrieval.params, index_artifact, default_filters
-        )
-
-    @staticmethod
-    def _build_single_retriever(
-        retrieval_type: str,
-        params: dict[str, Any],
-        index_artifact: IndexArtifact,
-        default_filters: dict[str, Any] | None,
-    ) -> BaseRetriever:
-        """Construct one retriever with its index sources injected.
-
-        Dense retrievers receive vectorstore + embedder; BM25 receives the
-        sparse index from ``auxiliary_stores``. Other future retrievers can
-        extend this dispatch.
-        """
-        retriever_cls = registry.get("retrieval", retrieval_type)
-        if retrieval_type == "bm25":
-            sparse_index = index_artifact.auxiliary_stores.get(BM25_AUX_KEY)
-            if sparse_index is None:
-                raise RuntimeError(
-                    "BM25 retriever requires a sparse index, but the "
-                    "IndexArtifact has none under "
-                    f"auxiliary_stores['{BM25_AUX_KEY}']. Ensure "
-                    "indexing.sparse_index is configured."
-                )
-            if not isinstance(sparse_index, BaseLexicalIndex):
-                raise RuntimeError(
-                    f"auxiliary_stores['{BM25_AUX_KEY}'] is not a BaseLexicalIndex"
-                )
-            return retriever_cls(
-                config=params,
-                sparse_index=sparse_index,
-                default_filters=default_filters,
-            )
-        # Default: dense-style (vectorstore + embedder).
-        return retriever_cls(
-            config=params,
-            vectorstore=index_artifact.vectorstore,
-            embedder=index_artifact.embedder,
-            default_filters=default_filters,
-        )
-
-    @classmethod
-    def _build_hybrid_retriever(
-        cls,
-        params: dict[str, Any],
-        index_artifact: IndexArtifact,
-        default_filters: dict[str, Any] | None,
-    ) -> HybridRetriever:
-        """Construct a HybridRetriever and its child sub-retrievers.
-
-        Each sub-retriever entry: ``{name, type, top_k, params}``.
-        ``name`` defaults to ``type`` and must be unique within the
-        hybrid (validated upstream in ``validate_config``). The hybrid's
-        ``default_filters`` are injected into each child too, so a child's
-        own retrieve path filters identically to the standalone case.
-        """
-        sub_specs = params.get("retrievers", [])
-        children: list[tuple[str, BaseRetriever, int]] = []
-        for spec in sub_specs:
-            sub_type = spec["type"]
-            sub_name = spec.get("name", sub_type)
-            sub_top_k = int(spec["top_k"])
-            sub_params = spec.get("params", {})
-            child = cls._build_single_retriever(
-                sub_type, sub_params, index_artifact, default_filters
-            )
-            children.append((sub_name, child, sub_top_k))
-
-        fusion = params.get("fusion", "rrf")
-        rrf_k = int(params.get("rrf_k", 60))
-        weights_dict: dict[str, float] = {
-            k: float(v) for k, v in params.get("weights", {}).items()
-        }
-        normalize = params.get("normalize", "min_max")
-
-        return HybridRetriever(
-            config=params,
-            children=children,
-            fusion=fusion,
-            rrf_k=rrf_k,
-            weights=weights_dict,
-            normalize=normalize,
-            default_filters=default_filters,
-        )

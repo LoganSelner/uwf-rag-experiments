@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from uwf_rag.components._tool_protocol import dump_arguments, synthesize_call_id
 from uwf_rag.components.base import BaseGenerator, BaseMemory, BaseTool
+from uwf_rag.components.build import BuildContext
 from uwf_rag.components.generators import build_generator
 from uwf_rag.components.tools import tool_to_spec
 from uwf_rag.core.config import ExperimentConfig
@@ -86,15 +87,25 @@ class AgentPipeline:
         """
         agent = config.agent
 
+        # The build context carries the index + the query stack (which the RAG
+        # tool reuses) + the generator factory, plus the registry for any
+        # recursive construction (the Phase D2 supervisor's sub-agents).
+        ctx = BuildContext(
+            registry=registry,
+            index=index_artifact,
+            query=config.query,
+            make_generator=build_generator,
+        )
+
         # Reasoning generator — built from agent.llm via the shared factory
         # (sub_provider / base_url ride through agent.llm.params).
-        generator: BaseGenerator = build_generator(agent.llm)
+        generator: BaseGenerator = ctx.make_generator(agent.llm)
 
-        # Tool roster — each tool builds itself from its entry + the index.
+        # Tool roster — each tool builds itself from its entry + the context.
         tools: list[BaseTool] = []
         for entry in agent.tools:
             tool_cls = registry.get("tool", entry.type)
-            tools.append(tool_cls.from_config(entry, config, index_artifact))
+            tools.append(tool_cls.build(entry, ctx))
         tool_specs = [tool_to_spec(t) for t in tools]
 
         mem_cls = registry.get("memory", agent.memory.type or "none")

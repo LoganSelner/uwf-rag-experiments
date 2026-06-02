@@ -8,7 +8,7 @@ relevant chunks for a query.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from uwf_rag.components.base import (
     BaseEmbedder,
@@ -16,9 +16,13 @@ from uwf_rag.components.base import (
     BaseRetriever,
     BaseVectorStore,
 )
+from uwf_rag.components.build import BM25_AUX_KEY
 from uwf_rag.core.fusion import reciprocal_rank_fusion, weighted_score_fusion
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import RetrievedChunk, TransformedQuery
+
+if TYPE_CHECKING:
+    from uwf_rag.components.build import BuildContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,26 @@ class DenseRetriever(BaseRetriever):
         super().__init__(config, default_filters=default_filters)
         self._vectorstore = vectorstore
         self._embedder = embedder
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        params: dict[str, Any],
+        default_filters: dict[str, Any] | None,
+        ctx: BuildContext,
+    ) -> DenseRetriever:
+        if ctx.index is None:
+            raise RuntimeError(
+                "DenseRetriever.build requires a populated index in the "
+                "BuildContext (ctx.index is None)."
+            )
+        return cls(
+            config=params,
+            vectorstore=ctx.index.vectorstore,
+            embedder=ctx.index.embedder,
+            default_filters=default_filters,
+        )
 
     def retrieve(
         self,
@@ -81,6 +105,31 @@ class BM25Retriever(BaseRetriever):
     ) -> None:
         super().__init__(config, default_filters=default_filters)
         self._sparse_index = sparse_index
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        params: dict[str, Any],
+        default_filters: dict[str, Any] | None,
+        ctx: BuildContext,
+    ) -> BM25Retriever:
+        sparse = ctx.index.auxiliary_stores.get(BM25_AUX_KEY) if ctx.index else None
+        if sparse is None:
+            raise RuntimeError(
+                "BM25 retriever requires a sparse index, but the index has none "
+                f"under auxiliary_stores['{BM25_AUX_KEY}']. Ensure "
+                "indexing.sparse_index is configured."
+            )
+        if not isinstance(sparse, BaseLexicalIndex):
+            raise RuntimeError(
+                f"auxiliary_stores['{BM25_AUX_KEY}'] is not a BaseLexicalIndex"
+            )
+        return cls(
+            config=params,
+            sparse_index=sparse,
+            default_filters=default_filters,
+        )
 
     @classmethod
     def validate_params(
@@ -150,6 +199,42 @@ class HybridRetriever(BaseRetriever):
         self._weights = weights or {}
         self._normalize = normalize
         self._method_label = f"hybrid_{fusion}"
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        params: dict[str, Any],
+        default_filters: dict[str, Any] | None,
+        ctx: BuildContext,
+    ) -> HybridRetriever:
+        """Build the hybrid + its child sub-retrievers, recursing through ``ctx``.
+
+        Each child spec is ``{name, type, top_k, params}``; the child is built
+        via ``ctx.registry.get("retrieval", type).build(...)`` so the dispatch
+        lives in the registry, not here. The hybrid's ``default_filters`` are
+        injected into every child too, keeping per-branch filter semantics
+        consistent with the standalone retrievers.
+        """
+        children: list[tuple[str, BaseRetriever, int]] = []
+        for spec in params.get("retrievers", []):
+            sub_cls = ctx.registry.get("retrieval", spec["type"])
+            child = sub_cls.build(
+                params=spec.get("params", {}),
+                default_filters=default_filters,
+                ctx=ctx,
+            )
+            children.append((spec.get("name", spec["type"]), child, int(spec["top_k"])))
+
+        return cls(
+            config=params,
+            children=children,
+            fusion=params.get("fusion", "rrf"),
+            rrf_k=int(params.get("rrf_k", 60)),
+            weights={k: float(v) for k, v in params.get("weights", {}).items()},
+            normalize=params.get("normalize", "min_max"),
+            default_filters=default_filters,
+        )
 
     @classmethod
     def validate_params(
