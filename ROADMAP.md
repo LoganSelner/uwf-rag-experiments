@@ -3,7 +3,7 @@
 > Forward-looking plan for the RAG experimentation harness.
 > For the system as currently built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 >
-> **Last updated:** 2026-05-28
+> **Last updated:** 2026-06-02
 
 ---
 
@@ -141,6 +141,10 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 - Cross-experiment comparison with config diffing
 - CI pipeline (ruff + mypy + pytest), pre-commit, Makefile
 - Single-agent ReAct pipeline (Phase D1) via native tool calling
+- Uniform construction contract: `BuildContext` + polymorphic `build`
+  (`components/build.py`) so the pipeline resolves components by name and
+  never branches on a concrete implementation; symmetric `ValidateContext`
+  for component-owned param validation. The recursion substrate for D2.
 - Git SHA tracking for reproducibility
 - Config structure: `base.yaml` + `smoke.yaml` + `experiments/`
   organized by what each isolates
@@ -369,6 +373,17 @@ validation. Experiment config: `configs/agent_single.yaml` (shares
 A supervisor LLM routes each query to a specialized agent; each agent
 has its own retrieval filters and prompt (e.g., a handbook-only agent
 vs. a deadlines agent). Resolves GAP 1.
+
+**Construction substrate (ready).** The `BuildContext` + polymorphic `build`
+seam (`components/build.py`) is the recursion D2 builds on: a `multi`
+`AgentPipeline` builds a supervisor that constructs each specialist sub-agent
+via `ctx.build`-style recursion through the registry — the same pattern the
+hybrid retriever already uses to build its children. The dead D1-era
+`SupervisorConfig` / `AgentConfig.agents` / per-agent `AgentDefinitionConfig`
+fields were removed; D2 reintroduces a coherent supervisor + agent-roster
+config (each agent carrying its own `llm` / `tools` / retrieval / prompt) rather
+than carrying speculative fields ahead of the implementation. `AgentConfig.mode`
+is the seam; `multi` is rejected by the validator until this phase lands.
 
 **Milestone:** linear vs. single-agent vs. multi-agent on identical
 indexing, measuring whether agentic control flow actually improves
