@@ -10,9 +10,10 @@ Usage:
     config = ExperimentConfig.from_yaml("configs/experiments/chunking_1000.yaml")
     fingerprint = config.index_fingerprint()
 
-Each model keeps a ``from_dict`` classmethod (a thin wrapper over
-``model_validate`` that maps an empty/``None`` input to all-defaults) so the
-historical call sites and the per-section construction in tests stay intact.
+Every model inherits :class:`ConfigModel`, which supplies a shared
+``from_dict`` classmethod (a thin wrapper over ``model_validate`` that maps an
+empty/``None`` input to all-defaults) so the historical call sites and the
+per-section construction in tests stay intact.
 """
 
 from __future__ import annotations
@@ -20,10 +21,12 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, Field
 import yaml
+
+from uwf_rag.core.registry import RegistryLike
 
 # ---------------------------------------------------------------------------
 # YAML loading with inheritance
@@ -117,17 +120,27 @@ def _load_yaml_recursive(
 # ---------------------------------------------------------------------------
 
 
-class ComponentConfig(BaseModel):
+class ConfigModel(BaseModel):
+    """Base for every experiment-config model.
+
+    Supplies the shared ``from_dict`` constructor (a thin wrapper over
+    ``model_validate`` that maps an empty/``None`` input to all-defaults),
+    so the historical call sites and per-section construction in tests stay
+    intact without each model re-declaring it.
+    """
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> Self:
+        if not data:
+            return cls()
+        return cls.model_validate(data)
+
+
+class ComponentConfig(ConfigModel):
     """Generic config for a pipeline component: a type name + params dict."""
 
     type: str = ""
     params: dict[str, Any] = Field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> ComponentConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +148,10 @@ class ComponentConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class LLMConfig(BaseModel):
-    """Reusable LLM configuration. Used by generator, query transformer,
-    reranker, evaluator, supervisor, and agent LLMs."""
+class LLMConfig(ConfigModel):
+    """Reusable LLM configuration. Used by the answer generator, query
+    transformer, contextual enricher, evaluator judge, and agent reasoning
+    LLMs."""
 
     provider: str = ""
     model_name: str = ""
@@ -145,14 +159,8 @@ class LLMConfig(BaseModel):
     max_tokens: int | None = None
     params: dict[str, Any] = Field(default_factory=dict)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> LLMConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
-
-class RetrievalConfig(BaseModel):
+class RetrievalConfig(ConfigModel):
     """Retrieval-specific config with top_k and filters as first-class fields."""
 
     type: str = "dense"
@@ -161,14 +169,8 @@ class RetrievalConfig(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> RetrievalConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
-
-class QueryTransformConfig(BaseModel):
+class QueryTransformConfig(ConfigModel):
     """Query-transformer config with ``fusion`` as a first-class field.
 
     Parallel to :class:`RetrievalConfig` — the fusion strategy applied
@@ -187,14 +189,8 @@ class QueryTransformConfig(BaseModel):
     generator: LLMConfig = Field(default_factory=LLMConfig)
     params: dict[str, Any] = Field(default_factory=dict)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> QueryTransformConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
-
-class PromptConfig(BaseModel):
+class PromptConfig(ConfigModel):
     """Prompt template config with independently testable fields."""
 
     type: str = "chat"
@@ -205,24 +201,12 @@ class PromptConfig(BaseModel):
     few_shot_examples: list[dict[str, str]] = Field(default_factory=list)
     max_context_tokens: int | None = None
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> PromptConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
-
-class MemoryConfig(BaseModel):
+class MemoryConfig(ConfigModel):
     """Conversation memory config for agent pipelines."""
 
     type: str = "none"
     window_size: int = 5
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> MemoryConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +214,7 @@ class MemoryConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class EvalRunConfig(BaseModel):
+class EvalRunConfig(ConfigModel):
     """Execution settings for the RAGAS evaluator."""
 
     timeout: int = 600
@@ -238,30 +222,18 @@ class EvalRunConfig(BaseModel):
     max_wait: int = 60
     max_workers: int = 2
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> EvalRunConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
-
 
 # ---------------------------------------------------------------------------
 # Source config (per-document ingest settings)
 # ---------------------------------------------------------------------------
 
 
-class SourceConfig(BaseModel):
+class SourceConfig(ConfigModel):
     """Config for one source document."""
 
     name: str = ""
     path: str = ""
     ingest: ComponentConfig = Field(default_factory=ComponentConfig)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> SourceConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +241,7 @@ class SourceConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class IndexingConfig(BaseModel):
+class IndexingConfig(ConfigModel):
     """Config for the indexing pipeline (sources → vectorstore + optional sparse)."""
 
     sources: list[SourceConfig] = Field(default_factory=list)
@@ -279,19 +251,13 @@ class IndexingConfig(BaseModel):
     sparse_index: ComponentConfig = Field(default_factory=ComponentConfig)
     chunk_enricher: ComponentConfig = Field(default_factory=ComponentConfig)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> IndexingConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
-
 
 # ---------------------------------------------------------------------------
 # Query config (linear pipeline)
 # ---------------------------------------------------------------------------
 
 
-class QueryConfig(BaseModel):
+class QueryConfig(ConfigModel):
     """Config for the query pipeline (linear RAG mode).
 
     ``generator`` is a single :class:`LLMConfig` describing the answer model:
@@ -307,79 +273,46 @@ class QueryConfig(BaseModel):
     generator: LLMConfig = Field(default_factory=LLMConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> QueryConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
-
 
 # ---------------------------------------------------------------------------
 # Agent config
 # ---------------------------------------------------------------------------
 
 
-class SupervisorConfig(BaseModel):
-    """Config for the multi-agent supervisor."""
+class AgentDefinitionConfig(ConfigModel):
+    """One entry in the agent's tool roster.
 
-    llm: LLMConfig = Field(default_factory=LLMConfig)
-    routing: str = "llm"
-    routing_prompt: str = ""
-    max_iterations: int = 5
+    ``type`` is the registry name in category ``tool`` (e.g. ``rag``), ``name``
+    is the agent-facing tool name the LLM sees, and ``description`` overrides the
+    tool's default description.
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> SupervisorConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
-
-
-class AgentDefinitionConfig(BaseModel):
-    """Config for one agent or tool in the agent roster.
-
-    For a D1 tool entry: ``type`` is the registry name in category ``tool``
-    (e.g. ``rag``), ``name`` is the agent-facing tool name the LLM sees, and
-    ``description`` overrides the tool's default description. ``retrieval`` /
-    ``prompt`` / ``tool`` are reserved for the D2 multi-agent roster.
+    Phase D2 (multi-agent supervisor) will reintroduce per-agent fields
+    (retrieval / prompt / sub-tools) here or on a dedicated agent-roster model;
+    they are intentionally omitted until that lands so the config surface only
+    advertises what is wired today.
     """
 
     name: str = ""
     type: str = "rag"
     description: str = ""
-    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
-    prompt: PromptConfig = Field(default_factory=PromptConfig)
-    tool: str = ""
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> AgentDefinitionConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
 
-class AgentConfig(BaseModel):
-    """Config for agent-based pipelines (single or multi-agent).
+class AgentConfig(ConfigModel):
+    """Config for agent-based pipelines.
 
     ``max_iterations`` bounds the single-agent ReAct loop (reason→act→observe);
-    ``system_prompt`` is the agent's standing instruction. ``supervisor`` and
-    ``agents`` are for the multi-agent mode (Phase D2); single-agent mode reads
-    ``tools``.
+    ``system_prompt`` is the agent's standing instruction; ``tools`` is the
+    roster the single agent reasons over. ``mode`` is the seam for the Phase D2
+    multi-agent supervisor (``multi`` is rejected by the validator until D2
+    lands, at which point the supervisor + agent-roster config is added here).
     """
 
     mode: str = "single"
     max_iterations: int = 5
     system_prompt: str = ""
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    supervisor: SupervisorConfig = Field(default_factory=SupervisorConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    agents: list[AgentDefinitionConfig] = Field(default_factory=list)
     tools: list[AgentDefinitionConfig] = Field(default_factory=list)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> AgentConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +320,7 @@ class AgentConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class EvaluationConfig(BaseModel):
+class EvaluationConfig(ConfigModel):
     """Config for the evaluation system."""
 
     dataset: str = ""
@@ -412,19 +345,13 @@ class EvaluationConfig(BaseModel):
     evaluator_llm: LLMConfig = Field(default_factory=LLMConfig)
     evaluator_embedding: ComponentConfig = Field(default_factory=ComponentConfig)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> EvaluationConfig:
-        if not data:
-            return cls()
-        return cls.model_validate(data)
-
 
 # ---------------------------------------------------------------------------
 # Top-level experiment config
 # ---------------------------------------------------------------------------
 
 
-class ExperimentConfig(BaseModel):
+class ExperimentConfig(ConfigModel):
     """Top-level config for an experiment run."""
 
     name: str = ""
@@ -434,13 +361,6 @@ class ExperimentConfig(BaseModel):
     query: QueryConfig = Field(default_factory=QueryConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> ExperimentConfig:
-        """Build an ExperimentConfig from a raw dict (e.g. parsed YAML)."""
-        if not data:
-            return cls()
-        return cls.model_validate(data)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ExperimentConfig:
@@ -510,7 +430,7 @@ _SUPPORTED_QT_FUSION_MODES: frozenset[str] = frozenset({"rrf", "max"})
 _SUPPORTED_AGENT_MODES: frozenset[str] = frozenset({"single", "multi"})
 
 
-def validate_config(config: ExperimentConfig, registry: Any) -> None:
+def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
     """Validate an ExperimentConfig against the component registry.
 
     Checks that all referenced component types are registered,
@@ -713,7 +633,7 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
 
 def _check_registered(
     errors: list[str],
-    registry: Any,
+    registry: RegistryLike,
     type_name: str,
     category: str,
     config_path: str,
@@ -733,7 +653,7 @@ def _check_registered(
 def _validate_query_retrieval(
     errors: list[str],
     config: ExperimentConfig,
-    registry: Any,
+    registry: RegistryLike,
 ) -> None:
     """Validate the query-side retrieval stack shared by linear and agent modes.
 
@@ -770,14 +690,14 @@ def _validate_query_retrieval(
 def _validate_agent(
     errors: list[str],
     config: ExperimentConfig,
-    registry: Any,
+    registry: RegistryLike,
 ) -> None:
     """Validate agent-pipeline config (Phase D1: single-agent ReAct).
 
-    The single agent reasons over a roster of ``agent.tools`` (D2's supervisor
-    ``agent.agents`` are not implemented yet) using ``agent.llm`` as its
-    tool-calling reasoning model, and its RAG tool reuses the query retrieval +
-    rerank stack.
+    The single agent reasons over a roster of ``agent.tools`` using ``agent.llm``
+    as its tool-calling reasoning model, and its RAG tool reuses the query
+    retrieval + rerank stack. Multi-agent (``mode: multi``) is Phase D2 and is
+    rejected here for now.
     """
     agent = config.agent
 
@@ -815,11 +735,9 @@ def _validate_agent(
     # Tool roster.
     for i, tool in enumerate(agent.tools):
         _check_registered(errors, registry, tool.type, "tool", f"agent.tools[{i}].type")
-    if not agent.agents and not agent.tools:
-        errors.append("pipeline_mode is 'agent' but no agents or tools are defined")
-    elif agent.mode == "single" and not agent.tools:
+    if not agent.tools:
         errors.append(
-            "agent.mode is 'single' but agent.tools is empty — a single agent "
+            "pipeline_mode is 'agent' but agent.tools is empty — a single agent "
             "needs at least one tool"
         )
 
@@ -843,7 +761,7 @@ def _validate_agent(
 def _validate_retrieval_dependencies(
     errors: list[str],
     config: ExperimentConfig,
-    registry: Any,
+    registry: RegistryLike,
 ) -> None:
     """Delegate retrieval-type-specific param validation to the component.
 

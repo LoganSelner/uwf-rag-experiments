@@ -19,7 +19,24 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class RegistryLike(Protocol):
+    """Structural type for the registry handle passed to validators/builders.
+
+    ``ComponentRegistry`` satisfies it. Functions in ``core`` and component
+    ``validate`` / ``build`` classmethods depend on this Protocol rather than
+    the concrete class, so the dependency points at an interface and the
+    ``registry: Any`` escape hatch is no longer needed.
+    """
+
+    def get(self, category: str, type_name: str) -> type[Any]: ...
+
+    def is_registered(self, category: str, type_name: str) -> bool: ...
+
+    def list_category(self, category: str) -> list[str]: ...
 
 
 class ComponentRegistry:

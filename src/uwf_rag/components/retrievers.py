@@ -324,9 +324,7 @@ class HybridRetriever(BaseRetriever):
         merged_filters = {**self._default_filters, **(filters or {})}
         active_filters = merged_filters if merged_filters else None
 
-        # Gather per-branch results. Maintain a chunk_id -> RetrievedChunk
-        # map across branches so fused ids can be mapped back to chunks
-        # without re-querying.
+        # Gather per-branch results, then fuse + rebind via the shared helper.
         per_branch_ids: list[list[str]] = []
         per_branch_scored: list[list[tuple[str, float]]] = []
         per_branch_names: list[str] = []
@@ -334,21 +332,62 @@ class HybridRetriever(BaseRetriever):
 
         for name, child, branch_top_k in self._children:
             results = child.retrieve(query, branch_top_k, active_filters)
-            ids: list[str] = []
-            scored: list[tuple[str, float]] = []
-            for rc in results:
-                cid = rc.chunk.chunk_id
-                ids.append(cid)
-                scored.append((cid, rc.score))
-                # First occurrence wins for chunk lookup; identical
-                # chunk objects across branches differ only in score,
-                # which fusion is replacing anyway.
-                chunk_lookup.setdefault(cid, rc)
-            per_branch_ids.append(ids)
-            per_branch_scored.append(scored)
-            per_branch_names.append(name)
+            self._accumulate_branch(
+                name,
+                results,
+                per_branch_ids,
+                per_branch_scored,
+                per_branch_names,
+                chunk_lookup,
+            )
 
-        # Fuse.
+        return self._fuse_branches(
+            per_branch_ids, per_branch_scored, per_branch_names, chunk_lookup, top_k
+        )
+
+    @staticmethod
+    def _accumulate_branch(
+        name: str,
+        results: list[RetrievedChunk],
+        per_branch_ids: list[list[str]],
+        per_branch_scored: list[list[tuple[str, float]]],
+        per_branch_names: list[str],
+        chunk_lookup: dict[str, RetrievedChunk],
+    ) -> None:
+        """Record one branch's rank list into the parallel fusion inputs.
+
+        First occurrence wins for chunk lookup; identical chunk objects across
+        branches differ only in score, which fusion is replacing anyway.
+        """
+        ids: list[str] = []
+        scored: list[tuple[str, float]] = []
+        for rc in results:
+            cid = rc.chunk.chunk_id
+            ids.append(cid)
+            scored.append((cid, rc.score))
+            chunk_lookup.setdefault(cid, rc)
+        per_branch_ids.append(ids)
+        per_branch_scored.append(scored)
+        per_branch_names.append(name)
+
+    def _fuse_branches(
+        self,
+        per_branch_ids: list[list[str]],
+        per_branch_scored: list[list[tuple[str, float]]],
+        per_branch_names: list[str],
+        chunk_lookup: dict[str, RetrievedChunk],
+        top_k: int,
+    ) -> list[RetrievedChunk]:
+        """Cross-branch fusion + rebind shared by ``retrieve`` / ``retrieve_multi``.
+
+        Combines the per-branch rank lists via the hybrid's own ``self._fusion``
+        (RRF or weighted), then rebinds the fused ids to ``RetrievedChunk``
+        objects carrying the fused score and the hybrid's method label (not
+        whatever a child set), truncated to ``top_k``.
+        """
+        if not per_branch_ids:
+            return []
+
         if self._fusion == "rrf":
             fused = reciprocal_rank_fusion(per_branch_ids, k=self._rrf_k)
         elif self._fusion == "weighted":
@@ -364,8 +403,6 @@ class HybridRetriever(BaseRetriever):
                 f"(expected 'rrf' or 'weighted')"
             )
 
-        # Rebind to RetrievedChunk objects with fused scores and a
-        # method label that names the fusion, not whatever a child set.
         out: list[RetrievedChunk] = []
         for cid, fused_score in fused[:top_k]:
             base = chunk_lookup[cid]
@@ -461,43 +498,19 @@ class HybridRetriever(BaseRetriever):
                 fusion=fusion,
                 filters=active_filters,
             )
-            ids: list[str] = []
-            scored: list[tuple[str, float]] = []
-            for rc in results:
-                cid = rc.chunk.chunk_id
-                ids.append(cid)
-                scored.append((cid, rc.score))
-                chunk_lookup.setdefault(cid, rc)
-            per_branch_ids.append(ids)
-            per_branch_scored.append(scored)
-            per_branch_names.append(name)
-
-        if not per_branch_ids:
-            return []
-
-        if self._fusion == "rrf":
-            fused = reciprocal_rank_fusion(per_branch_ids, k=self._rrf_k)
-        elif self._fusion == "weighted":
-            ordered_weights = [self._weights[n] for n in per_branch_names]
-            fused = weighted_score_fusion(
+            self._accumulate_branch(
+                name,
+                results,
+                per_branch_ids,
                 per_branch_scored,
-                ordered_weights,
-                normalize=self._normalize,
-            )
-        else:
-            raise ValueError(
-                f"HybridRetriever: unknown fusion mode '{self._fusion}' "
-                f"(expected 'rrf' or 'weighted')"
+                per_branch_names,
+                chunk_lookup,
             )
 
-        out: list[RetrievedChunk] = []
-        for cid, fused_score in fused[:top_k_per_query]:
-            base = chunk_lookup[cid]
-            out.append(
-                RetrievedChunk(
-                    chunk=base.chunk,
-                    score=fused_score,
-                    retrieval_method=self._method_label,
-                )
-            )
-        return out
+        return self._fuse_branches(
+            per_branch_ids,
+            per_branch_scored,
+            per_branch_names,
+            chunk_lookup,
+            top_k_per_query,
+        )
