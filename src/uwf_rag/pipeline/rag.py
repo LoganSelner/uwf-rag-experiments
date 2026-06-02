@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import logging
 
-from core.config import ExperimentConfig
-from core.types import GenerationResult
-from pipeline.agent import AgentPipeline
-from pipeline.indexing import IndexArtifact, IndexingPipeline
-from pipeline.query import QueryPipeline
+from uwf_rag.core.config import ExperimentConfig
+from uwf_rag.core.types import GenerationResult
+from uwf_rag.pipeline.agent import AgentPipeline
+from uwf_rag.pipeline.indexing import IndexArtifact, IndexingPipeline
+from uwf_rag.pipeline.query import QueryPipeline
 
 logger = logging.getLogger(__name__)
 

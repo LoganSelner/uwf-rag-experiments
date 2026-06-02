@@ -25,17 +25,14 @@ indexing:
 
 query:
   query_transform:
-    params:
-      generator_type: "edenai"
-      sub_provider: "google"
-      llm:
-        model_name: "gemini-2.0-flash"
+    generator:
+      provider: "edenai"
+      model_name: "gemini-2.0-flash"
+      params:
+        sub_provider: "google"
 
-  generation:
-    type: "edenai"
-    params:
-      sub_provider: "google"
-
-  generation_llm:
+  generator:
     provider: "edenai"
     model_name: "gemini-2.0-flash"
+    params:
+      sub_provider: "google"

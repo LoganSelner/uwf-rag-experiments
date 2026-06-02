@@ -12,9 +12,13 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 from typing import Any
 
-from components.base import BaseChunkEnricher
-from core.registry import registry
-from core.types import Chunk, Document
+from pydantic import Field
+
+from uwf_rag.components.base import BaseChunkEnricher, ComponentParams
+from uwf_rag.components.generators import build_generator
+from uwf_rag.core.config import LLMConfig
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, Document
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +47,10 @@ class ContextualChunkEnricher(BaseChunkEnricher):
     effect is isolated to retrieval.
 
     Config params:
-        generator_type: Registry name of the generator (required).
-        llm / sub_provider / ...: forwarded to the generator constructor.
+        generator: An LLMConfig (provider + model_name [+ params]) for the
+            situating LLM (required). Built lazily via ``build_generator`` on
+            the first ``enrich()`` call, so constructing the enricher on the
+            cache-load path never needs the generator's API key.
         context_scope: "document" (default), "page", or "window" — the unit
             of surrounding text shown to the LLM. ``document`` = the whole
             source; ``page`` = the chunk's own page; ``window`` = the
@@ -55,62 +61,46 @@ class ContextualChunkEnricher(BaseChunkEnricher):
             (must contain ``{doc_content}`` / ``{chunk_content}``).
     """
 
-    _OWN_KEYS = frozenset(
-        {
-            "generator_type",
-            "context_scope",
-            "window_size",
-            "max_workers",
-            "document_prompt",
-            "chunk_prompt",
-        }
-    )
+    class Params(ComponentParams):
+        # ``generator`` is optional in the schema so a missing one yields the
+        # friendly message below rather than a raw "Field required".
+        generator: LLMConfig | None = None
+        context_scope: str = "document"
+        window_size: int = Field(default=1, ge=0)
+        max_workers: int = Field(default=8, ge=1)
+        document_prompt: str = _DEFAULT_DOCUMENT_PROMPT
+        chunk_prompt: str = _DEFAULT_CHUNK_PROMPT
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
+        self.p = self.Params.model_validate(self.config)
 
-        self._generator_type: str = self.config.get("generator_type", "")
-        if not self._generator_type:
+        if self.p.generator is None:
             raise ValueError(
-                "ContextualChunkEnricher requires 'generator_type' in config "
-                "(e.g. 'edenai', 'google', 'ollama'). Set it via "
-                "indexing.chunk_enricher.params.generator_type in YAML."
+                "ContextualChunkEnricher requires a 'generator' config (an "
+                "LLMConfig: provider + model_name [+ params]). Set it via "
+                "indexing.chunk_enricher.params.generator in YAML."
             )
+        self._generator_llm = self.p.generator
 
-        self._scope: str = self.config.get("context_scope", "document")
+        self._scope = self.p.context_scope
         if self._scope not in _VALID_SCOPES:
             raise ValueError(
                 f"ContextualChunkEnricher context_scope must be one of "
                 f"{sorted(_VALID_SCOPES)}, got '{self._scope}'"
             )
 
-        self._window_size: int = int(self.config.get("window_size", 1))
-        if self._window_size < 0:
-            raise ValueError(
-                f"ContextualChunkEnricher window_size must be >= 0 "
-                f"(got {self._window_size})"
-            )
-
-        self._max_workers: int = int(self.config.get("max_workers", 8))
-        if self._max_workers < 1:
-            raise ValueError(
-                f"ContextualChunkEnricher max_workers must be >= 1 "
-                f"(got {self._max_workers})"
-            )
-
-        self._document_prompt: str = self.config.get(
-            "document_prompt", _DEFAULT_DOCUMENT_PROMPT
-        )
-        self._chunk_prompt: str = self.config.get("chunk_prompt", _DEFAULT_CHUNK_PROMPT)
+        self._window_size = self.p.window_size
+        self._max_workers = self.p.max_workers
+        self._document_prompt = self.p.document_prompt
+        self._chunk_prompt = self.p.chunk_prompt
 
         # Built lazily on first enrich() so constructing the enricher on the
         # cache-load path never requires the generator's API key.
         self._generator: Any = None
 
     def _build_generator(self) -> Any:
-        gen_config = {k: v for k, v in self.config.items() if k not in self._OWN_KEYS}
-        gen_cls = registry.get("generation", self._generator_type)
-        return gen_cls(config=gen_config)
+        return build_generator(self._generator_llm)
 
     def enrich(
         self,

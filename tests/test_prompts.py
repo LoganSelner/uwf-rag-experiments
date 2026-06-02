@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from components.prompts import (
+from uwf_rag.components.prompts import (
     ChatPromptTemplate,
     _format_chunks_numbered,
     _format_chunks_plain,
 )
-from core.types import Chunk, RetrievedChunk
+from uwf_rag.core.types import Chunk, RetrievedChunk
 
 
 def _rc(content: str, score: float = 0.9) -> RetrievedChunk:

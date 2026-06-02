@@ -13,8 +13,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from core.fusion import max_score_dedup, reciprocal_rank_fusion
-from core.types import (
+from pydantic import BaseModel, ConfigDict
+
+from uwf_rag.core.fusion import max_score_dedup, reciprocal_rank_fusion
+from uwf_rag.core.types import (
     Chunk,
     Document,
     EmbeddedChunk,
@@ -25,6 +27,20 @@ from core.types import (
     ToolSpec,
     TransformedQuery,
 )
+
+
+class ComponentParams(BaseModel):
+    """Base for a component's typed parameter model.
+
+    A component declares a nested ``class Params(ComponentParams)`` with typed
+    fields + defaults; its ``__init__`` validates the raw ``config`` dict into
+    ``self.p = self.Params.model_validate(self.config)``. This is the single
+    home for a component's defaults and param validation, replacing scattered
+    ``self.config.get(key, default)`` reads. Unknown keys are rejected so a
+    typo'd YAML param fails loudly rather than being silently ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class BaseIngestor(ABC):
@@ -183,33 +199,41 @@ class BaseLexicalIndex(ABC):
 class BaseRetriever(ABC):
     """Retrieves relevant chunks for a query.
 
-    Holds references to a vectorstore, embedder, and/or lexical index,
-    injected after construction. This allows the pipeline to construct
-    components independently from config and wire them together afterward.
-
-    Dense retrievers use set_vectorstore + set_embedder; lexical (e.g.
-    BM25) retrievers use set_sparse_index; hybrid retrievers compose
-    sub-retrievers and inject the appropriate sources into each child.
+    Dependencies (vectorstore + embedder for dense, a lexical index for BM25,
+    composed children for hybrid) and the default metadata filters (from
+    ``query.retrieval.filters``) are injected through each concrete retriever's
+    constructor by ``QueryPipeline.from_config``. There is no post-construction
+    wiring, so a retriever is always fully formed and usable once built.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        default_filters: dict[str, Any] | None = None,
+    ) -> None:
         self.config = config or {}
-        self._vectorstore: BaseVectorStore | None = None
-        self._embedder: BaseEmbedder | None = None
-        self._sparse_index: BaseLexicalIndex | None = None
-        self._default_filters: dict[str, Any] = {}
+        self._default_filters: dict[str, Any] = default_filters or {}
 
-    def set_vectorstore(self, vectorstore: BaseVectorStore) -> None:
-        self._vectorstore = vectorstore
+    @classmethod
+    def validate_params(
+        cls,
+        params: dict[str, Any],
+        *,
+        registry: Any,
+        sparse_index_type: str,
+        top_k_retrieve: int,
+    ) -> list[str]:
+        """Return config-validation error strings for this retriever's params.
 
-    def set_embedder(self, embedder: BaseEmbedder) -> None:
-        self._embedder = embedder
-
-    def set_sparse_index(self, sparse_index: BaseLexicalIndex) -> None:
-        self._sparse_index = sparse_index
-
-    def set_default_filters(self, filters: dict[str, Any]) -> None:
-        self._default_filters = filters
+        Default: no retriever-specific checks. Overridden by retrievers whose
+        params have structure to validate (BM25 needs a sparse index; hybrid
+        has a child roster + fusion settings). Keeps that knowledge in the
+        component rather than in ``core.validate_config``. ``registry`` and the
+        cross-config values (``sparse_index_type``, ``top_k_retrieve``) are
+        supplied by the caller so the component never reaches into config.
+        """
+        return []
 
     @abstractmethod
     def retrieve(
@@ -220,10 +244,7 @@ class BaseRetriever(ABC):
     ) -> list[RetrievedChunk]:
         """Retrieve the top_k most relevant chunks for a query.
 
-        Uses self._default_filters merged with any explicit filters.
-        Dense retrievers embed via self._embedder and search
-        self._vectorstore. Lexical retrievers delegate to
-        self._sparse_index.
+        Uses ``self._default_filters`` merged with any explicit filters.
         """
 
     def retrieve_multi(
@@ -312,16 +333,41 @@ class BaseQueryTransformer(ABC):
     single-query transforms. This naturally supports passthrough (1
     query), HyDE (1 query, optionally branch-tagged for hybrid routing),
     multi-query (N queries), and sub-question decomposition (N queries).
+
+    LLM-backed transformers receive their reasoning ``generator`` via
+    constructor injection (built by the pipeline through
+    ``build_generator``); a transformer never constructs its own generator
+    or touches the registry. Passthrough ignores it.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        generator: BaseGenerator | None = None,
+    ) -> None:
         self.config = config or {}
+        self._generator = generator
+
+    @property
+    def _llm(self) -> BaseGenerator:
+        """The injected reasoning generator (LLM-backed transformers only).
+
+        LLM-backed transformers require a generator and enforce it in their
+        ``__init__``; this accessor narrows the optional for callers and fails
+        loudly if one is reached without an injected generator.
+        """
+        if self._generator is None:
+            raise RuntimeError(
+                f"{type(self).__name__} requires a generator but none was injected."
+            )
+        return self._generator
 
     @abstractmethod
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
         """Transform the query into one or more search queries."""
 
@@ -386,8 +432,8 @@ class BasePromptTemplate(ABC):
         self,
         query: str,
         chunks: list[RetrievedChunk],
-        history: list[dict[str, str]] | None = None,
-    ) -> str | list[dict[str, str]]:
+        history: list[Message] | None = None,
+    ) -> str | list[Message]:
         """Format components into a prompt string or message list."""
 
 
@@ -423,7 +469,7 @@ class BaseMemory(ABC):
         """Record a conversation turn."""
 
     @abstractmethod
-    def get_history(self) -> list[dict[str, str]]:
+    def get_history(self) -> list[Message]:
         """Return conversation history (windowed by implementation)."""
 
     @abstractmethod

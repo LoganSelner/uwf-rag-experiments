@@ -7,19 +7,29 @@ dataclass with well-defined fields. No business logic lives here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NotRequired, Protocol, Required, TypedDict, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Shared aliases
 # ---------------------------------------------------------------------------
 
-# A single chat message in the neutral, OpenAI-style schema shared by every
-# generator. ``content`` is a string (or ``None`` on an assistant turn that
-# only carries tool calls); a tool-calling assistant turn additionally carries
-# ``tool_calls`` and a tool-result turn carries ``tool_call_id``. Kept as a
-# loose ``dict[str, Any]`` (rather than a TypedDict) because each generator
-# translates it to its own provider shape — see ``components/_tool_protocol``.
-Message = dict[str, Any]
+
+class Message(TypedDict, total=False):
+    """A single chat message in the neutral, OpenAI-style schema shared by
+    every generator.
+
+    Only ``role`` is required. ``content`` is a string (or ``None`` on an
+    assistant turn that only carries tool calls); a tool-calling assistant turn
+    additionally carries ``tool_calls`` and a tool-result turn carries
+    ``tool_call_id``. It is a ``TypedDict`` (a plain ``dict`` at runtime), so the
+    OpenAI generator still forwards the list verbatim while the other three
+    translators get static shape-checking — see ``components/_tool_protocol``.
+    """
+
+    role: Required[str]
+    content: NotRequired[str | None]
+    tool_calls: NotRequired[list[dict[str, Any]]]
+    tool_call_id: NotRequired[str]
 
 
 # ---------------------------------------------------------------------------

@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.config import EvaluationConfig
-from core.types import EvalSample, GenerationResult
-from evaluation.evaluator import Evaluator, _load_dataset
+from uwf_rag.core.config import EvaluationConfig
+from uwf_rag.core.types import EvalSample, GenerationResult
+from uwf_rag.evaluation.evaluator import Evaluator, _load_dataset
 
 # -----------------------------------------------------------------------
 # _load_dataset
@@ -190,7 +190,7 @@ class TestAggregateMetrics:
 
 class TestEmbedderAdapter:
     def test_embed_text(self) -> None:
-        from evaluation.evaluator import _wrap_embedder_for_ragas
+        from uwf_rag.evaluation.evaluator import _wrap_embedder_for_ragas
 
         mock_embedder = MagicMock()
         mock_embedder.embed_query.return_value = [0.1, 0.2, 0.3]
@@ -200,7 +200,7 @@ class TestEmbedderAdapter:
         mock_embedder.embed_query.assert_called_once_with("test")
 
     def test_embed_texts(self) -> None:
-        from evaluation.evaluator import _wrap_embedder_for_ragas
+        from uwf_rag.evaluation.evaluator import _wrap_embedder_for_ragas
 
         mock_embedder = MagicMock()
         mock_embedder.embed_query.side_effect = [[0.1], [0.2]]
@@ -210,7 +210,7 @@ class TestEmbedderAdapter:
         assert mock_embedder.embed_query.call_count == 2
 
     def test_legacy_embed_query(self) -> None:
-        from evaluation.evaluator import _wrap_embedder_for_ragas
+        from uwf_rag.evaluation.evaluator import _wrap_embedder_for_ragas
 
         mock_embedder = MagicMock()
         mock_embedder.embed_query.return_value = [0.1, 0.2, 0.3]
@@ -220,7 +220,7 @@ class TestEmbedderAdapter:
         mock_embedder.embed_query.assert_called_once_with("test")
 
     def test_legacy_embed_documents(self) -> None:
-        from evaluation.evaluator import _wrap_embedder_for_ragas
+        from uwf_rag.evaluation.evaluator import _wrap_embedder_for_ragas
 
         mock_embedder = MagicMock()
         mock_embedder.embed_query.side_effect = [[0.1], [0.2]]
@@ -466,8 +466,8 @@ class TestBuildEvaluatorEmbedder:
         mock_cls = MagicMock(return_value=mock_embedder)
 
         with (
-            patch("evaluation.evaluator.registry") as mock_registry,
-            patch("evaluation.evaluator._load_dataset", return_value=[]),
+            patch("uwf_rag.evaluation.evaluator.registry") as mock_registry,
+            patch("uwf_rag.evaluation.evaluator._load_dataset", return_value=[]),
             patch.object(evaluator, "_run_once", return_value=[]),
             patch.object(evaluator, "_aggregate_metrics", return_value={}),
         ):
@@ -489,7 +489,7 @@ class TestBuildEvaluatorEmbedder:
         evaluator = Evaluator(cfg)
 
         with (
-            patch("evaluation.evaluator._load_dataset", return_value=[]),
+            patch("uwf_rag.evaluation.evaluator._load_dataset", return_value=[]),
             patch.object(evaluator, "_run_once", return_value=[]),
             patch.object(evaluator, "_aggregate_metrics", return_value={}),
         ):
@@ -543,9 +543,9 @@ class TestEvaluateNoneMode:
         samples = self._samples(2)
 
         with (
-            patch("evaluation.evaluator.registry") as mock_registry,
+            patch("uwf_rag.evaluation.evaluator.registry") as mock_registry,
             patch(
-                "evaluation.evaluator._load_dataset",
+                "uwf_rag.evaluation.evaluator._load_dataset",
                 return_value=[
                     {"id": s.id, "query": s.query, "reference": s.reference}
                     for s in samples

@@ -1,6 +1,6 @@
 """Config system for argobot-bench.
 
-All experiment configuration is defined as dataclasses here, loaded
+All experiment configuration is defined as Pydantic models here, loaded
 from YAML files. Supports inheritance via ``extends: base.yaml`` with
 deep-merge semantics (dicts merge recursively, lists replace, scalars
 replace).
@@ -9,21 +9,44 @@ Usage:
 
     config = ExperimentConfig.from_yaml("configs/experiments/chunking_1000.yaml")
     fingerprint = config.index_fingerprint()
+
+Each model keeps a ``from_dict`` classmethod (a thin wrapper over
+``model_validate`` that maps an empty/``None`` input to all-defaults) so the
+historical call sites and the per-section construction in tests stay intact.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
 import yaml
 
 # ---------------------------------------------------------------------------
 # YAML loading with inheritance
 # ---------------------------------------------------------------------------
+
+
+# Keys that select a component implementation. A component's other settings
+# (notably ``params``) are scoped to the chosen implementation, so when a child
+# config changes one of these the whole subtree is *replaced* rather than
+# deep-merged — otherwise the parent's implementation-specific params (e.g.
+# EdenAI's ``provider`` / ``sub_provider``) would leak onto a different
+# implementation (e.g. a HuggingFace embedder or an Ollama generator). This
+# mirrors Hydra's config-group *selection* and the general rule that a swapped
+# component's config is private to its kind.
+_IMPL_SELECTOR_KEYS = ("type", "provider")
+
+
+def _selects_different_impl(base: dict[str, Any], override: dict[str, Any]) -> bool:
+    """True if *base* and *override* pick different component implementations."""
+    return any(
+        key in base and key in override and base[key] != override[key]
+        for key in _IMPL_SELECTOR_KEYS
+    )
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -33,10 +56,17 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     - Nested dicts: merge recursively (override only specified keys)
     - Lists: full replacement (override provides the entire list)
     - Scalars: override replaces base
+    - Component dicts whose implementation selector (``type``/``provider``)
+      changes: full replacement (params are private to the implementation)
     """
     merged = base.copy()
     for key, value in override.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+            and not _selects_different_impl(merged[key], value)
+        ):
             merged[key] = _deep_merge(merged[key], value)
         else:
             merged[key] = value
@@ -87,21 +117,17 @@ def _load_yaml_recursive(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ComponentConfig:
+class ComponentConfig(BaseModel):
     """Generic config for a pipeline component: a type name + params dict."""
 
     type: str = ""
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> ComponentConfig:
         if not data:
             return cls()
-        return cls(
-            type=data.get("type", ""),
-            params=data.get("params", {}),
-        )
+        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -109,8 +135,7 @@ class ComponentConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class LLMConfig:
+class LLMConfig(BaseModel):
     """Reusable LLM configuration. Used by generator, query transformer,
     reranker, evaluator, supervisor, and agent LLMs."""
 
@@ -118,46 +143,32 @@ class LLMConfig:
     model_name: str = ""
     temperature: float = 0.0
     max_tokens: int | None = None
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> LLMConfig:
         if not data:
             return cls()
-        return cls(
-            provider=data.get("provider", ""),
-            model_name=data.get("model_name", ""),
-            temperature=data.get("temperature", 0.0),
-            max_tokens=data.get("max_tokens"),
-            params=data.get("params", {}),
-        )
+        return cls.model_validate(data)
 
 
-@dataclass
-class RetrievalConfig:
+class RetrievalConfig(BaseModel):
     """Retrieval-specific config with top_k and filters as first-class fields."""
 
     type: str = "dense"
     top_k_retrieve: int = 10
     top_k_final: int = 5
-    filters: dict[str, Any] = field(default_factory=dict)
-    params: dict[str, Any] = field(default_factory=dict)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> RetrievalConfig:
         if not data:
             return cls()
-        return cls(
-            type=data.get("type", "dense"),
-            top_k_retrieve=data.get("top_k_retrieve", 10),
-            top_k_final=data.get("top_k_final", 5),
-            filters=data.get("filters", {}),
-            params=data.get("params", {}),
-        )
+        return cls.model_validate(data)
 
 
-@dataclass
-class QueryTransformConfig:
+class QueryTransformConfig(BaseModel):
     """Query-transformer config with ``fusion`` as a first-class field.
 
     Parallel to :class:`RetrievalConfig` — the fusion strategy applied
@@ -173,21 +184,17 @@ class QueryTransformConfig:
 
     type: str = "passthrough"
     fusion: str = "rrf"
-    params: dict[str, Any] = field(default_factory=dict)
+    generator: LLMConfig = Field(default_factory=LLMConfig)
+    params: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> QueryTransformConfig:
         if not data:
             return cls()
-        return cls(
-            type=data.get("type", "passthrough"),
-            fusion=data.get("fusion", "rrf"),
-            params=data.get("params", {}),
-        )
+        return cls.model_validate(data)
 
 
-@dataclass
-class PromptConfig:
+class PromptConfig(BaseModel):
     """Prompt template config with independently testable fields."""
 
     type: str = "chat"
@@ -195,26 +202,17 @@ class PromptConfig:
     context_format: str = "numbered"
     use_chain_of_thought: bool = False
     citation_style: str = "none"
-    few_shot_examples: list[dict[str, str]] = field(default_factory=list)
+    few_shot_examples: list[dict[str, str]] = Field(default_factory=list)
     max_context_tokens: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> PromptConfig:
         if not data:
             return cls()
-        return cls(
-            type=data.get("type", "chat"),
-            system_template=data.get("system_template", ""),
-            context_format=data.get("context_format", "numbered"),
-            use_chain_of_thought=data.get("use_chain_of_thought", False),
-            citation_style=data.get("citation_style", "none"),
-            few_shot_examples=data.get("few_shot_examples", []),
-            max_context_tokens=data.get("max_context_tokens"),
-        )
+        return cls.model_validate(data)
 
 
-@dataclass
-class MemoryConfig:
+class MemoryConfig(BaseModel):
     """Conversation memory config for agent pipelines."""
 
     type: str = "none"
@@ -224,10 +222,7 @@ class MemoryConfig:
     def from_dict(cls, data: dict[str, Any] | None) -> MemoryConfig:
         if not data:
             return cls()
-        return cls(
-            type=data.get("type", "none"),
-            window_size=data.get("window_size", 5),
-        )
+        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +230,7 @@ class MemoryConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class EvalRunConfig:
+class EvalRunConfig(BaseModel):
     """Execution settings for the RAGAS evaluator."""
 
     timeout: int = 600
@@ -248,12 +242,7 @@ class EvalRunConfig:
     def from_dict(cls, data: dict[str, Any] | None) -> EvalRunConfig:
         if not data:
             return cls()
-        return cls(
-            timeout=data.get("timeout", 600),
-            max_retries=data.get("max_retries", 2),
-            max_wait=data.get("max_wait", 60),
-            max_workers=data.get("max_workers", 2),
-        )
+        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -261,23 +250,18 @@ class EvalRunConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class SourceConfig:
+class SourceConfig(BaseModel):
     """Config for one source document."""
 
     name: str = ""
     path: str = ""
-    ingest: ComponentConfig = field(default_factory=ComponentConfig)
+    ingest: ComponentConfig = Field(default_factory=ComponentConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> SourceConfig:
         if not data:
             return cls()
-        return cls(
-            name=data.get("name", ""),
-            path=data.get("path", ""),
-            ingest=ComponentConfig.from_dict(data.get("ingest")),
-        )
+        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -285,29 +269,21 @@ class SourceConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class IndexingConfig:
+class IndexingConfig(BaseModel):
     """Config for the indexing pipeline (sources → vectorstore + optional sparse)."""
 
-    sources: list[SourceConfig] = field(default_factory=list)
-    chunking: ComponentConfig = field(default_factory=ComponentConfig)
-    embedding: ComponentConfig = field(default_factory=ComponentConfig)
-    vectorstore: ComponentConfig = field(default_factory=ComponentConfig)
-    sparse_index: ComponentConfig = field(default_factory=ComponentConfig)
-    chunk_enricher: ComponentConfig = field(default_factory=ComponentConfig)
+    sources: list[SourceConfig] = Field(default_factory=list)
+    chunking: ComponentConfig = Field(default_factory=ComponentConfig)
+    embedding: ComponentConfig = Field(default_factory=ComponentConfig)
+    vectorstore: ComponentConfig = Field(default_factory=ComponentConfig)
+    sparse_index: ComponentConfig = Field(default_factory=ComponentConfig)
+    chunk_enricher: ComponentConfig = Field(default_factory=ComponentConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> IndexingConfig:
         if not data:
             return cls()
-        return cls(
-            sources=[SourceConfig.from_dict(s) for s in data.get("sources", [])],
-            chunking=ComponentConfig.from_dict(data.get("chunking")),
-            embedding=ComponentConfig.from_dict(data.get("embedding")),
-            vectorstore=ComponentConfig.from_dict(data.get("vectorstore")),
-            sparse_index=ComponentConfig.from_dict(data.get("sparse_index")),
-            chunk_enricher=ComponentConfig.from_dict(data.get("chunk_enricher")),
-        )
+        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -315,29 +291,27 @@ class IndexingConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class QueryConfig:
-    """Config for the query pipeline (linear RAG mode)."""
+class QueryConfig(BaseModel):
+    """Config for the query pipeline (linear RAG mode).
 
-    query_transform: QueryTransformConfig = field(default_factory=QueryTransformConfig)
-    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
-    reranking: ComponentConfig = field(default_factory=ComponentConfig)
-    generation: ComponentConfig = field(default_factory=ComponentConfig)
-    generation_llm: LLMConfig = field(default_factory=LLMConfig)
-    prompt: PromptConfig = field(default_factory=PromptConfig)
+    ``generator`` is a single :class:`LLMConfig` describing the answer model:
+    ``generator.provider`` is the ``generation`` registry name and
+    ``generator.params`` holds provider extras (e.g. EdenAI ``sub_provider``).
+    It replaces the former redundant ``generation`` (type) + ``generation_llm``
+    (provider/model) pair — the two always named the same provider.
+    """
+
+    query_transform: QueryTransformConfig = Field(default_factory=QueryTransformConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    reranking: ComponentConfig = Field(default_factory=ComponentConfig)
+    generator: LLMConfig = Field(default_factory=LLMConfig)
+    prompt: PromptConfig = Field(default_factory=PromptConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> QueryConfig:
         if not data:
             return cls()
-        return cls(
-            query_transform=QueryTransformConfig.from_dict(data.get("query_transform")),
-            retrieval=RetrievalConfig.from_dict(data.get("retrieval")),
-            reranking=ComponentConfig.from_dict(data.get("reranking")),
-            generation=ComponentConfig.from_dict(data.get("generation")),
-            generation_llm=LLMConfig.from_dict(data.get("generation_llm")),
-            prompt=PromptConfig.from_dict(data.get("prompt")),
-        )
+        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -345,11 +319,10 @@ class QueryConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class SupervisorConfig:
+class SupervisorConfig(BaseModel):
     """Config for the multi-agent supervisor."""
 
-    llm: LLMConfig = field(default_factory=LLMConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
     routing: str = "llm"
     routing_prompt: str = ""
     max_iterations: int = 5
@@ -358,16 +331,10 @@ class SupervisorConfig:
     def from_dict(cls, data: dict[str, Any] | None) -> SupervisorConfig:
         if not data:
             return cls()
-        return cls(
-            llm=LLMConfig.from_dict(data.get("llm")),
-            routing=data.get("routing", "llm"),
-            routing_prompt=data.get("routing_prompt", ""),
-            max_iterations=data.get("max_iterations", 5),
-        )
+        return cls.model_validate(data)
 
 
-@dataclass
-class AgentDefinitionConfig:
+class AgentDefinitionConfig(BaseModel):
     """Config for one agent or tool in the agent roster.
 
     For a D1 tool entry: ``type`` is the registry name in category ``tool``
@@ -379,26 +346,18 @@ class AgentDefinitionConfig:
     name: str = ""
     type: str = "rag"
     description: str = ""
-    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
-    prompt: PromptConfig = field(default_factory=PromptConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    prompt: PromptConfig = Field(default_factory=PromptConfig)
     tool: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> AgentDefinitionConfig:
         if not data:
             return cls()
-        return cls(
-            name=data.get("name", ""),
-            type=data.get("type", "rag"),
-            description=data.get("description", ""),
-            retrieval=RetrievalConfig.from_dict(data.get("retrieval")),
-            prompt=PromptConfig.from_dict(data.get("prompt")),
-            tool=data.get("tool", ""),
-        )
+        return cls.model_validate(data)
 
 
-@dataclass
-class AgentConfig:
+class AgentConfig(BaseModel):
     """Config for agent-based pipelines (single or multi-agent).
 
     ``max_iterations`` bounds the single-agent ReAct loop (reason→act→observe);
@@ -410,26 +369,17 @@ class AgentConfig:
     mode: str = "single"
     max_iterations: int = 5
     system_prompt: str = ""
-    llm: LLMConfig = field(default_factory=LLMConfig)
-    supervisor: SupervisorConfig = field(default_factory=SupervisorConfig)
-    memory: MemoryConfig = field(default_factory=MemoryConfig)
-    agents: list[AgentDefinitionConfig] = field(default_factory=list)
-    tools: list[AgentDefinitionConfig] = field(default_factory=list)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    supervisor: SupervisorConfig = Field(default_factory=SupervisorConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    agents: list[AgentDefinitionConfig] = Field(default_factory=list)
+    tools: list[AgentDefinitionConfig] = Field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> AgentConfig:
         if not data:
             return cls()
-        return cls(
-            mode=data.get("mode", "single"),
-            max_iterations=data.get("max_iterations", 5),
-            system_prompt=data.get("system_prompt", ""),
-            llm=LLMConfig.from_dict(data.get("llm")),
-            supervisor=SupervisorConfig.from_dict(data.get("supervisor")),
-            memory=MemoryConfig.from_dict(data.get("memory")),
-            agents=[AgentDefinitionConfig.from_dict(a) for a in data.get("agents", [])],
-            tools=[AgentDefinitionConfig.from_dict(t) for t in data.get("tools", [])],
-        )
+        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -437,13 +387,12 @@ class AgentConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class EvaluationConfig:
+class EvaluationConfig(BaseModel):
     """Config for the evaluation system."""
 
     dataset: str = ""
     mode: str = "full"
-    metrics: list[str] = field(
+    metrics: list[str] = Field(
         default_factory=lambda: [
             "answer_correctness",
             "context_precision",
@@ -452,48 +401,22 @@ class EvaluationConfig:
             "answer_relevancy",
         ]
     )
-    retrieval_only_metrics: list[str] = field(
+    retrieval_only_metrics: list[str] = Field(
         default_factory=lambda: [
             "context_precision",
             "context_entity_recall",
         ]
     )
     num_runs: int = 3
-    run_config: EvalRunConfig = field(default_factory=EvalRunConfig)
-    evaluator_llm: LLMConfig = field(default_factory=LLMConfig)
-    evaluator_embedding: ComponentConfig = field(default_factory=ComponentConfig)
+    run_config: EvalRunConfig = Field(default_factory=EvalRunConfig)
+    evaluator_llm: LLMConfig = Field(default_factory=LLMConfig)
+    evaluator_embedding: ComponentConfig = Field(default_factory=ComponentConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> EvaluationConfig:
         if not data:
             return cls()
-        return cls(
-            dataset=data.get("dataset", ""),
-            mode=data.get("mode", "full"),
-            metrics=data.get(
-                "metrics",
-                [
-                    "answer_correctness",
-                    "context_precision",
-                    "faithfulness",
-                    "context_entity_recall",
-                    "answer_relevancy",
-                ],
-            ),
-            retrieval_only_metrics=data.get(
-                "retrieval_only_metrics",
-                [
-                    "context_precision",
-                    "context_entity_recall",
-                ],
-            ),
-            num_runs=data.get("num_runs", 3),
-            run_config=EvalRunConfig.from_dict(data.get("run_config")),
-            evaluator_llm=LLMConfig.from_dict(data.get("evaluator_llm")),
-            evaluator_embedding=ComponentConfig.from_dict(
-                data.get("evaluator_embedding")
-            ),
-        )
+        return cls.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -501,30 +424,23 @@ class EvaluationConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ExperimentConfig:
+class ExperimentConfig(BaseModel):
     """Top-level config for an experiment run."""
 
     name: str = ""
     description: str = ""
     pipeline_mode: str = "linear"
-    indexing: IndexingConfig = field(default_factory=IndexingConfig)
-    query: QueryConfig = field(default_factory=QueryConfig)
-    agent: AgentConfig = field(default_factory=AgentConfig)
-    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    indexing: IndexingConfig = Field(default_factory=IndexingConfig)
+    query: QueryConfig = Field(default_factory=QueryConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ExperimentConfig:
+    def from_dict(cls, data: dict[str, Any] | None) -> ExperimentConfig:
         """Build an ExperimentConfig from a raw dict (e.g. parsed YAML)."""
-        return cls(
-            name=data.get("name", ""),
-            description=data.get("description", ""),
-            pipeline_mode=data.get("pipeline_mode", "linear"),
-            indexing=IndexingConfig.from_dict(data.get("indexing")),
-            query=QueryConfig.from_dict(data.get("query")),
-            agent=AgentConfig.from_dict(data.get("agent")),
-            evaluation=EvaluationConfig.from_dict(data.get("evaluation")),
-        )
+        if not data:
+            return cls()
+        return cls.model_validate(data)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ExperimentConfig:
@@ -549,38 +465,20 @@ class ExperimentConfig:
         Two experiments with the same fingerprint can share a cached
         index.
         """
+        idx = self.indexing
         data: dict[str, Any] = {
-            "sources": [
-                {
-                    "name": s.name,
-                    "path": s.path,
-                    "ingest": {"type": s.ingest.type, "params": s.ingest.params},
-                }
-                for s in self.indexing.sources
-            ],
-            "chunking": {
-                "type": self.indexing.chunking.type,
-                "params": self.indexing.chunking.params,
-            },
-            "embedding": {
-                "type": self.indexing.embedding.type,
-                "params": self.indexing.embedding.params,
-            },
-            "vectorstore": {
-                "type": self.indexing.vectorstore.type,
-                "params": self.indexing.vectorstore.params,
-            },
+            "sources": [s.model_dump() for s in idx.sources],
+            "chunking": idx.chunking.model_dump(),
+            "embedding": idx.embedding.model_dump(),
+            "vectorstore": idx.vectorstore.model_dump(),
         }
-        if self.indexing.sparse_index.type:
-            data["sparse_index"] = {
-                "type": self.indexing.sparse_index.type,
-                "params": self.indexing.sparse_index.params,
-            }
-        if self.indexing.chunk_enricher.type:
-            data["chunk_enricher"] = {
-                "type": self.indexing.chunk_enricher.type,
-                "params": self.indexing.chunk_enricher.params,
-            }
+        # Empty-config canonicalization: optional components join the
+        # fingerprint only when their ``type`` is set, so adding an unused
+        # optional indexing component never disturbs an existing fingerprint.
+        if idx.sparse_index.type:
+            data["sparse_index"] = idx.sparse_index.model_dump()
+        if idx.chunk_enricher.type:
+            data["chunk_enricher"] = idx.chunk_enricher.model_dump()
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
@@ -769,18 +667,18 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
 
         retrieval_only = config.evaluation.mode == "retrieval_only"
         if not retrieval_only:
-            if not config.query.generation.type:
+            if not config.query.generator.provider:
                 errors.append(
-                    "query.generation.type is empty but evaluation.mode "
+                    "query.generator.provider is empty but evaluation.mode "
                     "is not 'retrieval_only' — a generator is required"
                 )
             else:
                 _check_registered(
                     errors,
                     registry,
-                    config.query.generation.type,
+                    config.query.generator.provider,
                     "generation",
-                    "query.generation.type",
+                    "query.generator.provider",
                 )
             _check_registered(
                 errors,
@@ -789,9 +687,9 @@ def validate_config(config: ExperimentConfig, registry: Any) -> None:
                 "prompts",
                 "query.prompt.type",
             )
-            if not config.query.generation_llm.model_name:
+            if not config.query.generator.model_name:
                 errors.append(
-                    "query.generation_llm.model_name is empty but evaluation.mode "
+                    "query.generator.model_name is empty but evaluation.mode "
                     "is not 'retrieval_only' — a model name is required for generation"
                 )
 
@@ -942,165 +840,32 @@ def _validate_agent(
         )
 
 
-_SUPPORTED_FUSION_MODES: frozenset[str] = frozenset({"rrf", "weighted"})
-_SUPPORTED_NORMALIZE_MODES: frozenset[str] = frozenset({"min_max", "none"})
-
-
 def _validate_retrieval_dependencies(
     errors: list[str],
     config: ExperimentConfig,
     registry: Any,
 ) -> None:
-    """Phase A retrieval validations beyond simple registry checks.
+    """Delegate retrieval-type-specific param validation to the component.
 
-    Covers:
-    - `bm25` retriever requires `indexing.sparse_index` to be set.
-    - `hybrid` retriever: child specs, fusion mode, weights, nesting
-      prohibition, sparse-index requirement when any child is `bm25`.
+    The retriever class owns its param schema — BM25 needs a sparse index;
+    hybrid validates its child roster, nesting prohibition, and fusion
+    settings — via a ``validate_params`` classmethod. Core only resolves the
+    class from the registry, supplies the cross-config context (sparse-index
+    type, top_k budget), and folds the returned error strings into the
+    aggregate so the collect-all ``ConfigValidationError`` UX is preserved.
     """
     retrieval = config.query.retrieval
-
-    if retrieval.type == "bm25":
-        if not config.indexing.sparse_index.type:
-            errors.append(
-                "query.retrieval.type is 'bm25' but indexing.sparse_index "
-                "is not configured"
-            )
-        return
-
-    if retrieval.type != "hybrid":
-        return
-
-    params = retrieval.params or {}
-    children = params.get("retrievers")
-    if not isinstance(children, list):
-        errors.append(
-            "query.retrieval.params.retrievers must be a list of "
-            "sub-retriever specs for hybrid retrieval"
+    if not registry.is_registered("retrieval", retrieval.type):
+        return  # an unregistered type is already flagged by _check_registered
+    retriever_cls = registry.get("retrieval", retrieval.type)
+    errors.extend(
+        retriever_cls.validate_params(
+            retrieval.params or {},
+            registry=registry,
+            sparse_index_type=config.indexing.sparse_index.type,
+            top_k_retrieve=retrieval.top_k_retrieve,
         )
-        return
-    if len(children) < 2:
-        errors.append(
-            f"query.retrieval.params.retrievers must have at least 2 "
-            f"entries for hybrid (got {len(children)})"
-        )
-
-    seen_names: set[str] = set()
-    seen_types: dict[str, int] = {}
-    has_bm25_child = False
-    child_top_k_sum = 0
-
-    for i, child in enumerate(children):
-        path = f"query.retrieval.params.retrievers[{i}]"
-        if not isinstance(child, dict):
-            errors.append(f"{path} must be a dict")
-            continue
-        sub_type = child.get("type", "")
-        if sub_type == "hybrid":
-            errors.append(f"{path}.type: nested 'hybrid' is not allowed")
-            continue
-        if not sub_type:
-            errors.append(f"{path}.type is empty")
-        else:
-            _check_registered(errors, registry, sub_type, "retrieval", f"{path}.type")
-            seen_types[sub_type] = seen_types.get(sub_type, 0) + 1
-            if sub_type == "bm25":
-                has_bm25_child = True
-
-        sub_name = str(child.get("name", sub_type))
-        if sub_name in seen_names:
-            errors.append(
-                f"{path}.name: '{sub_name}' is duplicated in this hybrid "
-                "(child names must be unique)"
-            )
-        else:
-            seen_names.add(sub_name)
-
-        sub_top_k = child.get("top_k")
-        if not isinstance(sub_top_k, int) or sub_top_k <= 0:
-            errors.append(f"{path}.top_k must be a positive int (got {sub_top_k!r})")
-        else:
-            child_top_k_sum += sub_top_k
-
-    # Duplicate types without explicit names are disallowed — the
-    # default name (the type) would collide.
-    for sub_type, count in seen_types.items():
-        if count > 1:
-            explicit = sum(
-                1
-                for c in children
-                if isinstance(c, dict) and c.get("type") == sub_type and c.get("name")
-            )
-            if explicit < count:
-                errors.append(
-                    f"query.retrieval.params.retrievers: type '{sub_type}' "
-                    f"appears {count} times — each duplicate child must "
-                    "supply an explicit unique 'name'"
-                )
-
-    if (
-        child_top_k_sum
-        and retrieval.top_k_retrieve > 0
-        and child_top_k_sum < retrieval.top_k_retrieve
-    ):
-        errors.append(
-            f"query.retrieval.params.retrievers: sum of child top_k "
-            f"({child_top_k_sum}) < query.retrieval.top_k_retrieve "
-            f"({retrieval.top_k_retrieve}) — fusion cannot fill the slate"
-        )
-
-    if has_bm25_child and config.indexing.sparse_index.type != "bm25":
-        errors.append(
-            "hybrid has a 'bm25' child but indexing.sparse_index.type "
-            f"is '{config.indexing.sparse_index.type}' (expected 'bm25')"
-        )
-
-    fusion = params.get("fusion", "rrf")
-    if fusion not in _SUPPORTED_FUSION_MODES:
-        errors.append(
-            f"query.retrieval.params.fusion: '{fusion}' is not supported. "
-            f"Supported: {sorted(_SUPPORTED_FUSION_MODES)}"
-        )
-
-    if fusion == "rrf":
-        rrf_k = params.get("rrf_k", 60)
-        if not isinstance(rrf_k, int) or rrf_k <= 0:
-            errors.append(
-                f"query.retrieval.params.rrf_k must be a positive int (got {rrf_k!r})"
-            )
-
-    if fusion == "weighted":
-        normalize = params.get("normalize", "min_max")
-        if normalize not in _SUPPORTED_NORMALIZE_MODES:
-            errors.append(
-                f"query.retrieval.params.normalize: '{normalize}' is not "
-                f"supported. Supported: {sorted(_SUPPORTED_NORMALIZE_MODES)}"
-            )
-
-        weights = params.get("weights")
-        if not isinstance(weights, dict):
-            errors.append(
-                "query.retrieval.params.weights is required for weighted "
-                "fusion and must be a dict keyed by sub-retriever name"
-            )
-        else:
-            if set(weights.keys()) != seen_names:
-                errors.append(
-                    f"query.retrieval.params.weights keys "
-                    f"{sorted(weights.keys())} must match sub-retriever "
-                    f"names {sorted(seen_names)}"
-                )
-            weight_values = list(weights.values())
-            if any(not isinstance(w, (int, float)) or w < 0 for w in weight_values):
-                errors.append(
-                    "query.retrieval.params.weights values must be "
-                    f"non-negative numbers (got {weight_values})"
-                )
-            elif sum(weight_values) <= 0:
-                errors.append(
-                    "query.retrieval.params.weights must sum to > 0 "
-                    f"(got {sum(weight_values)})"
-                )
+    )
 
 
 def _validate_qt_branch_references(

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from components.ingestors import PDFIngestor
-from core.types import Document
+from uwf_rag.components.ingestors import PDFIngestor
+from uwf_rag.core.types import Document
 
 
 class TestPDFIngestor:

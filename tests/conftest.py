@@ -3,22 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sys
 
 import numpy as np
 import pytest
 
-# ---------------------------------------------------------------------------
-# Path setup — bare imports (e.g. ``from core.types import ...``) work in tests
-# ---------------------------------------------------------------------------
-_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT / "scripts"))
-
-# Trigger component registration so registry is populated
-import components  # noqa: F401, E402
-from core.config import ExperimentConfig  # noqa: E402
-from core.types import (  # noqa: E402
+# Trigger component registration so the registry is populated (side-effect import).
+import uwf_rag.components  # noqa: F401
+from uwf_rag.core.config import ExperimentConfig
+from uwf_rag.core.types import (
     Chunk,
     Document,
     EmbeddedChunk,
@@ -144,8 +136,11 @@ def minimal_config_dict(fixtures_dir: Path) -> dict:
         "query": {
             "retrieval": {"type": "dense", "top_k_retrieve": 5, "top_k_final": 3},
             "reranking": {"type": "none"},
-            "generation": {"type": "ollama"},
-            "generation_llm": {"model_name": "test-model", "temperature": 0.0},
+            "generator": {
+                "provider": "ollama",
+                "model_name": "test-model",
+                "temperature": 0.0,
+            },
             "prompt": {"type": "chat"},
         },
         "evaluation": {

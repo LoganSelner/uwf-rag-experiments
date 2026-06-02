@@ -24,12 +24,13 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from components._tool_protocol import dump_arguments, synthesize_call_id
-from components.base import BaseGenerator, BaseMemory, BaseTool
-from components.tools import tool_to_spec
-from core.config import ExperimentConfig
-from core.registry import registry
-from core.types import (
+from uwf_rag.components._tool_protocol import dump_arguments, synthesize_call_id
+from uwf_rag.components.base import BaseGenerator, BaseMemory, BaseTool
+from uwf_rag.components.generators import build_generator
+from uwf_rag.components.tools import tool_to_spec
+from uwf_rag.core.config import ExperimentConfig
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import (
     AgentStep,
     GenerationResult,
     Message,
@@ -39,7 +40,7 @@ from core.types import (
 )
 
 if TYPE_CHECKING:
-    from pipeline.indexing import IndexArtifact
+    from uwf_rag.pipeline.indexing import IndexArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -85,19 +86,9 @@ class AgentPipeline:
         """
         agent = config.agent
 
-        # Reasoning generator — same "generator_type + llm dict" idiom the
-        # query transformers use, so sub_provider / base_url pass through.
-        gen_config = {
-            **agent.llm.params,
-            "llm": {
-                "provider": agent.llm.provider,
-                "model_name": agent.llm.model_name,
-                "temperature": agent.llm.temperature,
-                "max_tokens": agent.llm.max_tokens,
-            },
-        }
-        gen_cls = registry.get("generation", agent.llm.provider)
-        generator: BaseGenerator = gen_cls(config=gen_config)
+        # Reasoning generator — built from agent.llm via the shared factory
+        # (sub_provider / base_url ride through agent.llm.params).
+        generator: BaseGenerator = build_generator(agent.llm)
 
         # Tool roster — each tool builds itself from its entry + the index.
         tools: list[BaseTool] = []

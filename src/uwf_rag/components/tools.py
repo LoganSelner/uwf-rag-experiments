@@ -13,21 +13,20 @@ Deferred (end of Phase D1): a ``web_search`` tool over an external API.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
-from components.base import BaseTool
-from core.config import (
+from uwf_rag.components.base import BaseTool
+from uwf_rag.core.config import (
     AgentDefinitionConfig,
     ExperimentConfig,
     QueryTransformConfig,
 )
-from core.registry import registry
-from core.types import RetrievedChunk, ToolResult, ToolSpec
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import RetrievedChunk, ToolResult, ToolSpec
 
 if TYPE_CHECKING:
-    from pipeline.indexing import IndexArtifact
+    from uwf_rag.pipeline.indexing import IndexArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +109,10 @@ class RAGSearchTool(BaseTool):
         depends on the pipeline layer at import time (keeping the dependency
         graph pointing inward).
         """
-        from pipeline.query import QueryPipeline
+        from uwf_rag.pipeline.query import QueryPipeline
 
-        query_config = dataclasses.replace(
-            experiment_config.query,
-            query_transform=QueryTransformConfig(type="passthrough"),
+        query_config = experiment_config.query.model_copy(
+            update={"query_transform": QueryTransformConfig(type="passthrough")},
         )
         pipeline = QueryPipeline.from_config(
             query_config, index_artifact, retrieval_only=True

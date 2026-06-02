@@ -54,11 +54,10 @@ indexing:
 query:
   query_transform:
     type: "contextualizer"
-    params:
-      generator_type: "google"
-      llm:
-        model_name: "gemini-1.0-pro"
-        temperature: 0.0
+    generator:
+      provider: "google"
+      model_name: "gemini-1.0-pro"
+      temperature: 0.0
 
   retrieval:
     type: "dense"
@@ -68,10 +67,7 @@ query:
   reranking:
     type: "none"
 
-  generation:
-    type: "google"
-
-  generation_llm:
+  generator:
     provider: "google"
     model_name: "gemini-1.0-pro"
     temperature: 0.0

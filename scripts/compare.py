@@ -16,7 +16,6 @@ import csv
 import io
 import json
 from pathlib import Path
-import sys
 from typing import Any
 
 from rich import box
@@ -24,10 +23,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-# Add src/ to path for bare imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
-from evaluation.comparison import (
+from uwf_rag.evaluation.comparison import (
     DEFAULT_METRICS,
     METRIC_SHORT_NAMES,
     compare_experiments,

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from core.config import (
+from uwf_rag.core.config import (
     AgentConfig,
     AgentDefinitionConfig,
     ComponentConfig,
@@ -22,7 +22,7 @@ from core.config import (
     load_yaml_with_inheritance,
     validate_config,
 )
-from core.registry import registry
+from uwf_rag.core.registry import registry
 
 # -----------------------------------------------------------------------
 # _deep_merge
@@ -49,6 +49,36 @@ class TestDeepMerge:
     def test_empty_override(self) -> None:
         base = {"a": 1, "b": {"c": 3}}
         assert _deep_merge(base, {}) == base
+
+    def test_type_change_replaces_params(self) -> None:
+        # Switching a component's implementation (type) replaces its params
+        # wholesale — the parent's impl-specific params must not bleed across.
+        base = {"embedding": {"type": "edenai", "params": {"provider": "openai"}}}
+        override = {"embedding": {"type": "huggingface", "params": {"model_name": "m"}}}
+        assert _deep_merge(base, override) == {
+            "embedding": {"type": "huggingface", "params": {"model_name": "m"}}
+        }
+
+    def test_provider_change_replaces_params(self) -> None:
+        # Same rule for LLMConfig blocks keyed by ``provider``.
+        base = {
+            "generator": {"provider": "edenai", "params": {"sub_provider": "openai"}}
+        }
+        override = {"generator": {"provider": "ollama", "params": {"base_url": "x"}}}
+        assert _deep_merge(base, override) == {
+            "generator": {"provider": "ollama", "params": {"base_url": "x"}}
+        }
+
+    def test_same_type_still_merges_params(self) -> None:
+        # When the implementation is unchanged, params still deep-merge.
+        base = {"chunking": {"type": "recursive", "params": {"chunk_size": 1000}}}
+        override = {"chunking": {"type": "recursive", "params": {"chunk_overlap": 50}}}
+        assert _deep_merge(base, override) == {
+            "chunking": {
+                "type": "recursive",
+                "params": {"chunk_size": 1000, "chunk_overlap": 50},
+            }
+        }
 
 
 # -----------------------------------------------------------------------
@@ -332,8 +362,7 @@ class TestValidateConfig:
             },
             "query": {
                 "retrieval": {"type": "dense", "top_k_retrieve": 10, "top_k_final": 5},
-                "generation": {"type": "ollama"},
-                "generation_llm": {"model_name": "test-model"},
+                "generator": {"provider": "ollama", "model_name": "test-model"},
                 "prompt": {"type": "chat"},
             },
             "evaluation": {
@@ -513,13 +542,13 @@ class TestValidateConfig:
 
     def test_retrieval_only_skips_generation_check(self) -> None:
         cfg = self._make_valid_config()
-        cfg.query.generation.type = ""
+        cfg.query.generator.provider = ""
         cfg.evaluation.mode = "retrieval_only"
         validate_config(cfg, registry)  # should not raise
 
     def test_full_mode_requires_generation(self) -> None:
         cfg = self._make_valid_config()
-        cfg.query.generation.type = ""
+        cfg.query.generator.provider = ""
         cfg.evaluation.mode = "full"
         with pytest.raises(ConfigValidationError, match="generator is required"):
             validate_config(cfg, registry)
@@ -533,7 +562,7 @@ class TestValidateConfig:
     def test_none_mode_still_requires_generation(self) -> None:
         cfg = self._make_valid_config()
         cfg.evaluation.mode = "none"
-        cfg.query.generation.type = ""
+        cfg.query.generator.provider = ""
         with pytest.raises(ConfigValidationError, match="generator is required"):
             validate_config(cfg, registry)
 
@@ -557,7 +586,7 @@ class TestValidateConfig:
 
     def test_generation_llm_model_name_empty(self) -> None:
         cfg = self._make_valid_config()
-        cfg.query.generation_llm.model_name = ""
+        cfg.query.generator.model_name = ""
         with pytest.raises(ConfigValidationError, match="model_name is empty"):
             validate_config(cfg, registry)
 
@@ -723,8 +752,7 @@ class TestValidateConfigSparseAndHybrid:
                         "top_k_retrieve": 10,
                         "top_k_final": 5,
                     },
-                    "generation": {"type": "ollama"},
-                    "generation_llm": {"model_name": "x"},
+                    "generator": {"provider": "ollama", "model_name": "x"},
                     "prompt": {"type": "chat"},
                 },
                 "evaluation": {
@@ -1130,3 +1158,67 @@ class TestValidateAgentConfig:
         cfg = self._make_valid_agent_config(**{"evaluation.mode": "none"})
         cfg.evaluation.evaluator_embedding.type = ""
         validate_config(cfg, registry)  # should not raise
+
+
+# -----------------------------------------------------------------------
+# Every shipped config: component params validate against their Params
+# -----------------------------------------------------------------------
+
+
+class TestShippedConfigsValidate:
+    """Guard against config/Params drift across the inheritance graph.
+
+    Each component validates its raw config dict into a typed ``Params`` model
+    at construction. This test resolves every YAML under ``configs/`` and
+    validates each referenced component's params against its ``Params`` model
+    *without* building the heavy component — catching stray inherited keys
+    (e.g. an EdenAI ``provider`` bleeding onto a HuggingFace embedder) that
+    would otherwise only surface at pipeline-run time.
+    """
+
+    def _gen_params(self, llm: LLMConfig) -> dict:
+        return {
+            **llm.params,
+            "llm": {
+                "provider": llm.provider,
+                "model_name": llm.model_name,
+                "temperature": llm.temperature,
+                "max_tokens": llm.max_tokens,
+            },
+        }
+
+    def _check(self, category: str, type_name: str, params: dict) -> None:
+        if not type_name or not registry.is_registered(category, type_name):
+            return
+        params_model = getattr(registry.get(category, type_name), "Params", None)
+        if params_model is not None:
+            params_model.model_validate(params or {})
+
+    @pytest.mark.parametrize(
+        "config_path",
+        sorted(str(p) for p in Path("configs").rglob("*.yaml")),
+    )
+    def test_component_params_validate(self, config_path: str) -> None:
+        cfg = ExperimentConfig.from_yaml(config_path)
+        idx = cfg.indexing
+        self._check("chunking", idx.chunking.type, idx.chunking.params)
+        self._check("embedding", idx.embedding.type, idx.embedding.params)
+        self._check("vectorstore", idx.vectorstore.type, idx.vectorstore.params)
+        self._check("sparse_index", idx.sparse_index.type, idx.sparse_index.params)
+        self._check(
+            "chunk_enricher", idx.chunk_enricher.type, idx.chunk_enricher.params
+        )
+        self._check("reranking", cfg.query.reranking.type, cfg.query.reranking.params)
+        if cfg.query.generator.provider:
+            self._check(
+                "generation",
+                cfg.query.generator.provider,
+                self._gen_params(cfg.query.generator),
+            )
+        qt_gen = cfg.query.query_transform.generator
+        if qt_gen.provider:
+            self._check("generation", qt_gen.provider, self._gen_params(qt_gen))
+        if cfg.agent.llm.provider:
+            self._check(
+                "generation", cfg.agent.llm.provider, self._gen_params(cfg.agent.llm)
+            )

@@ -31,14 +31,15 @@ query:
   query_transform:
     type: "multi_query"
     fusion: "rrf"
+    generator:
+      provider: "edenai"
+      model_name: "gpt-4.1"
+      temperature: 0.0
+      params:
+        sub_provider: "openai"
     params:
-      generator_type: "edenai"
-      sub_provider: "openai"
       num_queries: 4
       include_original: true
-      llm:
-        model_name: "gpt-4.1"
-        temperature: 0.0
 
   retrieval:
     type: "hybrid"

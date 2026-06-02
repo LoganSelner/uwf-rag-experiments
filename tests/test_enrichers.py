@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from components.base import BaseGenerator
-from components.defaults import NoOpChunkEnricher
-from components.enrichers import ContextualChunkEnricher
-from core.registry import registry
-from core.types import Chunk, Document, GenerationResult
+from uwf_rag.components.base import BaseGenerator
+from uwf_rag.components.defaults import NoOpChunkEnricher
+from uwf_rag.components.enrichers import ContextualChunkEnricher
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, Document, GenerationResult
 
 # --- fake generators registered for offline enrichment tests ---------------
 
@@ -49,7 +49,7 @@ def _chunk_on(page: int, content: str = "the chunk") -> Chunk:
 
 
 def _enricher(**params: Any) -> ContextualChunkEnricher:
-    params.setdefault("generator_type", "_fake_ctx_gen")
+    params.setdefault("generator", {"provider": "_fake_ctx_gen"})
     return ContextualChunkEnricher(config=params)
 
 
@@ -78,9 +78,9 @@ class TestContextualEnrichment:
 
     def test_graceful_fallback_on_generator_error(self) -> None:
         chunks = [_chunk_on(2, "alpha")]
-        out = _enricher(generator_type="_failing_gen", context_scope="document").enrich(
-            _pages(), chunks
-        )
+        out = _enricher(
+            generator={"provider": "_failing_gen"}, context_scope="document"
+        ).enrich(_pages(), chunks)
         # A failing call leaves index_text unset → text_for_index == content.
         assert out[0].index_text is None
         assert out[0].text_for_index == "alpha"
@@ -123,18 +123,24 @@ class TestScopeResolution:
 
 
 class TestContextualConstruction:
-    def test_requires_generator_type(self) -> None:
-        with pytest.raises(ValueError, match="generator_type"):
+    def test_requires_generator(self) -> None:
+        with pytest.raises(ValueError, match="requires a 'generator'"):
             ContextualChunkEnricher(config={})
 
     def test_invalid_scope_raises(self) -> None:
         with pytest.raises(ValueError, match="context_scope"):
             ContextualChunkEnricher(
-                config={"generator_type": "_fake_ctx_gen", "context_scope": "bogus"}
+                config={
+                    "generator": {"provider": "_fake_ctx_gen"},
+                    "context_scope": "bogus",
+                }
             )
 
     def test_invalid_max_workers_raises(self) -> None:
         with pytest.raises(ValueError, match="max_workers"):
             ContextualChunkEnricher(
-                config={"generator_type": "_fake_ctx_gen", "max_workers": 0}
+                config={
+                    "generator": {"provider": "_fake_ctx_gen"},
+                    "max_workers": 0,
+                }
             )

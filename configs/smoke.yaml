@@ -33,20 +33,18 @@ indexing:
 
 query:
   query_transform:
-    params:
-      generator_type: "ollama"
-      # Change this if your Ollama server is not running on the default local port.
-      base_url: "http://localhost:11434"
-      llm:
-        model_name: "qwen3:14b"
-  generation:
-    type: "ollama"
-    params:
-      # Change this if your Ollama server is not running on the default local port.
-      base_url: "http://localhost:11434"
-  generation_llm:
+    generator:
+      provider: "ollama"
+      model_name: "qwen3:14b"
+      params:
+        # Change this if your Ollama server is not running on the default local port.
+        base_url: "http://localhost:11434"
+  generator:
     provider: "ollama"
     model_name: "qwen3:14b"
+    params:
+      # Change this if your Ollama server is not running on the default local port.
+      base_url: "http://localhost:11434"
 
 evaluation:
   dataset: "data/datasets/testKB_dataset.jsonl"

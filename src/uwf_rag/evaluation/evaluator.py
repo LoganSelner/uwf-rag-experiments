@@ -15,9 +15,9 @@ import math
 import statistics
 from typing import Any
 
-from core.config import EvaluationConfig
-from core.registry import registry
-from core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
+from uwf_rag.core.config import EvaluationConfig, LLMConfig
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
 
 logger = logging.getLogger(__name__)
 
@@ -370,98 +370,99 @@ class Evaluator:
     def _build_evaluator_llm(self) -> Any:
         """Build a RAGAS-compatible LLM from config.
 
-        Returns a LangchainLLMWrapper around a LangChain chat model.
+        Dispatches on ``evaluator_llm.provider`` to a per-provider builder that
+        returns a LangChain chat model, then wraps it once in
+        ``LangchainLLMWrapper`` (the shape RAGAS expects).
         """
         from ragas.llms.base import LangchainLLMWrapper
 
         llm_config = self._config.evaluator_llm
-
-        if llm_config.provider == "ollama":
-            from langchain_ollama import OllamaLLM
-
-            ollama_kwargs: dict[str, Any] = {
-                "model": llm_config.model_name,
-                "temperature": llm_config.temperature,
-            }
-            base_url = llm_config.params.get("base_url")
-            if base_url:
-                ollama_kwargs["base_url"] = base_url
-
-            return LangchainLLMWrapper(OllamaLLM(**ollama_kwargs))
-
-        if llm_config.provider == "edenai":
-            import os
-
-            from langchain_community.chat_models.edenai import (
-                ChatEdenAI,
+        builders = {
+            "ollama": self._build_ollama_judge,
+            "edenai": self._build_edenai_judge,
+            "google": self._build_google_judge,
+            "openai": self._build_openai_judge,
+        }
+        builder = builders.get(llm_config.provider)
+        if builder is None:
+            raise ValueError(
+                f"Unsupported evaluator LLM provider: '{llm_config.provider}'. "
+                f"Supported: {sorted(builders)}."
             )
+        return LangchainLLMWrapper(builder(llm_config))
 
-            api_key = os.environ.get("EDENAI_API_KEY", "")
-            if not api_key:
-                raise ValueError(
-                    "EDENAI_API_KEY environment variable is required "
-                    "for Eden AI evaluator LLM."
-                )
+    @staticmethod
+    def _build_ollama_judge(llm_config: LLMConfig) -> Any:
+        from langchain_ollama import OllamaLLM
 
-            sub_provider = llm_config.params.get("sub_provider", "openai")
-            return LangchainLLMWrapper(
-                ChatEdenAI(
-                    provider=sub_provider,
-                    model=llm_config.model_name,
-                    temperature=llm_config.temperature,
-                    max_tokens=llm_config.max_tokens or 1024,
-                    edenai_api_key=api_key,  # type: ignore[arg-type]
-                )
+        kwargs: dict[str, Any] = {
+            "model": llm_config.model_name,
+            "temperature": llm_config.temperature,
+        }
+        base_url = llm_config.params.get("base_url")
+        if base_url:
+            kwargs["base_url"] = base_url
+        return OllamaLLM(**kwargs)
+
+    @staticmethod
+    def _build_edenai_judge(llm_config: LLMConfig) -> Any:
+        import os
+
+        from langchain_community.chat_models.edenai import ChatEdenAI
+
+        api_key = os.environ.get("EDENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "EDENAI_API_KEY environment variable is required "
+                "for Eden AI evaluator LLM."
             )
+        sub_provider = llm_config.params.get("sub_provider", "openai")
+        return ChatEdenAI(
+            provider=sub_provider,
+            model=llm_config.model_name,
+            temperature=llm_config.temperature,
+            max_tokens=llm_config.max_tokens or 1024,
+            edenai_api_key=api_key,  # type: ignore[arg-type]
+        )
 
-        if llm_config.provider == "google":
-            import os
+    @staticmethod
+    def _build_google_judge(llm_config: LLMConfig) -> Any:
+        import os
 
-            from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_google_genai import ChatGoogleGenerativeAI
 
-            api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get(
-                "GEMINI_API_KEY", ""
+        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get(
+            "GEMINI_API_KEY", ""
+        )
+        if not api_key:
+            raise ValueError(
+                "GOOGLE_API_KEY or GEMINI_API_KEY environment variable is "
+                "required for Google evaluator LLM."
             )
-            if not api_key:
-                raise ValueError(
-                    "GOOGLE_API_KEY or GEMINI_API_KEY environment variable is "
-                    "required for Google evaluator LLM."
-                )
+        return ChatGoogleGenerativeAI(
+            model=llm_config.model_name,
+            temperature=llm_config.temperature,
+            max_output_tokens=llm_config.max_tokens or 1024,
+            google_api_key=api_key,
+        )
 
-            return LangchainLLMWrapper(
-                ChatGoogleGenerativeAI(
-                    model=llm_config.model_name,
-                    temperature=llm_config.temperature,
-                    max_output_tokens=llm_config.max_tokens or 1024,
-                    google_api_key=api_key,
-                )
+    @staticmethod
+    def _build_openai_judge(llm_config: LLMConfig) -> Any:
+        import os
+
+        from langchain_openai import ChatOpenAI
+
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "OPENAI_API_KEY environment variable is required "
+                "for OpenAI evaluator LLM."
             )
-
-        if llm_config.provider == "openai":
-            import os
-
-            from langchain_openai import ChatOpenAI
-
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-            if not api_key:
-                raise ValueError(
-                    "OPENAI_API_KEY environment variable is required "
-                    "for OpenAI evaluator LLM."
-                )
-
-            return LangchainLLMWrapper(
-                ChatOpenAI(
-                    model=llm_config.model_name,
-                    temperature=llm_config.temperature,
-                    max_tokens=llm_config.max_tokens or 1024,  # type: ignore[call-arg]
-                    api_key=api_key,  # type: ignore[arg-type]
-                )
-            )
-
-        raise ValueError(
-            f"Unsupported evaluator LLM provider: "
-            f"'{llm_config.provider}'. "
-            f"Supported: 'ollama', 'edenai', 'google', 'openai'."
+        return ChatOpenAI(
+            model=llm_config.model_name,
+            temperature=llm_config.temperature,
+            max_tokens=llm_config.max_tokens or 1024,  # type: ignore[call-arg]
+            api_key=api_key,  # type: ignore[arg-type]
         )
 
     @staticmethod

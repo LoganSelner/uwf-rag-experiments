@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from components.base import (
+from uwf_rag.components.base import (
     BaseChunkEnricher,
     BaseChunker,
     BaseEmbedder,
@@ -22,9 +22,9 @@ from components.base import (
     BaseLexicalIndex,
     BaseVectorStore,
 )
-from core.config import ExperimentConfig
-from core.registry import registry
-from core.types import Chunk, Document
+from uwf_rag.core.config import ExperimentConfig
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, Document
 
 logger = logging.getLogger(__name__)
 

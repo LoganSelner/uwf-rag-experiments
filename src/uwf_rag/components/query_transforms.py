@@ -11,9 +11,15 @@ import logging
 import re
 from typing import Any
 
-from components.base import BaseQueryTransformer
-from core.registry import registry
-from core.types import TransformedQuery
+from pydantic import Field
+
+from uwf_rag.components.base import (
+    BaseGenerator,
+    BaseQueryTransformer,
+    ComponentParams,
+)
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Message, TransformedQuery
 
 logger = logging.getLogger(__name__)
 
@@ -34,49 +40,47 @@ class ContextualizerQueryTransformer(BaseQueryTransformer):
     When there is no history, the query passes through unchanged
     (no LLM call).
 
+    The reasoning ``generator`` is injected (built by the pipeline from
+    ``query.query_transform.generator``); only when conversation history is
+    present is it actually called.
+
     Config params:
-        generator_type: Registry name of the generator to use (required).
-        llm: LLM config dict passed to the generator constructor.
         system_prompt: Override the default reformulation prompt.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        super().__init__(config)
+    class Params(ComponentParams):
+        system_prompt: str = _DEFAULT_SYSTEM_PROMPT
 
-        generator_type = self.config.get("generator_type")
-        if not generator_type:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        generator: BaseGenerator | None = None,
+    ) -> None:
+        super().__init__(config, generator=generator)
+        if generator is None:
             raise ValueError(
-                "ContextualizerQueryTransformer requires 'generator_type' "
-                "in config (e.g. 'google', 'ollama'). Set it via "
-                "query_transform.params.generator_type in YAML."
+                "ContextualizerQueryTransformer requires a generator. Configure "
+                "query.query_transform.generator (an LLMConfig) in YAML."
             )
-
-        # Pass through all config except query-transform-specific keys,
-        # so generator-specific params (e.g. sub_provider, base_url) are preserved.
-        _QT_KEYS = {"generator_type", "system_prompt"}
-        gen_config = {k: v for k, v in self.config.items() if k not in _QT_KEYS}
-        gen_cls = registry.get("generation", generator_type)
-        self._generator = gen_cls(config=gen_config)
-
-        self._system_prompt: str = self.config.get(
-            "system_prompt", _DEFAULT_SYSTEM_PROMPT
-        )
+        self.p = self.Params.model_validate(self.config)
+        self._system_prompt = self.p.system_prompt
 
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
         if not history:
             return [TransformedQuery(text=query)]
 
-        messages: list[dict[str, str]] = [
+        messages: list[Message] = [
             {"role": "system", "content": self._system_prompt},
             *history,
             {"role": "user", "content": query},
         ]
 
-        result = self._generator.generate(messages)
+        result = self._llm.generate(messages)
         reformulated = result.answer.strip()
         logger.info("Contextualized query: %r -> %r", query, reformulated)
         return [TransformedQuery(text=reformulated)]
@@ -112,12 +116,13 @@ class HyDEQueryTransformer(BaseQueryTransformer):
     Branch hints are silently ignored by non-hybrid retrievers, so the
     same config works in both dense-only and hybrid setups.
 
+    The reasoning ``generator`` is injected (built by the pipeline from
+    ``query.query_transform.generator``).
+
     Config params:
-        generator_type: Registry name of the generator (required).
-        llm: LLM config dict for the generator.
         system_prompt: Override the default HyDE instruction.
         num_hypotheticals: How many hypothetical docs to generate
-            (default 1). Note: at ``llm.temperature=0`` (the default in
+            (default 1). Note: at ``generator.temperature=0`` (the default in
             base.yaml), repeated calls produce identical text — bump
             temperature for meaningful ``num_hypotheticals > 1``.
         include_original: If True, also emit a TransformedQuery for the
@@ -131,59 +136,46 @@ class HyDEQueryTransformer(BaseQueryTransformer):
             recipe).
     """
 
-    _OWN_KEYS = frozenset(
-        {
-            "generator_type",
-            "system_prompt",
-            "num_hypotheticals",
-            "include_original",
-            "branch",
-            "original_branch",
-        }
-    )
+    class Params(ComponentParams):
+        system_prompt: str = _DEFAULT_HYDE_SYSTEM_PROMPT
+        num_hypotheticals: int = Field(default=1, ge=1)
+        include_original: bool = False
+        branch: str | None = None
+        original_branch: str | None = None
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        super().__init__(config)
-
-        generator_type = self.config.get("generator_type")
-        if not generator_type:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        generator: BaseGenerator | None = None,
+    ) -> None:
+        super().__init__(config, generator=generator)
+        if generator is None:
             raise ValueError(
-                "HyDEQueryTransformer requires 'generator_type' in config "
-                "(e.g. 'edenai', 'google', 'ollama'). Set it via "
-                "query_transform.params.generator_type in YAML."
+                "HyDEQueryTransformer requires a generator. Configure "
+                "query.query_transform.generator (an LLMConfig) in YAML."
             )
 
-        num_hyp = int(self.config.get("num_hypotheticals", 1))
-        if num_hyp < 1:
-            raise ValueError(
-                f"HyDEQueryTransformer 'num_hypotheticals' must be >= 1 (got {num_hyp})"
-            )
-        self._num_hypotheticals: int = num_hyp
-        self._include_original: bool = bool(self.config.get("include_original", False))
-        self._branch: str | None = self.config.get("branch")
-        self._original_branch: str | None = self.config.get("original_branch")
-
-        gen_config = {k: v for k, v in self.config.items() if k not in self._OWN_KEYS}
-        gen_cls = registry.get("generation", generator_type)
-        self._generator = gen_cls(config=gen_config)
-
-        self._system_prompt: str = self.config.get(
-            "system_prompt", _DEFAULT_HYDE_SYSTEM_PROMPT
-        )
+        self.p = self.Params.model_validate(self.config)
+        self._num_hypotheticals = self.p.num_hypotheticals
+        self._include_original = self.p.include_original
+        self._branch = self.p.branch
+        self._original_branch = self.p.original_branch
+        self._system_prompt = self.p.system_prompt
 
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
-        messages: list[dict[str, str]] = [
+        messages: list[Message] = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": query},
         ]
 
         hypotheticals: list[str] = []
         for _ in range(self._num_hypotheticals):
-            result = self._generator.generate(messages)
+            result = self._llm.generate(messages)
             text = result.answer.strip()
             if text:
                 hypotheticals.append(text)
@@ -277,9 +269,10 @@ class MultiQueryQueryTransformer(BaseQueryTransformer):
     hybrid+BM25 setups. Hybrid + multi-query + RRF is reported in the
     literature as the strongest pre-rerank stack.
 
+    The reasoning ``generator`` is injected (built by the pipeline from
+    ``query.query_transform.generator``).
+
     Config params:
-        generator_type: Registry name of the generator (required).
-        llm: LLM config dict for the generator.
         system_prompt: Override the default reformulation prompt. The
             template variable ``{num_queries}`` is replaced with the
             configured count.
@@ -292,59 +285,45 @@ class MultiQueryQueryTransformer(BaseQueryTransformer):
             (default None — broadcast to all hybrid children).
     """
 
-    _OWN_KEYS = frozenset(
-        {
-            "generator_type",
-            "system_prompt",
-            "num_queries",
-            "include_original",
-            "branch",
-        }
-    )
+    class Params(ComponentParams):
+        system_prompt: str = _DEFAULT_MULTI_QUERY_SYSTEM_PROMPT
+        num_queries: int = Field(default=4, ge=1)
+        include_original: bool = True
+        branch: str | None = None
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        super().__init__(config)
-
-        generator_type = self.config.get("generator_type")
-        if not generator_type:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        generator: BaseGenerator | None = None,
+    ) -> None:
+        super().__init__(config, generator=generator)
+        if generator is None:
             raise ValueError(
-                "MultiQueryQueryTransformer requires 'generator_type' in "
-                "config (e.g. 'edenai', 'google', 'ollama'). Set it via "
-                "query_transform.params.generator_type in YAML."
+                "MultiQueryQueryTransformer requires a generator. Configure "
+                "query.query_transform.generator (an LLMConfig) in YAML."
             )
 
-        num_queries = int(self.config.get("num_queries", 4))
-        if num_queries < 1:
-            raise ValueError(
-                f"MultiQueryQueryTransformer 'num_queries' must be >= 1 "
-                f"(got {num_queries})"
-            )
-        self._num_queries: int = num_queries
-        self._include_original: bool = bool(self.config.get("include_original", True))
-        self._branch: str | None = self.config.get("branch")
-
-        gen_config = {k: v for k, v in self.config.items() if k not in self._OWN_KEYS}
-        gen_cls = registry.get("generation", generator_type)
-        self._generator = gen_cls(config=gen_config)
-
-        self._system_prompt: str = self.config.get(
-            "system_prompt", _DEFAULT_MULTI_QUERY_SYSTEM_PROMPT
-        )
+        self.p = self.Params.model_validate(self.config)
+        self._num_queries = self.p.num_queries
+        self._include_original = self.p.include_original
+        self._branch = self.p.branch
+        self._system_prompt = self.p.system_prompt
 
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
         system_prompt = self._system_prompt.replace(
             "{num_queries}", str(self._num_queries)
         )
-        messages: list[dict[str, str]] = [
+        messages: list[Message] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": query},
         ]
 
-        result = self._generator.generate(messages)
+        result = self._llm.generate(messages)
         reformulations = _parse_numbered_list(result.answer, self._num_queries)
 
         if not reformulations:

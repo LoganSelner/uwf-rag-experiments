@@ -40,10 +40,7 @@ query:
   reranking:
     type: "none"
 
-  generation:
-    type: "ollama"
-
-  generation_llm:
+  generator:
     provider: "ollama"
     model_name: "qwen2.5:32b"
     temperature: 0.0

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from components.defaults import (
+from uwf_rag.components.defaults import (
     BufferWindowMemory,
     NoMemory,
     NoOpReranker,
     PassthroughQueryTransformer,
 )
-from core.types import Chunk, RetrievedChunk, TransformedQuery
+from uwf_rag.core.types import Chunk, RetrievedChunk, TransformedQuery
 
 
 def _make_rc(chunk_id: str, score: float) -> RetrievedChunk:

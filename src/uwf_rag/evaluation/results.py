@@ -16,7 +16,6 @@ Output layout::
 
 from __future__ import annotations
 
-import dataclasses
 from datetime import datetime
 import json
 import logging
@@ -26,8 +25,8 @@ from typing import Any
 
 import yaml
 
-from core.config import ExperimentConfig
-from core.types import ExperimentResult
+from uwf_rag.core.config import ExperimentConfig
+from uwf_rag.core.types import ExperimentResult
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +65,8 @@ def _build_config_snapshot(config: ExperimentConfig) -> dict[str, Any]:
         "top_k_retrieve": config.query.retrieval.top_k_retrieve,
         "top_k_final": config.query.retrieval.top_k_final,
         "reranking_type": config.query.reranking.type or "none",
-        "generation_type": config.query.generation.type,
-        "generation_model": config.query.generation_llm.model_name,
+        "generation_type": config.query.generator.provider,
+        "generation_model": config.query.generator.model_name,
         "evaluator_embedding_type": config.evaluation.evaluator_embedding.type,
     }
 
@@ -117,7 +116,7 @@ def save_experiment(
         json.dump(summary, f, indent=2, default=str)
 
     # Full resolved config for reproducibility
-    config_dict = dataclasses.asdict(config)
+    config_dict = config.model_dump()
     with open(exp_dir / "config.yaml", "w") as f:
         yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False)
 

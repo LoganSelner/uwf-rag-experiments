@@ -13,6 +13,7 @@ import os
 from typing import Any
 from urllib.request import Request, urlopen
 
+from pydantic import Field
 from tenacity import (
     before_sleep_log,
     retry,
@@ -21,10 +22,11 @@ from tenacity import (
     wait_exponential,
 )
 
-from components._tool_protocol import parse_arguments, to_openai_tools
-from components.base import BaseGenerator
-from core.registry import registry
-from core.types import GenerationResult, Message, ToolCall, ToolSpec
+from uwf_rag.components._tool_protocol import parse_arguments, to_openai_tools
+from uwf_rag.components.base import BaseGenerator, ComponentParams
+from uwf_rag.core.config import LLMConfig
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import GenerationResult, Message, ToolCall, ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,30 @@ _retry_decorator = retry(
 )
 
 
+def build_generator(llm: LLMConfig) -> BaseGenerator:
+    """Construct a generator from an :class:`LLMConfig` via the registry.
+
+    The single construction path for every generator in the harness — used by
+    the linear pipeline, the agent's reasoning model, and any component that
+    needs an LLM (query transformers, the contextual enricher). ``llm.provider``
+    is the ``generation`` registry name; ``llm.params`` carries provider-specific
+    extras (EdenAI ``sub_provider``, Ollama ``base_url``) that land at the top
+    level of the generator config, alongside the nested ``llm`` block each
+    generator reads.
+    """
+    gen_cls = registry.get("generation", llm.provider)
+    config: dict[str, Any] = {
+        **llm.params,
+        "llm": {
+            "provider": llm.provider,
+            "model_name": llm.model_name,
+            "temperature": llm.temperature,
+            "max_tokens": llm.max_tokens,
+        },
+    }
+    return gen_cls(config=config)
+
+
 @registry.register("generation", "ollama")
 class OllamaGenerator(BaseGenerator):
     """Generates answers using a local Ollama instance.
@@ -53,13 +79,17 @@ class OllamaGenerator(BaseGenerator):
         base_url: Ollama API base URL (default: "http://localhost:11434")
     """
 
+    class Params(ComponentParams):
+        llm: LLMConfig = Field(default_factory=LLMConfig)
+        base_url: str = "http://localhost:11434"
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        llm = self.config.get("llm", {})
-        self._model: str = llm.get("model_name", "")
-        self._temperature: float = llm.get("temperature", 0.0)
-        self._max_tokens: int | None = llm.get("max_tokens")
-        self._base_url: str = self.config.get("base_url", "http://localhost:11434")
+        self.p = self.Params.model_validate(self.config)
+        self._model = self.p.llm.model_name
+        self._temperature = self.p.llm.temperature
+        self._max_tokens = self.p.llm.max_tokens
+        self._base_url = self.p.base_url
 
     def generate(
         self,
@@ -192,12 +222,15 @@ class GoogleGenerator(BaseGenerator):
         llm.max_tokens: Max output tokens (optional)
     """
 
+    class Params(ComponentParams):
+        llm: LLMConfig = Field(default_factory=LLMConfig)
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        llm = self.config.get("llm", {})
-        self._model: str = llm.get("model_name", "")
-        self._temperature: float = llm.get("temperature", 0.0)
-        self._max_tokens: int | None = llm.get("max_tokens")
+        self.p = self.Params.model_validate(self.config)
+        self._model = self.p.llm.model_name
+        self._temperature = self.p.llm.temperature
+        self._max_tokens = self.p.llm.max_tokens
 
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get(
             "GEMINI_API_KEY", ""
@@ -381,14 +414,18 @@ class EdenAIGenerator(BaseGenerator):
         sub_provider: Eden AI sub-provider (e.g. "openai") — required
     """
 
+    class Params(ComponentParams):
+        llm: LLMConfig = Field(default_factory=LLMConfig)
+        sub_provider: str = ""
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        llm = self.config.get("llm", {})
-        self._model: str = llm.get("model_name", "")
-        self._temperature: float = llm.get("temperature", 0.0)
-        self._max_tokens: int = llm.get("max_tokens") or 1024
+        self.p = self.Params.model_validate(self.config)
+        self._model = self.p.llm.model_name
+        self._temperature = self.p.llm.temperature
+        self._max_tokens = self.p.llm.max_tokens or 1024
 
-        self._sub_provider: str = self.config.get("sub_provider", "")
+        self._sub_provider = self.p.sub_provider
         if not self._sub_provider:
             raise ValueError(
                 "EdenAIGenerator requires 'sub_provider' in config "
@@ -549,12 +586,15 @@ class OpenAIGenerator(BaseGenerator):
         llm.max_tokens: Max tokens to generate (optional)
     """
 
+    class Params(ComponentParams):
+        llm: LLMConfig = Field(default_factory=LLMConfig)
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        llm = self.config.get("llm", {})
-        self._model: str = llm.get("model_name", "")
-        self._temperature: float = llm.get("temperature", 0.0)
-        self._max_tokens: int | None = llm.get("max_tokens")
+        self.p = self.Params.model_validate(self.config)
+        self._model = self.p.llm.model_name
+        self._temperature = self.p.llm.temperature
+        self._max_tokens = self.p.llm.max_tokens
 
         api_key = os.environ.get("OPENAI_API_KEY", "")
         if not api_key:

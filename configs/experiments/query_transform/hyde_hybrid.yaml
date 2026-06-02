@@ -42,16 +42,17 @@ query:
   query_transform:
     type: "hyde"
     fusion: "rrf"
+    generator:
+      provider: "edenai"
+      model_name: "gpt-4.1"
+      temperature: 0.0
+      params:
+        sub_provider: "openai"
     params:
-      generator_type: "edenai"
-      sub_provider: "openai"
       num_hypotheticals: 1
       include_original: true
       branch: "dense"
       original_branch: "bm25"
-      llm:
-        model_name: "gpt-4.1"
-        temperature: 0.0
 
   retrieval:
     type: "hybrid"

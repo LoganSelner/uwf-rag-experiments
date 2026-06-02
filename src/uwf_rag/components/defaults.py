@@ -9,14 +9,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from components.base import (
+from uwf_rag.components.base import (
     BaseChunkEnricher,
     BaseMemory,
     BaseQueryTransformer,
     BaseReranker,
+    ComponentParams,
 )
-from core.registry import registry
-from core.types import Chunk, Document, RetrievedChunk, TransformedQuery
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import (
+    Chunk,
+    Document,
+    Message,
+    RetrievedChunk,
+    TransformedQuery,
+)
 
 
 @registry.register("query_transform", "passthrough")
@@ -26,7 +33,7 @@ class PassthroughQueryTransformer(BaseQueryTransformer):
     def transform(
         self,
         query: str,
-        history: list[dict[str, str]] | None = None,
+        history: list[Message] | None = None,
     ) -> list[TransformedQuery]:
         return [TransformedQuery(text=query)]
 
@@ -63,7 +70,7 @@ class NoMemory(BaseMemory):
     def add_turn(self, role: str, content: str) -> None:
         pass
 
-    def get_history(self) -> list[dict[str, str]]:
+    def get_history(self) -> list[Message]:
         return []
 
     def clear(self) -> None:
@@ -74,15 +81,19 @@ class NoMemory(BaseMemory):
 class BufferWindowMemory(BaseMemory):
     """Keeps the last N turns of conversation history."""
 
+    class Params(ComponentParams):
+        window_size: int = 5
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._window_size = self.config.get("window_size", 5)
-        self._history: list[dict[str, str]] = []
+        self.p = self.Params.model_validate(self.config)
+        self._window_size = self.p.window_size
+        self._history: list[Message] = []
 
     def add_turn(self, role: str, content: str) -> None:
         self._history.append({"role": role, "content": content})
 
-    def get_history(self) -> list[dict[str, str]]:
+    def get_history(self) -> list[Message]:
         return self._history[-self._window_size :]
 
     def clear(self) -> None:
