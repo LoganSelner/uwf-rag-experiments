@@ -26,8 +26,8 @@ from typing import Any
 
 import yaml
 
-from core.config import ExperimentConfig
-from core.types import ExperimentResult
+from uwf_rag.core.config import ExperimentConfig
+from uwf_rag.core.types import ExperimentResult
 
 logger = logging.getLogger(__name__)
 

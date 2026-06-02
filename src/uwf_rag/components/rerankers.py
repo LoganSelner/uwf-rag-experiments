@@ -10,9 +10,9 @@ from typing import Any
 
 from sentence_transformers import CrossEncoder
 
-from components.base import BaseReranker
-from core.registry import registry
-from core.types import RetrievedChunk
+from uwf_rag.components.base import BaseReranker
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

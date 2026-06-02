@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from evaluation.comparison import (
+from uwf_rag.evaluation.comparison import (
     _flatten_dict,
     compare_experiments,
     diff_configs,

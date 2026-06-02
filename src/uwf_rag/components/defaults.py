@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from components.base import (
+from uwf_rag.components.base import (
     BaseChunkEnricher,
     BaseMemory,
     BaseQueryTransformer,
     BaseReranker,
 )
-from core.registry import registry
-from core.types import Chunk, Document, RetrievedChunk, TransformedQuery
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, Document, RetrievedChunk, TransformedQuery
 
 
 @registry.register("query_transform", "passthrough")

@@ -15,9 +15,9 @@ from typing import Any
 import faiss
 import numpy as np
 
-from components.base import BaseVectorStore
-from core.registry import registry
-from core.types import Chunk, EmbeddedChunk, RetrievedChunk
+from uwf_rag.components.base import BaseVectorStore
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, EmbeddedChunk, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

@@ -19,9 +19,9 @@ from tenacity import (
     wait_exponential,
 )
 
-from components.base import BaseEmbedder
-from core.registry import registry
-from core.types import Chunk, EmbeddedChunk
+from uwf_rag.components.base import BaseEmbedder
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, EmbeddedChunk
 
 logger = logging.getLogger(__name__)
 

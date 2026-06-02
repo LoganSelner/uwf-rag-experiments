@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.types import ToolSpec
+from uwf_rag.core.types import ToolSpec
 
 
 def to_openai_tools(specs: list[ToolSpec]) -> list[dict[str, Any]]:

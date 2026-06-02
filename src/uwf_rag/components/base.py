@@ -13,8 +13,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from core.fusion import max_score_dedup, reciprocal_rank_fusion
-from core.types import (
+from uwf_rag.core.fusion import max_score_dedup, reciprocal_rank_fusion
+from uwf_rag.core.types import (
     Chunk,
     Document,
     EmbeddedChunk,

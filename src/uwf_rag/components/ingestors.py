@@ -9,9 +9,9 @@ from typing import Any
 
 import fitz  # PyMuPDF
 
-from components.base import BaseIngestor
-from core.registry import registry
-from core.types import Document
+from uwf_rag.components.base import BaseIngestor
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Document
 
 
 @registry.register("ingest", "pdf")

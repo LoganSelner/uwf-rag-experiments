@@ -10,10 +10,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from components.base import BaseRetriever
-from core.fusion import reciprocal_rank_fusion, weighted_score_fusion
-from core.registry import registry
-from core.types import RetrievedChunk, TransformedQuery
+from uwf_rag.components.base import BaseRetriever
+from uwf_rag.core.fusion import reciprocal_rank_fusion, weighted_score_fusion
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import RetrievedChunk, TransformedQuery
 
 logger = logging.getLogger(__name__)
 

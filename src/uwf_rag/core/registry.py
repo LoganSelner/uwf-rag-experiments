@@ -6,7 +6,7 @@ resolves them at runtime from config values.
 
 Usage:
 
-    from core.registry import registry
+    from uwf_rag.core.registry import registry
 
     @registry.register("chunking", "recursive_langchain")
     class RecursiveChunker(BaseChunker):

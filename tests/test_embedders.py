@@ -7,13 +7,13 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from components.embedders import (
+from uwf_rag.components.embedders import (
     EdenAIEmbedder,
     GoogleEmbedder,
     HuggingFaceEmbedder,
     OpenAIEmbedder,
 )
-from core.types import Chunk, EmbeddedChunk
+from uwf_rag.core.types import Chunk, EmbeddedChunk
 
 
 def _make_chunks(n: int = 3) -> list[Chunk]:
@@ -28,7 +28,7 @@ def _make_chunks(n: int = 3) -> list[Chunk]:
     ]
 
 
-@patch("components.embedders.SentenceTransformer")
+@patch("uwf_rag.components.embedders.SentenceTransformer")
 class TestHuggingFaceEmbedder:
     def test_embed_query_returns_list_of_floats(self, mock_st_cls: MagicMock) -> None:
         mock_model = MagicMock()

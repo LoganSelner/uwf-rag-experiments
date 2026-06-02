@@ -21,10 +21,10 @@ from tenacity import (
     wait_exponential,
 )
 
-from components._tool_protocol import parse_arguments, to_openai_tools
-from components.base import BaseGenerator
-from core.registry import registry
-from core.types import GenerationResult, Message, ToolCall, ToolSpec
+from uwf_rag.components._tool_protocol import parse_arguments, to_openai_tools
+from uwf_rag.components.base import BaseGenerator
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import GenerationResult, Message, ToolCall, ToolSpec
 
 logger = logging.getLogger(__name__)
 

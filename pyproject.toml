@@ -45,7 +45,7 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/core", "src/components", "src/pipeline", "src/evaluation"]
+packages = ["src/uwf_rag"]
 
 [tool.ruff]
 line-length = 88
@@ -56,7 +56,7 @@ select = ["E", "F", "W", "I", "UP", "B", "RUF"]
 ignore = ["B008"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["core", "components", "pipeline", "evaluation"]
+known-first-party = ["uwf_rag"]
 combine-as-imports = true
 force-sort-within-sections = true
 

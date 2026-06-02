@@ -14,9 +14,9 @@ from typing import Any
 
 import bm25s
 
-from components.base import BaseLexicalIndex
-from core.registry import registry
-from core.types import Chunk, RetrievedChunk
+from uwf_rag.components.base import BaseLexicalIndex
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

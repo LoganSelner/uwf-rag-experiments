@@ -15,9 +15,9 @@ import math
 import statistics
 from typing import Any
 
-from core.config import EvaluationConfig
-from core.registry import registry
-from core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
+from uwf_rag.core.config import EvaluationConfig
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
 
 logger = logging.getLogger(__name__)
 

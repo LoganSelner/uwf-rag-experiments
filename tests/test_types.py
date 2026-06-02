@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from core.types import (
+from uwf_rag.core.types import (
     AgentStep,
     Chunk,
     Document,

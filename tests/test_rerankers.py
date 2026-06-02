@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from components.rerankers import CrossEncoderReranker
-from core.types import Chunk, RetrievedChunk
+from uwf_rag.components.rerankers import CrossEncoderReranker
+from uwf_rag.core.types import Chunk, RetrievedChunk
 
 
 def _make_rc(chunk_id: str, score: float, content: str = "text") -> RetrievedChunk:
@@ -18,7 +18,7 @@ def _make_rc(chunk_id: str, score: float, content: str = "text") -> RetrievedChu
     )
 
 
-@patch("components.rerankers.CrossEncoder")
+@patch("uwf_rag.components.rerankers.CrossEncoder")
 class TestCrossEncoderReranker:
     """All tests patch CrossEncoder to avoid downloading model weights."""
 

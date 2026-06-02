@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from components.query_transforms import (
+from uwf_rag.components.query_transforms import (
     _DEFAULT_HYDE_SYSTEM_PROMPT,
     _DEFAULT_MULTI_QUERY_SYSTEM_PROMPT,
     _DEFAULT_SYSTEM_PROMPT,
@@ -15,7 +15,7 @@ from components.query_transforms import (
     MultiQueryQueryTransformer,
     _parse_numbered_list,
 )
-from core.types import GenerationResult, TransformedQuery
+from uwf_rag.core.types import GenerationResult, TransformedQuery
 
 
 def _mock_generator_cls(answer: str = "Standalone question") -> MagicMock:
@@ -27,7 +27,7 @@ def _mock_generator_cls(answer: str = "Standalone question") -> MagicMock:
 
 
 class TestContextualizerQueryTransformer:
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_no_history_returns_query_unchanged(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls()
 
@@ -40,7 +40,7 @@ class TestContextualizerQueryTransformer:
         # No LLM call when history is empty
         qt._generator.generate.assert_not_called()
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_empty_history_returns_query_unchanged(
         self, mock_registry: MagicMock
     ) -> None:
@@ -54,7 +54,7 @@ class TestContextualizerQueryTransformer:
         assert result == [TransformedQuery(text="What is UWF?")]
         qt._generator.generate.assert_not_called()
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_with_history_calls_generator(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls()
 
@@ -69,7 +69,7 @@ class TestContextualizerQueryTransformer:
 
         qt._generator.generate.assert_called_once()
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_with_history_returns_reformulated_query(
         self, mock_registry: MagicMock
     ) -> None:
@@ -88,7 +88,7 @@ class TestContextualizerQueryTransformer:
 
         assert result == [TransformedQuery(text="What programs does UWF offer?")]
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_system_prompt_default(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls()
 
@@ -102,7 +102,7 @@ class TestContextualizerQueryTransformer:
         assert call_args[0]["role"] == "system"
         assert call_args[0]["content"] == _DEFAULT_SYSTEM_PROMPT
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_system_prompt_override(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls()
 
@@ -120,7 +120,7 @@ class TestContextualizerQueryTransformer:
         call_args = qt._generator.generate.call_args[0][0]
         assert call_args[0]["content"] == custom_prompt
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_generator_receives_extra_params(self, mock_registry: MagicMock) -> None:
         mock_cls = _mock_generator_cls()
         mock_registry.get.return_value = mock_cls
@@ -147,7 +147,7 @@ class TestContextualizerQueryTransformer:
         with pytest.raises(ValueError, match="generator_type"):
             ContextualizerQueryTransformer({"llm": {"model_name": "m"}})
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_result_is_single_element_list(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("Reformulated")
 
@@ -162,7 +162,7 @@ class TestContextualizerQueryTransformer:
         assert isinstance(result[0], TransformedQuery)
         assert result[0].branch is None
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_messages_include_history_and_query(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls()
 
@@ -185,7 +185,7 @@ class TestContextualizerQueryTransformer:
 
 
 class TestHyDEQueryTransformer:
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_default_emits_one_hypothetical_branch_none(
         self, mock_registry: MagicMock
     ) -> None:
@@ -198,7 +198,7 @@ class TestHyDEQueryTransformer:
         result = qt.transform("What is grade forgiveness?")
         assert result == [TransformedQuery(text="A hypothetical doc.", branch=None)]
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_include_original_canonical_hybrid_routing(
         self, mock_registry: MagicMock
     ) -> None:
@@ -220,7 +220,7 @@ class TestHyDEQueryTransformer:
             TransformedQuery(text="Hypothesis.", branch="dense"),
         ]
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_branches_default_to_none(self, mock_registry: MagicMock) -> None:
         # With no explicit branch / original_branch, both the original and
         # the hypothetical broadcast (branch=None) — consistent with every
@@ -237,7 +237,7 @@ class TestHyDEQueryTransformer:
         assert result[0].branch is None  # original
         assert result[1].branch is None  # hypothetical
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_num_hypotheticals_makes_n_calls(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("Hyp.")
         qt = HyDEQueryTransformer(
@@ -252,7 +252,7 @@ class TestHyDEQueryTransformer:
         assert len(result) == 3
         assert all(tq.branch is None for tq in result)
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_branch_override(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("Hyp.")
         qt = HyDEQueryTransformer(
@@ -265,7 +265,7 @@ class TestHyDEQueryTransformer:
         result = qt.transform("Q?")
         assert result[0].branch == "splade"
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_history_is_ignored_for_hyde(self, mock_registry: MagicMock) -> None:
         # HyDE generates a fresh hypothetical from the standalone query;
         # conversation history is not part of the prompt by design.
@@ -279,7 +279,7 @@ class TestHyDEQueryTransformer:
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_default_system_prompt_used(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("Hyp.")
         qt = HyDEQueryTransformer(
@@ -289,7 +289,7 @@ class TestHyDEQueryTransformer:
         messages = qt._generator.generate.call_args[0][0]
         assert messages[0]["content"] == _DEFAULT_HYDE_SYSTEM_PROMPT
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_system_prompt_override(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("Hyp.")
         custom = "Generate a fake answer."
@@ -304,7 +304,7 @@ class TestHyDEQueryTransformer:
         messages = qt._generator.generate.call_args[0][0]
         assert messages[0]["content"] == custom
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_generator_receives_provider_params(self, mock_registry: MagicMock) -> None:
         # HyDE-specific keys are stripped before passing config to the
         # generator; provider params (sub_provider, base_url, llm) pass through.
@@ -335,7 +335,7 @@ class TestHyDEQueryTransformer:
         with pytest.raises(ValueError, match="generator_type"):
             HyDEQueryTransformer({"llm": {"model_name": "m"}})
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_num_hypotheticals_must_be_positive(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls()
         with pytest.raises(ValueError, match="num_hypotheticals"):
@@ -347,7 +347,7 @@ class TestHyDEQueryTransformer:
                 }
             )
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_empty_generator_output_falls_back_to_original(
         self, mock_registry: MagicMock
     ) -> None:
@@ -424,7 +424,7 @@ class TestParseNumberedList:
 
 
 class TestMultiQueryQueryTransformer:
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_default_emits_original_plus_n_reformulations(
         self, mock_registry: MagicMock
     ) -> None:
@@ -449,7 +449,7 @@ class TestMultiQueryQueryTransformer:
         ]
         assert all(tq.branch is None for tq in result)
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_include_original_false_omits_original(
         self, mock_registry: MagicMock
     ) -> None:
@@ -465,7 +465,7 @@ class TestMultiQueryQueryTransformer:
         result = qt.transform("Original")
         assert result == [TransformedQuery(text="only reformulation")]
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_single_llm_call(self, mock_registry: MagicMock) -> None:
         # Multi-query batches into a single generation call, unlike HyDE's
         # per-hypothetical loop.
@@ -480,7 +480,7 @@ class TestMultiQueryQueryTransformer:
         qt.transform("Q?")
         assert qt._generator.generate.call_count == 1
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_num_queries_substituted_in_prompt(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("1. a\n2. b\n3. c")
         qt = MultiQueryQueryTransformer(
@@ -495,7 +495,7 @@ class TestMultiQueryQueryTransformer:
         assert "3" in messages[0]["content"]
         assert "{num_queries}" not in messages[0]["content"]
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_branch_override_tags_all_queries(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("1. a\n2. b")
         qt = MultiQueryQueryTransformer(
@@ -510,7 +510,7 @@ class TestMultiQueryQueryTransformer:
         # Original + 2 reformulations, all tagged "dense".
         assert all(tq.branch == "dense" for tq in result)
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_history_is_ignored(self, mock_registry: MagicMock) -> None:
         # Multi-query, like HyDE, generates from the standalone query;
         # conversation history is not part of the prompt.
@@ -527,7 +527,7 @@ class TestMultiQueryQueryTransformer:
         assert len(messages) == 2  # system + user
         assert messages[1]["role"] == "user"
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_default_system_prompt_used(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("1. a")
         qt = MultiQueryQueryTransformer(
@@ -542,7 +542,7 @@ class TestMultiQueryQueryTransformer:
         rendered = _DEFAULT_MULTI_QUERY_SYSTEM_PROMPT.replace("{num_queries}", "1")
         assert qt._generator.generate.call_args[0][0][0]["content"] == rendered
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_system_prompt_override(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls("1. a")
         custom = "Give me {num_queries} variants."
@@ -560,7 +560,7 @@ class TestMultiQueryQueryTransformer:
             == "Give me 3 variants."
         )
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_under_count_returns_what_we_have(self, mock_registry: MagicMock) -> None:
         # LLM emits 2 reformulations but we asked for 4. We get what
         # we got; the pipeline still RRF-fuses 2 lists.
@@ -576,7 +576,7 @@ class TestMultiQueryQueryTransformer:
         result = qt.transform("Q?")
         assert [tq.text for tq in result] == ["one", "two"]
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_empty_output_falls_back_to_original(
         self, mock_registry: MagicMock
     ) -> None:
@@ -587,7 +587,7 @@ class TestMultiQueryQueryTransformer:
         result = qt.transform("Q?")
         assert result == [TransformedQuery(text="Q?")]
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_generator_receives_provider_params(self, mock_registry: MagicMock) -> None:
         # Multi-query-specific keys are stripped before the generator
         # is constructed; provider params (sub_provider, base_url, llm)
@@ -618,7 +618,7 @@ class TestMultiQueryQueryTransformer:
         with pytest.raises(ValueError, match="generator_type"):
             MultiQueryQueryTransformer({"llm": {"model_name": "m"}})
 
-    @patch("components.query_transforms.registry")
+    @patch("uwf_rag.components.query_transforms.registry")
     def test_num_queries_must_be_positive(self, mock_registry: MagicMock) -> None:
         mock_registry.get.return_value = _mock_generator_cls()
         with pytest.raises(ValueError, match="num_queries"):

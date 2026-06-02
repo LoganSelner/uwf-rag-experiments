@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from core.config import ExperimentConfig
-from core.types import ExperimentResult, ScoredSample
-from evaluation.results import save_experiment
+from uwf_rag.core.config import ExperimentConfig
+from uwf_rag.core.types import ExperimentResult, ScoredSample
+from uwf_rag.evaluation.results import save_experiment
 
 
 def _make_config() -> ExperimentConfig:

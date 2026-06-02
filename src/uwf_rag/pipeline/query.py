@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from components.base import (
+from uwf_rag.components.base import (
     BaseGenerator,
     BaseLexicalIndex,
     BasePromptTemplate,
@@ -20,11 +20,11 @@ from components.base import (
     BaseReranker,
     BaseRetriever,
 )
-from components.retrievers import HybridRetriever
-from core.config import QueryConfig
-from core.registry import registry
-from core.types import GenerationResult
-from pipeline.indexing import BM25_AUX_KEY, IndexArtifact
+from uwf_rag.components.retrievers import HybridRetriever
+from uwf_rag.core.config import QueryConfig
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import GenerationResult
+from uwf_rag.pipeline.indexing import BM25_AUX_KEY, IndexArtifact
 
 logger = logging.getLogger(__name__)
 

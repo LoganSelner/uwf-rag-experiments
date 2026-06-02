@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.registry import ComponentRegistry, registry
+from uwf_rag.core.registry import ComponentRegistry, registry
 
 
 @pytest.fixture()

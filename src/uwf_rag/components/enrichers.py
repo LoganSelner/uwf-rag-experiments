@@ -12,9 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 from typing import Any
 
-from components.base import BaseChunkEnricher
-from core.registry import registry
-from core.types import Chunk, Document
+from uwf_rag.components.base import BaseChunkEnricher
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, Document
 
 logger = logging.getLogger(__name__)
 

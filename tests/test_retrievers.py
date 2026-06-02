@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from components.retrievers import BM25Retriever, DenseRetriever, HybridRetriever
-from core.types import Chunk, RetrievedChunk, TransformedQuery
+from uwf_rag.components.retrievers import BM25Retriever, DenseRetriever, HybridRetriever
+from uwf_rag.core.types import Chunk, RetrievedChunk, TransformedQuery
 
 
 def _make_rc(chunk_id: str, score: float, content: str = "text") -> RetrievedChunk:

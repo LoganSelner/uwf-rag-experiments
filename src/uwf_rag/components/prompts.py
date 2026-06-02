@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from components.base import BasePromptTemplate
-from core.registry import registry
-from core.types import RetrievedChunk
+from uwf_rag.components.base import BasePromptTemplate
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import RetrievedChunk
 
 
 def _format_chunks_numbered(chunks: list[RetrievedChunk]) -> str:

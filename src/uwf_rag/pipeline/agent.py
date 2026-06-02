@@ -24,12 +24,12 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from components._tool_protocol import dump_arguments, synthesize_call_id
-from components.base import BaseGenerator, BaseMemory, BaseTool
-from components.tools import tool_to_spec
-from core.config import ExperimentConfig
-from core.registry import registry
-from core.types import (
+from uwf_rag.components._tool_protocol import dump_arguments, synthesize_call_id
+from uwf_rag.components.base import BaseGenerator, BaseMemory, BaseTool
+from uwf_rag.components.tools import tool_to_spec
+from uwf_rag.core.config import ExperimentConfig
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import (
     AgentStep,
     GenerationResult,
     Message,
@@ -39,7 +39,7 @@ from core.types import (
 )
 
 if TYPE_CHECKING:
-    from pipeline.indexing import IndexArtifact
+    from uwf_rag.pipeline.indexing import IndexArtifact
 
 logger = logging.getLogger(__name__)
 

@@ -8,8 +8,8 @@ import uuid
 import numpy as np
 import pytest
 
-from components.vectorstores import ChromaVectorStore, FAISSVectorStore
-from core.types import Chunk, EmbeddedChunk, RetrievedChunk
+from uwf_rag.components.vectorstores import ChromaVectorStore, FAISSVectorStore
+from uwf_rag.core.types import Chunk, EmbeddedChunk, RetrievedChunk
 
 
 def _unique_chroma(**overrides: object) -> ChromaVectorStore:

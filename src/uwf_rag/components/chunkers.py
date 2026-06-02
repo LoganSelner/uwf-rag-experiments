@@ -13,9 +13,9 @@ from typing import Any
 
 import numpy as np
 
-from components.base import BaseChunker
-from core.registry import registry
-from core.types import Chunk, Document
+from uwf_rag.components.base import BaseChunker
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import Chunk, Document
 
 
 def _make_chunk_id(
@@ -276,7 +276,7 @@ class SemanticChunker(BaseChunker):
         return self._embed_fn
 
     def _build_embed_fn(self) -> Callable[[list[str]], list[list[float]]]:
-        from components.embedders import HuggingFaceEmbedder
+        from uwf_rag.components.embedders import HuggingFaceEmbedder
 
         model_name = self.config.get("embedding_model", "BAAI/bge-small-en-v1.5")
         embedder = HuggingFaceEmbedder({"model_name": model_name, "normalize": True})

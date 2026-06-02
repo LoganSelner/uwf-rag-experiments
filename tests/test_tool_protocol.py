@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from components._tool_protocol import (
+from uwf_rag.components._tool_protocol import (
     dump_arguments,
     parse_arguments,
     synthesize_call_id,
     to_openai_tools,
 )
-from core.types import ToolSpec
+from uwf_rag.core.types import ToolSpec
 
 
 class TestToOpenAITools:

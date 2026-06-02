@@ -11,9 +11,9 @@ import logging
 import re
 from typing import Any
 
-from components.base import BaseQueryTransformer
-from core.registry import registry
-from core.types import TransformedQuery
+from uwf_rag.components.base import BaseQueryTransformer
+from uwf_rag.core.registry import registry
+from uwf_rag.core.types import TransformedQuery
 
 logger = logging.getLogger(__name__)
 

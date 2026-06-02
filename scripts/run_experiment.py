@@ -12,23 +12,19 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-import sys
 import warnings
 
 from dotenv import load_dotenv
 import torch
 
-# Add src/ to path for bare imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
 # Trigger component registration at the application boundary
-import components  # noqa: F401
-from core.config import ExperimentConfig, validate_config
-from core.git import get_git_dirty, get_git_sha
-from core.registry import registry
-from evaluation.evaluator import Evaluator
-from evaluation.results import save_experiment
-from pipeline.rag import RAGPipeline
+import uwf_rag.components  # noqa: F401
+from uwf_rag.core.config import ExperimentConfig, validate_config
+from uwf_rag.core.git import get_git_dirty, get_git_sha
+from uwf_rag.core.registry import registry
+from uwf_rag.evaluation.evaluator import Evaluator
+from uwf_rag.evaluation.results import save_experiment
+from uwf_rag.pipeline.rag import RAGPipeline
 
 logger = logging.getLogger(__name__)
 
