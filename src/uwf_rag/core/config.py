@@ -30,6 +30,25 @@ import yaml
 # ---------------------------------------------------------------------------
 
 
+# Keys that select a component implementation. A component's other settings
+# (notably ``params``) are scoped to the chosen implementation, so when a child
+# config changes one of these the whole subtree is *replaced* rather than
+# deep-merged — otherwise the parent's implementation-specific params (e.g.
+# EdenAI's ``provider`` / ``sub_provider``) would leak onto a different
+# implementation (e.g. a HuggingFace embedder or an Ollama generator). This
+# mirrors Hydra's config-group *selection* and the general rule that a swapped
+# component's config is private to its kind.
+_IMPL_SELECTOR_KEYS = ("type", "provider")
+
+
+def _selects_different_impl(base: dict[str, Any], override: dict[str, Any]) -> bool:
+    """True if *base* and *override* pick different component implementations."""
+    return any(
+        key in base and key in override and base[key] != override[key]
+        for key in _IMPL_SELECTOR_KEYS
+    )
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge *override* into *base*.
 
@@ -37,10 +56,17 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     - Nested dicts: merge recursively (override only specified keys)
     - Lists: full replacement (override provides the entire list)
     - Scalars: override replaces base
+    - Component dicts whose implementation selector (``type``/``provider``)
+      changes: full replacement (params are private to the implementation)
     """
     merged = base.copy()
     for key, value in override.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+            and not _selects_different_impl(merged[key], value)
+        ):
             merged[key] = _deep_merge(merged[key], value)
         else:
             merged[key] = value

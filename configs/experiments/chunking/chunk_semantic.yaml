@@ -10,9 +10,10 @@
 #   - indexing.chunking.type: recursive_langchain -> semantic
 #   - indexing.chunking.params: semantic knobs (breakpoint threshold, buffer)
 #
-# The recursive-only params (chunk_size / chunk_overlap / separators) are
-# explicitly nulled so they don't bleed in via inheritance and pollute the
-# config snapshot — the semantic chunker ignores them regardless.
+# Changing indexing.chunking.type to "semantic" replaces the chunker's params
+# wholesale (the inheritance merge does not bleed the parent's recursive
+# chunk_size / chunk_overlap / separators across an implementation switch), so
+# only the semantic knobs below apply.
 #
 # Compare against: chunk_size_{256,512,1024} (size sweep), base.yaml (recursive).
 
@@ -29,7 +30,3 @@ indexing:
       breakpoint_threshold_type: "percentile"
       breakpoint_threshold_amount: 95
       buffer_size: 1
-      # Neutralize inherited recursive params (ignored by the semantic chunker):
-      chunk_size: null
-      chunk_overlap: null
-      separators: null
