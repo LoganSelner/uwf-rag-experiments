@@ -215,6 +215,26 @@ class BaseRetriever(ABC):
         self.config = config or {}
         self._default_filters: dict[str, Any] = default_filters or {}
 
+    @classmethod
+    def validate_params(
+        cls,
+        params: dict[str, Any],
+        *,
+        registry: Any,
+        sparse_index_type: str,
+        top_k_retrieve: int,
+    ) -> list[str]:
+        """Return config-validation error strings for this retriever's params.
+
+        Default: no retriever-specific checks. Overridden by retrievers whose
+        params have structure to validate (BM25 needs a sparse index; hybrid
+        has a child roster + fusion settings). Keeps that knowledge in the
+        component rather than in ``core.validate_config``. ``registry`` and the
+        cross-config values (``sparse_index_type``, ``top_k_retrieve``) are
+        supplied by the caller so the component never reaches into config.
+        """
+        return []
+
     @abstractmethod
     def retrieve(
         self,

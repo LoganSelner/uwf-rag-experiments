@@ -814,165 +814,32 @@ def _validate_agent(
         )
 
 
-_SUPPORTED_FUSION_MODES: frozenset[str] = frozenset({"rrf", "weighted"})
-_SUPPORTED_NORMALIZE_MODES: frozenset[str] = frozenset({"min_max", "none"})
-
-
 def _validate_retrieval_dependencies(
     errors: list[str],
     config: ExperimentConfig,
     registry: Any,
 ) -> None:
-    """Phase A retrieval validations beyond simple registry checks.
+    """Delegate retrieval-type-specific param validation to the component.
 
-    Covers:
-    - `bm25` retriever requires `indexing.sparse_index` to be set.
-    - `hybrid` retriever: child specs, fusion mode, weights, nesting
-      prohibition, sparse-index requirement when any child is `bm25`.
+    The retriever class owns its param schema — BM25 needs a sparse index;
+    hybrid validates its child roster, nesting prohibition, and fusion
+    settings — via a ``validate_params`` classmethod. Core only resolves the
+    class from the registry, supplies the cross-config context (sparse-index
+    type, top_k budget), and folds the returned error strings into the
+    aggregate so the collect-all ``ConfigValidationError`` UX is preserved.
     """
     retrieval = config.query.retrieval
-
-    if retrieval.type == "bm25":
-        if not config.indexing.sparse_index.type:
-            errors.append(
-                "query.retrieval.type is 'bm25' but indexing.sparse_index "
-                "is not configured"
-            )
-        return
-
-    if retrieval.type != "hybrid":
-        return
-
-    params = retrieval.params or {}
-    children = params.get("retrievers")
-    if not isinstance(children, list):
-        errors.append(
-            "query.retrieval.params.retrievers must be a list of "
-            "sub-retriever specs for hybrid retrieval"
+    if not registry.is_registered("retrieval", retrieval.type):
+        return  # an unregistered type is already flagged by _check_registered
+    retriever_cls = registry.get("retrieval", retrieval.type)
+    errors.extend(
+        retriever_cls.validate_params(
+            retrieval.params or {},
+            registry=registry,
+            sparse_index_type=config.indexing.sparse_index.type,
+            top_k_retrieve=retrieval.top_k_retrieve,
         )
-        return
-    if len(children) < 2:
-        errors.append(
-            f"query.retrieval.params.retrievers must have at least 2 "
-            f"entries for hybrid (got {len(children)})"
-        )
-
-    seen_names: set[str] = set()
-    seen_types: dict[str, int] = {}
-    has_bm25_child = False
-    child_top_k_sum = 0
-
-    for i, child in enumerate(children):
-        path = f"query.retrieval.params.retrievers[{i}]"
-        if not isinstance(child, dict):
-            errors.append(f"{path} must be a dict")
-            continue
-        sub_type = child.get("type", "")
-        if sub_type == "hybrid":
-            errors.append(f"{path}.type: nested 'hybrid' is not allowed")
-            continue
-        if not sub_type:
-            errors.append(f"{path}.type is empty")
-        else:
-            _check_registered(errors, registry, sub_type, "retrieval", f"{path}.type")
-            seen_types[sub_type] = seen_types.get(sub_type, 0) + 1
-            if sub_type == "bm25":
-                has_bm25_child = True
-
-        sub_name = str(child.get("name", sub_type))
-        if sub_name in seen_names:
-            errors.append(
-                f"{path}.name: '{sub_name}' is duplicated in this hybrid "
-                "(child names must be unique)"
-            )
-        else:
-            seen_names.add(sub_name)
-
-        sub_top_k = child.get("top_k")
-        if not isinstance(sub_top_k, int) or sub_top_k <= 0:
-            errors.append(f"{path}.top_k must be a positive int (got {sub_top_k!r})")
-        else:
-            child_top_k_sum += sub_top_k
-
-    # Duplicate types without explicit names are disallowed — the
-    # default name (the type) would collide.
-    for sub_type, count in seen_types.items():
-        if count > 1:
-            explicit = sum(
-                1
-                for c in children
-                if isinstance(c, dict) and c.get("type") == sub_type and c.get("name")
-            )
-            if explicit < count:
-                errors.append(
-                    f"query.retrieval.params.retrievers: type '{sub_type}' "
-                    f"appears {count} times — each duplicate child must "
-                    "supply an explicit unique 'name'"
-                )
-
-    if (
-        child_top_k_sum
-        and retrieval.top_k_retrieve > 0
-        and child_top_k_sum < retrieval.top_k_retrieve
-    ):
-        errors.append(
-            f"query.retrieval.params.retrievers: sum of child top_k "
-            f"({child_top_k_sum}) < query.retrieval.top_k_retrieve "
-            f"({retrieval.top_k_retrieve}) — fusion cannot fill the slate"
-        )
-
-    if has_bm25_child and config.indexing.sparse_index.type != "bm25":
-        errors.append(
-            "hybrid has a 'bm25' child but indexing.sparse_index.type "
-            f"is '{config.indexing.sparse_index.type}' (expected 'bm25')"
-        )
-
-    fusion = params.get("fusion", "rrf")
-    if fusion not in _SUPPORTED_FUSION_MODES:
-        errors.append(
-            f"query.retrieval.params.fusion: '{fusion}' is not supported. "
-            f"Supported: {sorted(_SUPPORTED_FUSION_MODES)}"
-        )
-
-    if fusion == "rrf":
-        rrf_k = params.get("rrf_k", 60)
-        if not isinstance(rrf_k, int) or rrf_k <= 0:
-            errors.append(
-                f"query.retrieval.params.rrf_k must be a positive int (got {rrf_k!r})"
-            )
-
-    if fusion == "weighted":
-        normalize = params.get("normalize", "min_max")
-        if normalize not in _SUPPORTED_NORMALIZE_MODES:
-            errors.append(
-                f"query.retrieval.params.normalize: '{normalize}' is not "
-                f"supported. Supported: {sorted(_SUPPORTED_NORMALIZE_MODES)}"
-            )
-
-        weights = params.get("weights")
-        if not isinstance(weights, dict):
-            errors.append(
-                "query.retrieval.params.weights is required for weighted "
-                "fusion and must be a dict keyed by sub-retriever name"
-            )
-        else:
-            if set(weights.keys()) != seen_names:
-                errors.append(
-                    f"query.retrieval.params.weights keys "
-                    f"{sorted(weights.keys())} must match sub-retriever "
-                    f"names {sorted(seen_names)}"
-                )
-            weight_values = list(weights.values())
-            if any(not isinstance(w, (int, float)) or w < 0 for w in weight_values):
-                errors.append(
-                    "query.retrieval.params.weights values must be "
-                    f"non-negative numbers (got {weight_values})"
-                )
-            elif sum(weight_values) <= 0:
-                errors.append(
-                    "query.retrieval.params.weights must sum to > 0 "
-                    f"(got {sum(weight_values)})"
-                )
+    )
 
 
 def _validate_qt_branch_references(
