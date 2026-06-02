@@ -16,7 +16,6 @@ Output layout::
 
 from __future__ import annotations
 
-import dataclasses
 from datetime import datetime
 import json
 import logging
@@ -117,7 +116,7 @@ def save_experiment(
         json.dump(summary, f, indent=2, default=str)
 
     # Full resolved config for reproducibility
-    config_dict = dataclasses.asdict(config)
+    config_dict = config.model_dump()
     with open(exp_dir / "config.yaml", "w") as f:
         yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False)
 

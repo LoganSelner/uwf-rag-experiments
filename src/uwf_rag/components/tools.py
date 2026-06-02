@@ -13,7 +13,6 @@ Deferred (end of Phase D1): a ``web_search`` tool over an external API.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -112,9 +111,8 @@ class RAGSearchTool(BaseTool):
         """
         from uwf_rag.pipeline.query import QueryPipeline
 
-        query_config = dataclasses.replace(
-            experiment_config.query,
-            query_transform=QueryTransformConfig(type="passthrough"),
+        query_config = experiment_config.query.model_copy(
+            update={"query_transform": QueryTransformConfig(type="passthrough")},
         )
         pipeline = QueryPipeline.from_config(
             query_config, index_artifact, retrieval_only=True
