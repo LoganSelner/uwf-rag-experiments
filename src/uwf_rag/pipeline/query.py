@@ -22,7 +22,7 @@ from uwf_rag.components.base import (
 )
 from uwf_rag.components.generators import build_generator
 from uwf_rag.components.retrievers import HybridRetriever
-from uwf_rag.core.config import QueryConfig
+from uwf_rag.core.config import QueryConfig, RetrievalConfig
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import GenerationResult
 from uwf_rag.pipeline.indexing import BM25_AUX_KEY, IndexArtifact
@@ -83,20 +83,10 @@ class QueryPipeline:
             generator=qt_generator,
         )
 
-        # Retriever — wire to vectorstore / embedder / sparse index
-        # from the IndexArtifact. Hybrid retrievers compose child
-        # retrievers, each independently wired.
-        retriever: BaseRetriever
-        if config.retrieval.type == "hybrid":
-            retriever = cls._build_hybrid_retriever(
-                config.retrieval.params, index_artifact
-            )
-        else:
-            retriever_cls = registry.get("retrieval", config.retrieval.type)
-            retriever = retriever_cls(config=config.retrieval.params)
-            cls._wire_retriever(retriever, config.retrieval.type, index_artifact)
-        if config.retrieval.filters:
-            retriever.set_default_filters(config.retrieval.filters)
+        # Retriever — built with its index sources (and default filters)
+        # injected at construction. Hybrid retrievers compose child
+        # retrievers, each built the same way.
+        retriever = cls._build_retriever(config.retrieval, index_artifact)
 
         # Reranker
         rerank_type = config.reranking.type or "none"
@@ -191,18 +181,36 @@ class QueryPipeline:
         result.retrieved_chunks = reranked
         return result
 
-    @staticmethod
-    def _wire_retriever(
-        retriever: BaseRetriever,
-        retrieval_type: str,
+    @classmethod
+    def _build_retriever(
+        cls,
+        retrieval: RetrievalConfig,
         index_artifact: IndexArtifact,
-    ) -> None:
-        """Inject the appropriate index sources into a single retriever.
+    ) -> BaseRetriever:
+        """Build the retriever (single or hybrid) with its sources injected."""
+        default_filters = retrieval.filters or None
+        if retrieval.type == "hybrid":
+            return cls._build_hybrid_retriever(
+                retrieval.params, index_artifact, default_filters
+            )
+        return cls._build_single_retriever(
+            retrieval.type, retrieval.params, index_artifact, default_filters
+        )
 
-        Dense retrievers need vectorstore + embedder; BM25 retrievers
-        need the sparse index from ``auxiliary_stores``. Other future
-        retrievers can extend this dispatch.
+    @staticmethod
+    def _build_single_retriever(
+        retrieval_type: str,
+        params: dict[str, Any],
+        index_artifact: IndexArtifact,
+        default_filters: dict[str, Any] | None,
+    ) -> BaseRetriever:
+        """Construct one retriever with its index sources injected.
+
+        Dense retrievers receive vectorstore + embedder; BM25 receives the
+        sparse index from ``auxiliary_stores``. Other future retrievers can
+        extend this dispatch.
         """
+        retriever_cls = registry.get("retrieval", retrieval_type)
         if retrieval_type == "bm25":
             sparse_index = index_artifact.auxiliary_stores.get(BM25_AUX_KEY)
             if sparse_index is None:
@@ -216,23 +224,33 @@ class QueryPipeline:
                 raise RuntimeError(
                     f"auxiliary_stores['{BM25_AUX_KEY}'] is not a BaseLexicalIndex"
                 )
-            retriever.set_sparse_index(sparse_index)
-        else:
-            # Default: dense-style wiring (vectorstore + embedder).
-            retriever.set_vectorstore(index_artifact.vectorstore)
-            retriever.set_embedder(index_artifact.embedder)
+            return retriever_cls(
+                config=params,
+                sparse_index=sparse_index,
+                default_filters=default_filters,
+            )
+        # Default: dense-style (vectorstore + embedder).
+        return retriever_cls(
+            config=params,
+            vectorstore=index_artifact.vectorstore,
+            embedder=index_artifact.embedder,
+            default_filters=default_filters,
+        )
 
     @classmethod
     def _build_hybrid_retriever(
         cls,
         params: dict[str, Any],
         index_artifact: IndexArtifact,
+        default_filters: dict[str, Any] | None,
     ) -> HybridRetriever:
-        """Construct a HybridRetriever and its wired sub-retrievers.
+        """Construct a HybridRetriever and its child sub-retrievers.
 
         Each sub-retriever entry: ``{name, type, top_k, params}``.
         ``name`` defaults to ``type`` and must be unique within the
-        hybrid (validated upstream in ``validate_config``).
+        hybrid (validated upstream in ``validate_config``). The hybrid's
+        ``default_filters`` are injected into each child too, so a child's
+        own retrieve path filters identically to the standalone case.
         """
         sub_specs = params.get("retrievers", [])
         children: list[tuple[str, BaseRetriever, int]] = []
@@ -241,10 +259,10 @@ class QueryPipeline:
             sub_name = spec.get("name", sub_type)
             sub_top_k = int(spec["top_k"])
             sub_params = spec.get("params", {})
-            sub_cls = registry.get("retrieval", sub_type)
-            sub_retriever: BaseRetriever = sub_cls(config=sub_params)
-            cls._wire_retriever(sub_retriever, sub_type, index_artifact)
-            children.append((sub_name, sub_retriever, sub_top_k))
+            child = cls._build_single_retriever(
+                sub_type, sub_params, index_artifact, default_filters
+            )
+            children.append((sub_name, child, sub_top_k))
 
         fusion = params.get("fusion", "rrf")
         rrf_k = int(params.get("rrf_k", 60))
@@ -260,4 +278,5 @@ class QueryPipeline:
             rrf_k=rrf_k,
             weights=weights_dict,
             normalize=normalize,
+            default_filters=default_filters,
         )

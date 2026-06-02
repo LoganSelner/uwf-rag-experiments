@@ -10,7 +10,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from uwf_rag.components.base import BaseRetriever
+from uwf_rag.components.base import (
+    BaseEmbedder,
+    BaseLexicalIndex,
+    BaseRetriever,
+    BaseVectorStore,
+)
 from uwf_rag.core.fusion import reciprocal_rank_fusion, weighted_score_fusion
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import RetrievedChunk, TransformedQuery
@@ -24,11 +29,21 @@ class DenseRetriever(BaseRetriever):
 
     Embeds the query, searches the vectorstore, returns top_k results.
     Supports metadata filtering via default_filters (from config) merged
-    with per-call filters.
+    with per-call filters. The vectorstore + embedder are injected at
+    construction.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        super().__init__(config)
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        vectorstore: BaseVectorStore,
+        embedder: BaseEmbedder,
+        default_filters: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(config, default_filters=default_filters)
+        self._vectorstore = vectorstore
+        self._embedder = embedder
 
     def retrieve(
         self,
@@ -36,11 +51,6 @@ class DenseRetriever(BaseRetriever):
         top_k: int,
         filters: dict[str, Any] | None = None,
     ) -> list[RetrievedChunk]:
-        if self._embedder is None:
-            raise RuntimeError("Embedder not set. Call set_embedder() first.")
-        if self._vectorstore is None:
-            raise RuntimeError("VectorStore not set. Call set_vectorstore() first.")
-
         merged_filters = {**self._default_filters, **(filters or {})}
         query_vector = self._embedder.embed_query(query)
         return self._vectorstore.search(
@@ -54,13 +64,20 @@ class DenseRetriever(BaseRetriever):
 class BM25Retriever(BaseRetriever):
     """Lexical retriever delegating to a sparse index (e.g. BM25).
 
-    Receives its index via ``set_sparse_index()`` after construction —
-    the index is owned by the indexing pipeline and lives in
-    ``IndexArtifact.auxiliary_stores``. No embedder is needed.
+    The index — owned by the indexing pipeline and living in
+    ``IndexArtifact.auxiliary_stores`` — is injected at construction. No
+    embedder is needed.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        super().__init__(config)
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        sparse_index: BaseLexicalIndex,
+        default_filters: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(config, default_filters=default_filters)
+        self._sparse_index = sparse_index
 
     def retrieve(
         self,
@@ -68,9 +85,6 @@ class BM25Retriever(BaseRetriever):
         top_k: int,
         filters: dict[str, Any] | None = None,
     ) -> list[RetrievedChunk]:
-        if self._sparse_index is None:
-            raise RuntimeError("SparseIndex not set. Call set_sparse_index() first.")
-
         merged_filters = {**self._default_filters, **(filters or {})}
         return self._sparse_index.search(
             query=query,
@@ -89,11 +103,10 @@ class HybridRetriever(BaseRetriever):
     by ranking on positions only. Weighted score fusion is available
     as an opt-in variant for ablation studies.
 
-    Filter semantics: any filter set on the hybrid retriever (via
-    ``set_default_filters`` from ``query.retrieval.filters``) is
-    pushed identically to every child. Per-branch over-retrieve +
-    post-filter behavior is owned by each child retriever's backing
-    store.
+    Filter semantics: the hybrid's ``default_filters`` (from
+    ``query.retrieval.filters``) are merged with per-call filters and passed
+    identically to every child at retrieve time, so per-branch over-retrieve +
+    post-filter behavior stays consistent with the dense/BM25 paths.
 
     Children are constructed externally (in ``QueryPipeline.from_config``)
     and injected via the constructor along with their per-branch
@@ -109,21 +122,15 @@ class HybridRetriever(BaseRetriever):
         rrf_k: int = 60,
         weights: dict[str, float] | None = None,
         normalize: str = "min_max",
+        default_filters: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(config)
+        super().__init__(config, default_filters=default_filters)
         self._children: list[tuple[str, BaseRetriever, int]] = children or []
         self._fusion = fusion
         self._rrf_k = rrf_k
         self._weights = weights or {}
         self._normalize = normalize
         self._method_label = f"hybrid_{fusion}"
-
-    def set_default_filters(self, filters: dict[str, Any]) -> None:
-        # Push down filters to every child so per-branch over-retrieve
-        # + filter semantics stay consistent with the dense/BM25 paths.
-        super().set_default_filters(filters)
-        for _, child, _ in self._children:
-            child.set_default_filters(filters)
 
     def retrieve(
         self,

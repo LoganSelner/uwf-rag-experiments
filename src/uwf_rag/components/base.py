@@ -199,33 +199,21 @@ class BaseLexicalIndex(ABC):
 class BaseRetriever(ABC):
     """Retrieves relevant chunks for a query.
 
-    Holds references to a vectorstore, embedder, and/or lexical index,
-    injected after construction. This allows the pipeline to construct
-    components independently from config and wire them together afterward.
-
-    Dense retrievers use set_vectorstore + set_embedder; lexical (e.g.
-    BM25) retrievers use set_sparse_index; hybrid retrievers compose
-    sub-retrievers and inject the appropriate sources into each child.
+    Dependencies (vectorstore + embedder for dense, a lexical index for BM25,
+    composed children for hybrid) and the default metadata filters (from
+    ``query.retrieval.filters``) are injected through each concrete retriever's
+    constructor by ``QueryPipeline.from_config``. There is no post-construction
+    wiring, so a retriever is always fully formed and usable once built.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        default_filters: dict[str, Any] | None = None,
+    ) -> None:
         self.config = config or {}
-        self._vectorstore: BaseVectorStore | None = None
-        self._embedder: BaseEmbedder | None = None
-        self._sparse_index: BaseLexicalIndex | None = None
-        self._default_filters: dict[str, Any] = {}
-
-    def set_vectorstore(self, vectorstore: BaseVectorStore) -> None:
-        self._vectorstore = vectorstore
-
-    def set_embedder(self, embedder: BaseEmbedder) -> None:
-        self._embedder = embedder
-
-    def set_sparse_index(self, sparse_index: BaseLexicalIndex) -> None:
-        self._sparse_index = sparse_index
-
-    def set_default_filters(self, filters: dict[str, Any]) -> None:
-        self._default_filters = filters
+        self._default_filters: dict[str, Any] = default_filters or {}
 
     @abstractmethod
     def retrieve(
@@ -236,10 +224,7 @@ class BaseRetriever(ABC):
     ) -> list[RetrievedChunk]:
         """Retrieve the top_k most relevant chunks for a query.
 
-        Uses self._default_filters merged with any explicit filters.
-        Dense retrievers embed via self._embedder and search
-        self._vectorstore. Lexical retrievers delegate to
-        self._sparse_index.
+        Uses ``self._default_filters`` merged with any explicit filters.
         """
 
     def retrieve_multi(
