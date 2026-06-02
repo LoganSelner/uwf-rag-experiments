@@ -432,38 +432,20 @@ class ExperimentConfig(BaseModel):
         Two experiments with the same fingerprint can share a cached
         index.
         """
+        idx = self.indexing
         data: dict[str, Any] = {
-            "sources": [
-                {
-                    "name": s.name,
-                    "path": s.path,
-                    "ingest": {"type": s.ingest.type, "params": s.ingest.params},
-                }
-                for s in self.indexing.sources
-            ],
-            "chunking": {
-                "type": self.indexing.chunking.type,
-                "params": self.indexing.chunking.params,
-            },
-            "embedding": {
-                "type": self.indexing.embedding.type,
-                "params": self.indexing.embedding.params,
-            },
-            "vectorstore": {
-                "type": self.indexing.vectorstore.type,
-                "params": self.indexing.vectorstore.params,
-            },
+            "sources": [s.model_dump() for s in idx.sources],
+            "chunking": idx.chunking.model_dump(),
+            "embedding": idx.embedding.model_dump(),
+            "vectorstore": idx.vectorstore.model_dump(),
         }
-        if self.indexing.sparse_index.type:
-            data["sparse_index"] = {
-                "type": self.indexing.sparse_index.type,
-                "params": self.indexing.sparse_index.params,
-            }
-        if self.indexing.chunk_enricher.type:
-            data["chunk_enricher"] = {
-                "type": self.indexing.chunk_enricher.type,
-                "params": self.indexing.chunk_enricher.params,
-            }
+        # Empty-config canonicalization: optional components join the
+        # fingerprint only when their ``type`` is set, so adding an unused
+        # optional indexing component never disturbs an existing fingerprint.
+        if idx.sparse_index.type:
+            data["sparse_index"] = idx.sparse_index.model_dump()
+        if idx.chunk_enricher.type:
+            data["chunk_enricher"] = idx.chunk_enricher.model_dump()
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
