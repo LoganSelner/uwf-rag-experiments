@@ -25,7 +25,7 @@ Every component is swappable via config. No code changes needed.
 | **Retrieval** | `dense` (single-vector similarity), `bm25` (lexical), `hybrid` (dense + sparse fusion: RRF or weighted) | `query.retrieval.type` |
 | **Query Transform** | `passthrough`, `contextualizer` (LLM reformulation), `hyde` (hypothetical document embeddings), `multi_query` (RAG-Fusion expansion) | `query.query_transform.type` |
 | **Reranking** | `none` (passthrough), `cross_encoder` (HF cross-encoder) | `query.reranking.type` |
-| **Generation** | `ollama` (local), `edenai` (cloud gateway), `google` (Gemini), `openai` — all support native tool calling | `query.generation.type` |
+| **Generation** | `ollama` (local), `edenai` (cloud gateway), `google` (Gemini), `openai` — all support native tool calling | `query.generator.provider` |
 | **Prompts** | `chat` (numbered/plain context, CoT, citation styles) | `query.prompt.type` |
 | **Pipeline Mode** | `linear`, `agent` (single-agent ReAct, native tool calling) | `pipeline_mode` |
 | **Agent Tools** | `rag` (knowledge-base search) | `agent.tools[].type` |
@@ -140,8 +140,8 @@ Experiments that share the same indexing config reuse the cached index automatic
 | Retrieval depth | `query.retrieval.top_k_retrieve` | 3 |
 | Final chunks | `query.retrieval.top_k_final` | 3 |
 | Reranker | `query.reranking.type` | `none` |
-| Generator | `query.generation.type` | `edenai` (OpenAI sub-provider) |
-| LLM model | `query.generation_llm.model_name` | `gpt-4.1` |
+| Generator provider | `query.generator.provider` | `edenai` (sub-provider in `query.generator.params.sub_provider`) |
+| LLM model | `query.generator.model_name` | `gpt-4.1` |
 | System prompt | `query.prompt.system_template` | QA-from-context prompt |
 | Chain-of-thought | `query.prompt.use_chain_of_thought` | `false` |
 | Citation style | `query.prompt.citation_style` | `none` |
@@ -263,19 +263,26 @@ results/<experiment_name>/
 Add a new component in four steps:
 
 ```python
-# 1. Write the class in src/components/<category>.py
-from components.base import BaseChunker
-from core.registry import registry
+# 1. Write the class in src/uwf_rag/components/<category>.py
+from uwf_rag.components.base import BaseChunker, ComponentParams
+from uwf_rag.core.registry import registry
 
 @registry.register("chunking", "my_chunker")
 class MyChunker(BaseChunker):
+    class Params(ComponentParams):       # typed config: defaults + validation, one place
+        custom_param: int = 42
+
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.p = self.Params.model_validate(self.config)
+
     def chunk(self, documents):
-        ...
+        ...  # read self.p.custom_param
 ```
 
 ```python
-# 2. Ensure the file is imported in src/components/__init__.py
-from components import my_module  # noqa: F401
+# 2. Ensure the file is imported in src/uwf_rag/components/__init__.py
+from uwf_rag.components import my_module  # noqa: F401
 ```
 
 ```python

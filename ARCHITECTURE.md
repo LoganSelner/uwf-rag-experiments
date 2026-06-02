@@ -22,6 +22,15 @@ not editing Python.
 text lives in `PromptConfig`. The pipeline reads these values;
 nothing overrides them at runtime.
 
+**Typed config end to end.** Config is a tree of **Pydantic v2 models**
+(`ExperimentConfig` and friends in `core/config.py`). Each component
+declares a nested `Params(ComponentParams)` model and validates its raw
+config dict into `self.p` exactly once at construction, so a component's
+defaults and constraints live in one typed place — not scattered across
+`self.config.get(key, default)` reads. Required dependencies (a
+retriever's vectorstore, a transformer's generator) arrive through the
+constructor, so an object is never half-built.
+
 **Dependency Rule.** Dependencies point inward. The entry point
 scripts import from pipeline and evaluation. Pipeline imports from
 components and core. Evaluation imports from core. Components import
@@ -90,26 +99,32 @@ Key dependency boundaries:
   lives in `scripts/run_experiment.py`, at the application
   boundary.
 
-- `components/__init__.py` triggers registration side effects
+- `uwf_rag/components/__init__.py` triggers registration side effects
   (`@registry.register` decorators). This import happens only at
   application entry points: `scripts/run_experiment.py` and
-  `tests/conftest.py`. Pipeline modules never trigger it.
+  `tests/conftest.py` (`import uwf_rag.components`). Pipeline modules
+  never trigger it.
+
+All source lives under a single installed package, `src/uwf_rag/`
+(`uv pip install -e .`), so modules import as `uwf_rag.core`,
+`uwf_rag.components`, etc. — no `sys.path` manipulation at the entry
+points.
 
 ---
 
 ## File Map
 
 ```
-src/
+src/uwf_rag/
 ├── core/
-│   ├── types.py          Data contracts between pipeline stages
-│   ├── config.py         Config dataclasses + YAML loading + validation
+│   ├── types.py          Data contracts between pipeline stages (Message TypedDict, dataclasses)
+│   ├── config.py         Pydantic config models + YAML loading/inheritance + validation
 │   ├── registry.py       Component registry (@register / get)
 │   ├── fusion.py         Rank-list fusion primitives (RRF + weighted + max-dedup)
 │   └── git.py            Git SHA + dirty flag for reproducibility
 │
 ├── components/
-│   ├── base.py           Abstract base classes (read-only contract)
+│   ├── base.py           Abstract base classes + ComponentParams (read-only contract)
 │   ├── defaults.py       Passthrough/no-op defaults (always available)
 │   ├── ingestors.py      PDFIngestor (PyMuPDF)
 │   ├── chunkers.py       LangChainRecursiveChunker, CustomRecursiveChunker, SemanticChunker
@@ -118,7 +133,7 @@ src/
 │   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
 │   ├── lexical_indexes.py   BM25LexicalIndex (bm25s + PyStemmer)
 │   ├── retrievers.py     DenseRetriever, BM25Retriever, HybridRetriever
-│   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator, OpenAIGenerator
+│   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator, OpenAIGenerator + build_generator
 │   ├── prompts.py        ChatPromptTemplate
 │   ├── query_transforms.py  ContextualizerQueryTransformer, HyDEQueryTransformer, MultiQueryQueryTransformer
 │   ├── rerankers.py      CrossEncoderReranker
@@ -146,7 +161,7 @@ scripts/
 └── compare.py             CLI entry point for comparing results
 
 tests/
-├── conftest.py            Fixtures + sys.path + registration trigger
+├── conftest.py            Fixtures + registration trigger
 ├── fixtures/              Test YAML configs + sample PDF
 └── test_*.py              Per-module unit tests
 ```
@@ -259,10 +274,11 @@ values are supported:
 
 ## Type System
 
-All types live in `src/core/types.py`.
+All types live in `src/uwf_rag/core/types.py`.
 
 | Type | Produced By | Consumed By |
 |------|------------|-------------|
+| `Message` (TypedDict) | Pipeline / agent loop / transformers | BaseGenerator (`generate`) |
 | `Document` | Ingestor | Chunker, ChunkEnricher |
 | `Chunk` | Chunker | ChunkEnricher, Embedder, LexicalIndex |
 | `EmbeddedChunk` | Embedder | VectorStore |
@@ -296,6 +312,13 @@ branch-tagged config runs unchanged on a dense-only setup. A non-None
 branch that matches no child raises `ValueError` at retrieval time
 (the validator also catches explicitly-set mismatches up front).
 
+`Message` is the neutral, OpenAI-style chat message exchanged between the
+pipeline/agent loop and every generator. It is a `TypedDict` (`role`
+required; `content` / `tool_calls` / `tool_call_id` optional) — a plain
+`dict` at runtime, so the OpenAI generator forwards messages verbatim while
+the Ollama/Google/EdenAI translators get static shape-checking. Conversation
+history and prompt-template output are `list[Message]` too.
+
 `Queryable` is a `@runtime_checkable Protocol` in `core/types.py`:
 
 ```python
@@ -303,9 +326,9 @@ class Queryable(Protocol):
     def query(self, question: str) -> GenerationResult: ...
 ```
 
-`RAGPipeline` satisfies it. `AgentPipeline` will satisfy it. Test
-mocks satisfy it. The evaluator depends on this protocol, never on
-concrete pipeline classes.
+`RAGPipeline`, `QueryPipeline`, and `AgentPipeline` all satisfy it, as do
+test mocks. The evaluator depends on this protocol, never on concrete
+pipeline classes.
 
 `IndexArtifact` lives in `pipeline/indexing.py` (not in
 `core/types.py`) because it references `BaseVectorStore`,
@@ -342,13 +365,12 @@ ExperimentConfig
 │   ├── sparse_index: ComponentConfig  optional; e.g. {type: bm25}
 │   └── chunk_enricher: ComponentConfig  optional; e.g. {type: contextual}
 ├── QueryConfig                        (linear pipeline)
-│   ├── query_transform: QueryTransformConfig  type + fusion + params
+│   ├── query_transform: QueryTransformConfig  type + fusion + generator + params
 │   ├── retrieval: RetrievalConfig     top_k_retrieve, top_k_final, filters
 │   ├── reranking: ComponentConfig
-│   ├── generation: ComponentConfig
-│   ├── generation_llm: LLMConfig      provider, model, temperature
+│   ├── generator: LLMConfig           provider (= registry name), model, temperature, params
 │   └── prompt: PromptConfig           system_template, CoT, citation style
-├── AgentConfig                        (agent pipeline — future)
+├── AgentConfig                        (agent pipeline)
 │   ├── mode, llm, supervisor, memory
 │   ├── agents: list[AgentDefinitionConfig]
 │   └── tools: list[AgentDefinitionConfig]
@@ -367,9 +389,15 @@ ExperimentConfig
 | `RetrievalConfig` | `top_k_retrieve`, `top_k_final`, and `filters` are too important to bury in a generic params dict. They are the most commonly changed retrieval variables. |
 | `QueryTransformConfig` | `fusion` (how N>1 transformer outputs are combined) is a first-class experimental variable, parallel to `RetrievalConfig`. Burying it in `params` would hide it from config diffs and the comparison snapshot. |
 | `PromptConfig` | `system_template`, `use_chain_of_thought`, `citation_style` are each independently testable. |
-| `LLMConfig` | Reused by generator, query transformer, reranker, evaluator, supervisor. Stable shared structure. |
-| `ComponentConfig` | For stages where params are implementation-specific and vary widely (chunkers, embedders, vectorstores). Passed to the implementation as `config: dict`. |
+| `LLMConfig` | Reused by the answer generator (`query.generator`), query-transformer/enricher generators, the agent reasoning LLM, and the evaluator judge. `provider` doubles as the `generation` registry name; `params` carries provider extras (EdenAI `sub_provider`, Ollama `base_url`). One factory — `build_generator(LLMConfig)` — is the single construction path. |
+| `ComponentConfig` | For stages where params are implementation-specific and vary widely (chunkers, embedders, vectorstores). `type` is the registry name; `params` is validated into the component's nested `Params` model at construction. |
 | `EvalRunConfig` | `timeout`, `max_retries`, `max_wait`, `max_workers` for the RAGAS evaluator. Differs between local and cloud setups. |
+
+The former redundant `query.generation` (a `ComponentConfig` whose `type` named
+the provider) + `query.generation_llm` (an `LLMConfig`) pair is collapsed into a
+single `query.generator: LLMConfig`. `query.query_transform.generator` (and the
+contextual enricher's `params.generator`) describe their reasoning LLM the same
+way.
 
 ### Inheritance
 
@@ -379,6 +407,14 @@ uses `load_yaml_with_inheritance()`:
 - Nested dicts: merge recursively (override only specified keys)
 - Lists: full replacement (child provides the entire list)
 - Scalars: child replaces parent
+- **Implementation switch replaces params.** When a child changes a
+  component's implementation selector — `type` (for `ComponentConfig`) or
+  `provider` (for `LLMConfig`) — the whole subtree is *replaced*, not merged,
+  because a component's `params` are private to its implementation. This is
+  why switching `indexing.embedding.type` from `edenai` to `huggingface` (or a
+  generator's `provider` from `edenai` to `ollama`) does not bleed the parent's
+  `provider` / `sub_provider` onto the new implementation. Mirrors Hydra's
+  config-group selection.
 
 The `extends` path is relative to the child file's directory.
 Multi-level inheritance is supported (child → parent → grandparent).
@@ -418,8 +454,8 @@ construction (called in `scripts/run_experiment.py`). It checks:
 - `top_k_final <= top_k_retrieve` and both are positive
 - `pipeline_mode: "agent"` has agents or tools defined
 - `evaluation.mode` is one of `{full, retrieval_only, none}`
-- Modes other than `retrieval_only` require a generation type, prompt
-  type, and `generation_llm.model_name`
+- Modes other than `retrieval_only` require a prompt type and a
+  `query.generator` with both `provider` and `model_name`
 - `indexing.sources` is non-empty
 - `EvalRunConfig` values are positive (timeout, workers, wait)
 - `evaluator_llm.provider` is one of `{ollama, edenai, google, openai}` (or empty)
@@ -427,16 +463,28 @@ construction (called in `scripts/run_experiment.py`). It checks:
   (required for modes other than `none`)
 - Evaluation dataset file exists on disk
 
+**Component-owned param checks.** Retrieval-type-specific rules (a `bm25`
+retriever needs `indexing.sparse_index`; a `hybrid` retriever's child roster,
+nesting ban, fusion mode, rrf_k, and weights) are *not* hard-coded in
+`core/config.py`. `validate_config` resolves the retriever class from the
+registry and calls its `validate_params(params, *, registry, sparse_index_type,
+top_k_retrieve)` classmethod, folding the returned strings into the same error
+list. Component knowledge stays in the component; core only supplies the
+cross-config context.
+
 All errors are collected into a list and raised as a single
 `ConfigValidationError` with a readable bullet-list message. This
 catches typos and constraint violations before any heavyweight
-work (model loading, embedding) begins.
+work (model loading, embedding) begins. A separate, lighter guard
+(`tests/test_config.py::TestShippedConfigsValidate`) validates every shipped
+config's component `params` against each component's `Params` model.
 
 ---
 
 ## Component Interfaces
 
-All abstract base classes live in `src/components/base.py`.
+All abstract base classes (and `ComponentParams`) live in
+`src/uwf_rag/components/base.py`.
 
 | Interface | Registry Category | Primary Method | Signature |
 |-----------|------------------|----------------|-----------|
@@ -456,7 +504,7 @@ All abstract base classes live in `src/components/base.py`.
 | `BaseQueryTransformer` | `query_transform` | `transform(query, history)` | `str → list[TransformedQuery]` |
 | `BaseReranker` | `reranking` | `rerank(query, chunks, top_k)` | `→ list[RetrievedChunk]` |
 | `BaseGenerator` | `generation` | `generate(prompt, tools=None)` | `str\|list[Message] → GenerationResult` (optional `tools` → tool-calling) |
-| `BasePromptTemplate` | `prompts` | `format(query, chunks, history)` | `→ str\|list[dict]` |
+| `BasePromptTemplate` | `prompts` | `format(query, chunks, history)` | `→ str\|list[Message]` |
 | `BaseTool` | `tool` | `execute(query)` | `str → ToolResult` |
 | `BaseMemory` | `memory` | `add_turn()` / `get_history()` / `clear()` | Turn management |
 
@@ -465,7 +513,19 @@ All abstract base classes live in `src/components/base.py`.
 **BaseGenerator takes a formatted prompt, not raw chunks.** The
 pipeline calls `PromptTemplate.format()` first. The generator is a
 pure LLM wrapper that knows nothing about retrieval context. This
-is what makes prompt config changes actually affect output.
+is what makes prompt config changes actually affect output. Every
+generator is built through one factory, `build_generator(LLMConfig)`
+in `components/generators.py`, used by the linear pipeline, the agent's
+reasoning LLM, and the query transformers / contextual enricher — there
+is a single construction path, not a per-call-site idiom.
+
+**Components validate their own params.** Each concrete component declares a
+nested `class Params(ComponentParams)` (a Pydantic model) and, in `__init__`,
+runs `self.p = self.Params.model_validate(self.config)` once. Defaults and
+field constraints (`Field(ge=1)`, etc.) live only in `Params`. The registry
+still constructs components as `cls(config=params_dict)` — the dict→typed step
+happens inside the component, so resolve-by-name stays uniform while reads
+become typed (`self.p.chunk_size`, not `self.config.get("chunk_size", 512)`).
 
 **Tool calling is an additive, optional capability.** `generate` grew an
 optional `tools: list[ToolSpec] | None` parameter; when omitted (the linear
@@ -480,16 +540,17 @@ shape translation lives inside each generator and the pure helpers in
 `ChatEdenAI.bind_tools`; Gemini keys tool results by function name; Ollama/
 Gemini omit ids, which the loop synthesizes).
 
-**BaseRetriever holds injected dependencies.** Dense retrievers
-receive vectorstore + embedder via `set_vectorstore()` /
-`set_embedder()`. Lexical retrievers receive a sparse index via
-`set_sparse_index()` (the BM25 index lives in
-`IndexArtifact.auxiliary_stores["bm25"]`). Hybrid retrievers compose
-child retrievers and inject each child's sources independently.
-Default filters from config are set via `set_default_filters()` and
-the hybrid retriever pushes them down to every child so per-branch
-over-retrieve + filter semantics stay consistent with the
-single-retriever paths.
+**BaseRetriever receives its dependencies through the constructor.**
+`DenseRetriever(vectorstore=…, embedder=…)`, `BM25Retriever(sparse_index=…)`
+(the BM25 index lives in `IndexArtifact.auxiliary_stores["bm25"]`), and
+`HybridRetriever(children=…)` are each built fully-formed by
+`QueryPipeline._build_retriever` — there is no post-construction `set_*`
+wiring, so a retriever is never in a half-built, unusable state. Default
+filters (`query.retrieval.filters`) are constructor-injected too and the
+hybrid passes them to every child at retrieve time, keeping per-branch
+over-retrieve + filter semantics consistent with the single-retriever paths.
+Retrieval-type-specific config validation lives on each retriever as a
+`validate_params` classmethod (see Validation), not in core.
 
 **HybridRetriever composes children; fusion lives in `core.fusion`.**
 The hybrid retriever holds an ordered list of named child retrievers
@@ -617,18 +678,23 @@ not bugs.
 Linear RAG: transform → retrieve → rerank → format → generate.
 
 `from_config(config, index_artifact, retrieval_only)` builds each
-component from the registry. Wiring is per-retriever-type:
+component from the registry. `_build_retriever` constructs the retriever with
+its sources injected, per-retriever-type:
 
-- **`dense`** retrievers receive `index_artifact.vectorstore` and
-  `index_artifact.embedder`.
-- **`bm25`** retrievers receive `index_artifact.auxiliary_stores["bm25"]`
-  via `set_sparse_index()`. A missing sparse index here raises at
+- **`dense`** retrievers are built with `index_artifact.vectorstore` and
+  `index_artifact.embedder` as constructor args.
+- **`bm25`** retrievers are built with `index_artifact.auxiliary_stores["bm25"]`
+  as a constructor arg. A missing sparse index raises at
   pipeline-construction time — caught earlier by `validate_config`
   for typo'd configs, but the runtime guard is the source of truth.
 - **`hybrid`** retrievers construct each declared sub-retriever from
   `params["retrievers"]`, recursively apply the dispatch above to
   each child, then assemble a `HybridRetriever` with the fusion
-  configuration. Hybrid-level filters propagate to every child.
+  configuration. Hybrid-level filters are injected into every child.
+
+The reasoning LLM for an LLM-backed query transformer is built here via
+`build_generator(query.query_transform.generator)` and injected into the
+transformer; the answer generator is `build_generator(query.generator)`.
 
 `run(query, history)` executes the pipeline. All top_k values and
 filters come from config — `run()` takes no override parameters. The
@@ -645,8 +711,8 @@ comparable) remains the hybrid retriever's job via `core.fusion`.
 Single-agent ReAct (Phase D1). One reasoning LLM drives a
 reason→act(tool)→observe loop via **native tool calling**:
 `from_config(config, index_artifact)` builds the reasoning generator
-(from `agent.llm`, via the same `generator_type` idiom the query
-transformers use), the tool roster (each `agent.tools` entry →
+(`build_generator(agent.llm)` — the same factory the linear pipeline and
+query transformers use), the tool roster (each `agent.tools` entry →
 `registry.get("tool", …).from_config(entry, config, index_artifact)`),
 and the loop budget (`agent.max_iterations`, `top_k_final`).
 
@@ -725,7 +791,7 @@ where different runs produce different metric sets.
 ```
 results/<name>/
   summary.json    Aggregated metrics + config snapshot + git SHA/dirty
-  config.yaml     Full resolved config (dataclasses.asdict → YAML)
+  config.yaml     Full resolved config (config.model_dump() → YAML)
   run_1.jsonl     Per-sample ScoredSample data
   run_2.jsonl
   ...
@@ -791,7 +857,7 @@ fresh `ComponentRegistry()` instance.
 ```
 scripts/run_experiment.py
     │
-    ├── import components          (triggers registration)
+    ├── import uwf_rag.components  (triggers registration)
     ├── ExperimentConfig.from_yaml (loads + resolves inheritance)
     ├── validate_config            (checks types, constraints, files)
     ├── get_git_sha / get_git_dirty (captures repo state)
@@ -801,7 +867,7 @@ scripts/run_experiment.py
     │   │   ├── check fingerprint cache → load or build
     │   │   └── return IndexArtifact
     │   └── QueryPipeline.from_config
-    │       └── wire retriever ← vectorstore + embedder
+    │       └── build retriever(vectorstore + embedder) + build_generator(...)
     │
     ├── Evaluator.evaluate(rag)
     │   ├── build evaluator embedder from config (via registry)
@@ -818,13 +884,15 @@ scripts/run_experiment.py
 
 ## Adding a New Component
 
-1. Write the class in the appropriate `src/components/*.py` file
+1. Write the class in the appropriate `src/uwf_rag/components/*.py` file
 2. Inherit from the base class, implement required methods
-3. Decorate with `@registry.register("category", "name")`
-4. Ensure the file is imported in `src/components/__init__.py`
-5. Add an inventory assertion in `tests/test_registry.py`
-6. Reference `type: "name"` in a YAML experiment config
-7. Run `make qa` to verify
+3. Declare a nested `class Params(ComponentParams)` for its config and read
+   `self.p` (validate it in `__init__` with `self.Params.model_validate(self.config)`)
+4. Decorate with `@registry.register("category", "name")`
+5. Ensure the file is imported in `src/uwf_rag/components/__init__.py`
+6. Add an inventory assertion in `tests/test_registry.py`
+7. Reference `type: "name"` in a YAML experiment config
+8. Run `make qa` to verify
 
 No pipeline code changes. No config system changes. No evaluation
 changes.

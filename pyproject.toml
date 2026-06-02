@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "pydantic>=2,<3",                # Config models + per-component Params validation
     "pyyaml>=6.0",
     "faiss-cpu>=1.7",
     "numpy>=1.24",

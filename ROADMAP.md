@@ -140,7 +140,7 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 - Experiment result saving (summary.json + config.yaml + JSONL)
 - Cross-experiment comparison with config diffing
 - CI pipeline (ruff + mypy + pytest), pre-commit, Makefile
-- Agent pipeline stub (raises `NotImplementedError`)
+- Single-agent ReAct pipeline (Phase D1) via native tool calling
 - Git SHA tracking for reproducibility
 - Config structure: `base.yaml` + `smoke.yaml` + `experiments/`
   organized by what each isolates
@@ -435,7 +435,7 @@ are not yet implemented.
 | Retrieval depth | `query.retrieval.top_k_retrieve` | done |
 | Final chunk count | `query.retrieval.top_k_final` | done |
 | Reranker | `query.reranking.type` | none, cross_encoder done |
-| Generator / LLM | `query.generation`, `query.generation_llm` | done (4 providers) |
+| Generator / LLM | `query.generator` (LLMConfig) | done (4 providers) |
 | Prompt strategy | `query.prompt` | done (CoT, citation, context format) |
 
 ### 6.3 Agent Variables (Phase D)
@@ -514,6 +514,7 @@ title-prepending).
 ### Current
 
 ```
+pydantic                  Config models + per-component Params validation
 pyyaml                    Config loading
 faiss-cpu                 Vector store
 numpy                     Array operations
