@@ -10,7 +10,7 @@ from typing import Any
 
 from sentence_transformers import CrossEncoder
 
-from uwf_rag.components.base import BaseReranker
+from uwf_rag.components.base import BaseReranker, ComponentParams
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import RetrievedChunk
 
@@ -42,16 +42,18 @@ class CrossEncoderReranker(BaseReranker):
         batch_size: Pairs per forward pass (default: 32)
     """
 
+    class Params(ComponentParams):
+        model_name: str = "Alibaba-NLP/gte-reranker-modernbert-base"
+        device: str | None = None
+        batch_size: int = 32
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        model_name = self.config.get(
-            "model_name", "Alibaba-NLP/gte-reranker-modernbert-base"
-        )
-        device = self.config.get("device")
-        self._batch_size: int = self.config.get("batch_size", 32)
+        self.p = self.Params.model_validate(self.config)
+        self._batch_size = self.p.batch_size
 
-        logger.info("Loading cross-encoder model: %s", model_name)
-        self._model = CrossEncoder(model_name, device=device)
+        logger.info("Loading cross-encoder model: %s", self.p.model_name)
+        self._model = CrossEncoder(self.p.model_name, device=self.p.device)
 
     def rerank(
         self,

@@ -14,6 +14,7 @@ from uwf_rag.components.base import (
     BaseMemory,
     BaseQueryTransformer,
     BaseReranker,
+    ComponentParams,
 )
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import Chunk, Document, RetrievedChunk, TransformedQuery
@@ -74,9 +75,13 @@ class NoMemory(BaseMemory):
 class BufferWindowMemory(BaseMemory):
     """Keeps the last N turns of conversation history."""
 
+    class Params(ComponentParams):
+        window_size: int = 5
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._window_size = self.config.get("window_size", 5)
+        self.p = self.Params.model_validate(self.config)
+        self._window_size = self.p.window_size
         self._history: list[dict[str, str]] = []
 
     def add_turn(self, role: str, content: str) -> None:

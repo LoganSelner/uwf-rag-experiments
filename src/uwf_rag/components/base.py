@@ -13,6 +13,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
 from uwf_rag.core.fusion import max_score_dedup, reciprocal_rank_fusion
 from uwf_rag.core.types import (
     Chunk,
@@ -25,6 +27,20 @@ from uwf_rag.core.types import (
     ToolSpec,
     TransformedQuery,
 )
+
+
+class ComponentParams(BaseModel):
+    """Base for a component's typed parameter model.
+
+    A component declares a nested ``class Params(ComponentParams)`` with typed
+    fields + defaults; its ``__init__`` validates the raw ``config`` dict into
+    ``self.p = self.Params.model_validate(self.config)``. This is the single
+    home for a component's defaults and param validation, replacing scattered
+    ``self.config.get(key, default)`` reads. Unknown keys are rejected so a
+    typo'd YAML param fails loudly rather than being silently ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class BaseIngestor(ABC):

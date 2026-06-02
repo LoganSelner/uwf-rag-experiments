@@ -15,7 +15,7 @@ from typing import Any
 import faiss
 import numpy as np
 
-from uwf_rag.components.base import BaseVectorStore
+from uwf_rag.components.base import BaseVectorStore, ComponentParams
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import Chunk, EmbeddedChunk, RetrievedChunk
 
@@ -34,9 +34,13 @@ class FAISSVectorStore(BaseVectorStore):
         metric: Distance metric — "cosine" (default) or "l2"
     """
 
+    class Params(ComponentParams):
+        metric: str = "cosine"
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._metric: str = self.config.get("metric", "cosine")
+        self.p = self.Params.model_validate(self.config)
+        self._metric = self.p.metric
         _valid_metrics = {"cosine", "l2"}
         if self._metric not in _valid_metrics:
             raise ValueError(
@@ -181,15 +185,20 @@ class ChromaVectorStore(BaseVectorStore):
 
     _VALID_METRICS: typing.ClassVar[set[str]] = {"cosine", "l2", "ip"}
 
+    class Params(ComponentParams):
+        metric: str = "cosine"
+        collection_name: str = "chunks"
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._metric: str = self.config.get("metric", "cosine")
+        self.p = self.Params.model_validate(self.config)
+        self._metric = self.p.metric
         if self._metric not in self._VALID_METRICS:
             raise ValueError(
                 f"ChromaVectorStore metric must be one of "
                 f"{self._VALID_METRICS}, got '{self._metric}'"
             )
-        self._collection_name: str = self.config.get("collection_name", "chunks")
+        self._collection_name = self.p.collection_name
 
         import chromadb
 

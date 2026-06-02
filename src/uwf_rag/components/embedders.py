@@ -19,7 +19,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from uwf_rag.components.base import BaseEmbedder
+from uwf_rag.components.base import BaseEmbedder, ComponentParams
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import Chunk, EmbeddedChunk
 
@@ -46,12 +46,17 @@ class HuggingFaceEmbedder(BaseEmbedder):
         batch_size: Batch size for encoding (default: 32)
     """
 
+    class Params(ComponentParams):
+        model_name: str = "BAAI/bge-m3"
+        normalize: bool = True
+        batch_size: int = 32
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        model_name = self.config.get("model_name", "BAAI/bge-m3")
-        self._normalize: bool = self.config.get("normalize", True)
-        self._batch_size: int = self.config.get("batch_size", 32)
-        self._model = SentenceTransformer(model_name)
+        self.p = self.Params.model_validate(self.config)
+        self._normalize = self.p.normalize
+        self._batch_size = self.p.batch_size
+        self._model = SentenceTransformer(self.p.model_name)
 
     def embed_chunks(self, chunks: list[Chunk]) -> list[EmbeddedChunk]:
         texts = [c.text_for_index for c in chunks]
@@ -90,16 +95,19 @@ class GoogleEmbedder(BaseEmbedder):
         task_type_query: Task type for embed_query (default: "RETRIEVAL_QUERY").
     """
 
+    class Params(ComponentParams):
+        model_name: str = "gemini-embedding-001"
+        batch_size: int = 100
+        task_type_document: str = "RETRIEVAL_DOCUMENT"
+        task_type_query: str = "RETRIEVAL_QUERY"
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._model_name: str = self.config.get("model_name", "gemini-embedding-001")
-        self._batch_size: int = self.config.get("batch_size", 100)
-        self._task_type_document: str = self.config.get(
-            "task_type_document", "RETRIEVAL_DOCUMENT"
-        )
-        self._task_type_query: str = self.config.get(
-            "task_type_query", "RETRIEVAL_QUERY"
-        )
+        self.p = self.Params.model_validate(self.config)
+        self._model_name = self.p.model_name
+        self._batch_size = self.p.batch_size
+        self._task_type_document = self.p.task_type_document
+        self._task_type_query = self.p.task_type_query
 
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get(
             "GEMINI_API_KEY", ""
@@ -156,10 +164,15 @@ class OpenAIEmbedder(BaseEmbedder):
         batch_size: Texts per API call (default: 100).
     """
 
+    class Params(ComponentParams):
+        model_name: str = "text-embedding-ada-002"
+        batch_size: int = 100
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._model_name: str = self.config.get("model_name", "text-embedding-ada-002")
-        self._batch_size: int = self.config.get("batch_size", 100)
+        self.p = self.Params.model_validate(self.config)
+        self._model_name = self.p.model_name
+        self._batch_size = self.p.batch_size
 
         api_key = os.environ.get("OPENAI_API_KEY", "")
         if not api_key:
@@ -220,17 +233,23 @@ class EdenAIEmbedder(BaseEmbedder):
 
     _ENDPOINT = "https://api.edenai.run/v2/text/embeddings"
 
+    class Params(ComponentParams):
+        provider: str = ""
+        model_name: str = "text-embedding-ada-002"
+        batch_size: int = 100
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._provider: str = self.config.get("provider", "")
+        self.p = self.Params.model_validate(self.config)
+        self._provider = self.p.provider
         if not self._provider:
             raise ValueError(
                 "EdenAIEmbedder requires 'provider' in config "
                 "(e.g. 'openai'). "
                 "Set it via embedding.params.provider in YAML."
             )
-        self._model_name: str = self.config.get("model_name", "text-embedding-ada-002")
-        self._batch_size: int = self.config.get("batch_size", 100)
+        self._model_name = self.p.model_name
+        self._batch_size = self.p.batch_size
 
         self._api_key = os.environ.get("EDENAI_API_KEY", "")
         if not self._api_key:

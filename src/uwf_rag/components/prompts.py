@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from uwf_rag.components.base import BasePromptTemplate
+from pydantic import Field
+
+from uwf_rag.components.base import BasePromptTemplate, ComponentParams
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import RetrievedChunk
 
@@ -45,13 +47,22 @@ class ChatPromptTemplate(BasePromptTemplate):
         max_context_tokens: Optional limit (not enforced here — future).
     """
 
+    class Params(ComponentParams):
+        system_template: str = ""
+        context_format: str = "numbered"
+        use_chain_of_thought: bool = False
+        citation_style: str = "none"
+        few_shot_examples: list[dict[str, str]] = Field(default_factory=list)
+        max_context_tokens: int | None = None
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._system_template: str = self.config.get("system_template", "")
-        self._context_format: str = self.config.get("context_format", "numbered")
-        self._use_cot: bool = self.config.get("use_chain_of_thought", False)
-        self._citation_style: str = self.config.get("citation_style", "none")
-        self._few_shot: list[dict[str, str]] = self.config.get("few_shot_examples", [])
+        self.p = self.Params.model_validate(self.config)
+        self._system_template = self.p.system_template
+        self._context_format = self.p.context_format
+        self._use_cot = self.p.use_chain_of_thought
+        self._citation_style = self.p.citation_style
+        self._few_shot = self.p.few_shot_examples
 
     def format(
         self,

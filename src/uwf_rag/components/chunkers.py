@@ -12,8 +12,9 @@ import re
 from typing import Any
 
 import numpy as np
+from pydantic import Field
 
-from uwf_rag.components.base import BaseChunker
+from uwf_rag.components.base import BaseChunker, ComponentParams
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import Chunk, Document
 
@@ -43,17 +44,22 @@ class LangChainRecursiveChunker(BaseChunker):
         separators: List of separator strings (default: LangChain's default).
     """
 
+    class Params(ComponentParams):
+        chunk_size: int = 512
+        chunk_overlap: int = 50
+        separators: list[str] | None = None
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
+        self.p = self.Params.model_validate(self.config)
         from langchain_text_splitters import RecursiveCharacterTextSplitter
 
         kwargs: dict[str, Any] = {
-            "chunk_size": self.config.get("chunk_size", 512),
-            "chunk_overlap": self.config.get("chunk_overlap", 50),
+            "chunk_size": self.p.chunk_size,
+            "chunk_overlap": self.p.chunk_overlap,
         }
-        separators = self.config.get("separators")
-        if separators is not None:
-            kwargs["separators"] = separators
+        if self.p.separators is not None:
+            kwargs["separators"] = self.p.separators
 
         self._splitter = RecursiveCharacterTextSplitter(
             keep_separator=False,
@@ -87,13 +93,19 @@ class CustomRecursiveChunker(BaseChunker):
     finer-grained splits when chunks exceed the target size.
     """
 
+    class Params(ComponentParams):
+        chunk_size: int = 512
+        chunk_overlap: int = 50
+        separators: list[str] = Field(
+            default_factory=lambda: ["\n\n", "\n", ". ", " ", ""]
+        )
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._chunk_size: int = self.config.get("chunk_size", 512)
-        self._chunk_overlap: int = self.config.get("chunk_overlap", 50)
-        self._separators: list[str] = self.config.get(
-            "separators", ["\n\n", "\n", ". ", " ", ""]
-        )
+        self.p = self.Params.model_validate(self.config)
+        self._chunk_size = self.p.chunk_size
+        self._chunk_overlap = self.p.chunk_overlap
+        self._separators = self.p.separators
 
     def chunk(self, documents: list[Document]) -> list[Chunk]:
         chunks: list[Chunk] = []
@@ -232,6 +244,15 @@ class SemanticChunker(BaseChunker):
 
     _VALID_THRESHOLD_TYPES = frozenset(_DEFAULT_THRESHOLD_AMOUNTS)
 
+    class Params(ComponentParams):
+        embedding_model: str = "BAAI/bge-small-en-v1.5"
+        breakpoint_threshold_type: str = "percentile"
+        # ``None`` → the per-type default in _DEFAULT_THRESHOLD_AMOUNTS.
+        breakpoint_threshold_amount: float | None = None
+        buffer_size: int = 1
+        sentence_split_regex: str = _DEFAULT_SENTENCE_REGEX
+        min_chunk_size: int | None = None
+
     def __init__(
         self,
         config: dict[str, Any] | None = None,
@@ -239,30 +260,23 @@ class SemanticChunker(BaseChunker):
         embed_fn: Callable[[list[str]], list[list[float]]] | None = None,
     ) -> None:
         super().__init__(config)
+        self.p = self.Params.model_validate(self.config)
 
-        self._threshold_type: str = self.config.get(
-            "breakpoint_threshold_type", "percentile"
-        )
+        self._threshold_type: str = self.p.breakpoint_threshold_type
         if self._threshold_type not in self._VALID_THRESHOLD_TYPES:
             raise ValueError(
                 f"SemanticChunker breakpoint_threshold_type must be one of "
                 f"{sorted(self._VALID_THRESHOLD_TYPES)}, got "
                 f"'{self._threshold_type}'"
             )
-        self._threshold_amount: float = float(
-            self.config.get(
-                "breakpoint_threshold_amount",
-                _DEFAULT_THRESHOLD_AMOUNTS[self._threshold_type],
-            )
+        self._threshold_amount: float = (
+            self.p.breakpoint_threshold_amount
+            if self.p.breakpoint_threshold_amount is not None
+            else _DEFAULT_THRESHOLD_AMOUNTS[self._threshold_type]
         )
-        self._buffer_size: int = int(self.config.get("buffer_size", 1))
-        self._sentence_regex: str = self.config.get(
-            "sentence_split_regex", _DEFAULT_SENTENCE_REGEX
-        )
-        min_chunk_size = self.config.get("min_chunk_size")
-        self._min_chunk_size: int | None = (
-            int(min_chunk_size) if min_chunk_size is not None else None
-        )
+        self._buffer_size: int = self.p.buffer_size
+        self._sentence_regex: str = self.p.sentence_split_regex
+        self._min_chunk_size: int | None = self.p.min_chunk_size
 
         # Injectable embedding seam (tests pass a deterministic fn). Built
         # lazily on first chunk() so constructing the chunker on the
@@ -278,8 +292,9 @@ class SemanticChunker(BaseChunker):
     def _build_embed_fn(self) -> Callable[[list[str]], list[list[float]]]:
         from uwf_rag.components.embedders import HuggingFaceEmbedder
 
-        model_name = self.config.get("embedding_model", "BAAI/bge-small-en-v1.5")
-        embedder = HuggingFaceEmbedder({"model_name": model_name, "normalize": True})
+        embedder = HuggingFaceEmbedder(
+            {"model_name": self.p.embedding_model, "normalize": True}
+        )
 
         def embed(texts: list[str]) -> list[list[float]]:
             tmp = [
@@ -378,12 +393,14 @@ class SemanticChunker(BaseChunker):
 
     def _merge_small(self, groups: list[str]) -> list[str]:
         """Merge any chunk shorter than ``min_chunk_size`` into the next."""
-        assert self._min_chunk_size is not None
+        min_size = self._min_chunk_size
+        if min_size is None:  # only called when set, but keep the type honest
+            return groups
         merged: list[str] = []
         carry = ""
         for g in groups:
             candidate = f"{carry} {g}".strip() if carry else g
-            if len(candidate) < self._min_chunk_size:
+            if len(candidate) < min_size:
                 carry = candidate
             else:
                 merged.append(candidate)

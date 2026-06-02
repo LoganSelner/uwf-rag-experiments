@@ -14,7 +14,7 @@ from typing import Any
 
 import bm25s
 
-from uwf_rag.components.base import BaseLexicalIndex
+from uwf_rag.components.base import BaseLexicalIndex, ComponentParams
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import Chunk, RetrievedChunk
 
@@ -50,23 +50,32 @@ class BM25LexicalIndex(BaseLexicalIndex):
             (default 4). Floor of 50 matches the FAISS pattern.
     """
 
+    class Params(ComponentParams):
+        k1: float = 1.5
+        b: float = 0.75
+        delta: float = 0.5
+        method: str = "lucene"
+        stopwords: str | list[str] | None = "en"
+        stemmer: str | None = "english"
+        filter_overretrieve: int = 4
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
+        self.p = self.Params.model_validate(self.config)
 
-        method = self.config.get("method", "lucene")
-        if method not in _VALID_BM25_METHODS:
+        if self.p.method not in _VALID_BM25_METHODS:
             raise ValueError(
                 f"BM25LexicalIndex method must be one of "
-                f"{sorted(_VALID_BM25_METHODS)}, got '{method}'"
+                f"{sorted(_VALID_BM25_METHODS)}, got '{self.p.method}'"
             )
 
-        self._k1: float = float(self.config.get("k1", 1.5))
-        self._b: float = float(self.config.get("b", 0.75))
-        self._delta: float = float(self.config.get("delta", 0.5))
-        self._method: str = method
-        self._stopwords: str | list[str] | None = self.config.get("stopwords", "en")
-        self._stemmer_lang: str | None = self.config.get("stemmer", "english")
-        self._filter_overretrieve: int = int(self.config.get("filter_overretrieve", 4))
+        self._k1 = self.p.k1
+        self._b = self.p.b
+        self._delta = self.p.delta
+        self._method = self.p.method
+        self._stopwords = self.p.stopwords
+        self._stemmer_lang = self.p.stemmer
+        self._filter_overretrieve = self.p.filter_overretrieve
 
         self._stemmer = self._build_stemmer(self._stemmer_lang)
         self._retriever: bm25s.BM25 | None = None
