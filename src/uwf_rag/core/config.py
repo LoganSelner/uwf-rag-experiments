@@ -18,6 +18,7 @@ per-section construction in tests stay intact.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -419,7 +420,11 @@ class ConfigValidationError(Exception):
         )
 
 
-_SUPPORTED_EVAL_LLM_PROVIDERS: frozenset[str] = frozenset(
+# Single source of truth for which providers the RAGAS evaluator judge LLM
+# supports. Shared with ``evaluation.evaluator`` (whose per-provider builder
+# dispatch must cover exactly this set — guarded by a test) so the allowed list
+# and the implemented builders can't drift.
+SUPPORTED_EVALUATOR_LLM_PROVIDERS: frozenset[str] = frozenset(
     {"ollama", "edenai", "google", "openai"}
 )
 
@@ -428,6 +433,28 @@ _SUPPORTED_EVAL_MODES: frozenset[str] = frozenset({"full", "retrieval_only", "no
 _SUPPORTED_QT_FUSION_MODES: frozenset[str] = frozenset({"rrf", "max"})
 
 _SUPPORTED_AGENT_MODES: frozenset[str] = frozenset({"single", "multi"})
+
+
+@dataclass
+class ValidateContext:
+    """Cross-config context a component needs to validate its own params.
+
+    Symmetric with :class:`~uwf_rag.components.build.BuildContext`: the registry
+    (for resolving referenced sub-components) plus the config-derived values a
+    component can't see on its own (the configured sparse-index type, the
+    stage-level retrieve budget). Replaces the ad-hoc ``validate_params(params,
+    *, registry, sparse_index_type, top_k_retrieve)`` keyword soup with one
+    object that can grow without re-threading every call site.
+
+    Lives in ``core`` (not alongside ``BuildContext`` in ``components``) because
+    ``core.validate_config`` constructs it and ``core`` must not import
+    ``components``; the component ``validate_params`` classmethods import it from
+    here (``components`` → ``core`` is the allowed direction).
+    """
+
+    registry: RegistryLike
+    sparse_index_type: str = ""
+    top_k_retrieve: int = 0
 
 
 def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
@@ -485,10 +512,10 @@ def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
     scoring_enabled = config.evaluation.mode != "none"
 
     eval_llm = config.evaluation.evaluator_llm
-    if eval_llm.provider and eval_llm.provider not in _SUPPORTED_EVAL_LLM_PROVIDERS:
+    if eval_llm.provider and eval_llm.provider not in SUPPORTED_EVALUATOR_LLM_PROVIDERS:
         errors.append(
             f"evaluation.evaluator_llm.provider: '{eval_llm.provider}' is not "
-            f"supported. Supported: {sorted(_SUPPORTED_EVAL_LLM_PROVIDERS)}"
+            f"supported. Supported: {sorted(SUPPORTED_EVALUATOR_LLM_PROVIDERS)}"
         )
 
     eval_emb = config.evaluation.evaluator_embedding
@@ -776,14 +803,12 @@ def _validate_retrieval_dependencies(
     if not registry.is_registered("retrieval", retrieval.type):
         return  # an unregistered type is already flagged by _check_registered
     retriever_cls = registry.get("retrieval", retrieval.type)
-    errors.extend(
-        retriever_cls.validate_params(
-            retrieval.params or {},
-            registry=registry,
-            sparse_index_type=config.indexing.sparse_index.type,
-            top_k_retrieve=retrieval.top_k_retrieve,
-        )
+    vctx = ValidateContext(
+        registry=registry,
+        sparse_index_type=config.indexing.sparse_index.type,
+        top_k_retrieve=retrieval.top_k_retrieve,
     )
+    errors.extend(retriever_cls.validate_params(retrieval.params or {}, vctx))
 
 
 def _validate_qt_branch_references(

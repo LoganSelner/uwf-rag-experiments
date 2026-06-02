@@ -15,7 +15,11 @@ import math
 import statistics
 from typing import Any
 
-from uwf_rag.core.config import EvaluationConfig, LLMConfig
+from uwf_rag.core.config import (
+    SUPPORTED_EVALUATOR_LLM_PROVIDERS,
+    EvaluationConfig,
+    LLMConfig,
+)
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
 
@@ -377,12 +381,7 @@ class Evaluator:
         from ragas.llms.base import LangchainLLMWrapper
 
         llm_config = self._config.evaluator_llm
-        builders = {
-            "ollama": self._build_ollama_judge,
-            "edenai": self._build_edenai_judge,
-            "google": self._build_google_judge,
-            "openai": self._build_openai_judge,
-        }
+        builders = self._judge_builders()
         builder = builders.get(llm_config.provider)
         if builder is None:
             raise ValueError(
@@ -390,6 +389,31 @@ class Evaluator:
                 f"Supported: {sorted(builders)}."
             )
         return LangchainLLMWrapper(builder(llm_config))
+
+    @classmethod
+    def _judge_builders(cls) -> dict[str, Any]:
+        """Per-provider judge-LLM builders.
+
+        Keyed by provider name; the key set is asserted to equal
+        ``SUPPORTED_EVALUATOR_LLM_PROVIDERS`` (the set ``validate_config``
+        checks against), so the validated allow-list and the implemented
+        builders can't drift. These are LangChain chat models because RAGAS
+        requires that shape — a separate construction path from the pipeline's
+        ``build_generator`` (SDK clients) by necessity.
+        """
+        builders: dict[str, Any] = {
+            "ollama": cls._build_ollama_judge,
+            "edenai": cls._build_edenai_judge,
+            "google": cls._build_google_judge,
+            "openai": cls._build_openai_judge,
+        }
+        if set(builders) != SUPPORTED_EVALUATOR_LLM_PROVIDERS:
+            raise RuntimeError(
+                "Evaluator judge builders "
+                f"{sorted(builders)} drifted from the validated provider set "
+                f"{sorted(SUPPORTED_EVALUATOR_LLM_PROVIDERS)}."
+            )
+        return builders
 
     @staticmethod
     def _build_ollama_judge(llm_config: LLMConfig) -> Any:

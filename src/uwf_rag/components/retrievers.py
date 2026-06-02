@@ -23,6 +23,7 @@ from uwf_rag.core.types import RetrievedChunk, TransformedQuery
 
 if TYPE_CHECKING:
     from uwf_rag.components.build import BuildContext
+    from uwf_rag.core.config import ValidateContext
 
 logger = logging.getLogger(__name__)
 
@@ -135,12 +136,9 @@ class BM25Retriever(BaseRetriever):
     def validate_params(
         cls,
         params: dict[str, Any],
-        *,
-        registry: Any,
-        sparse_index_type: str,
-        top_k_retrieve: int,
+        ctx: ValidateContext,
     ) -> list[str]:
-        if not sparse_index_type:
+        if not ctx.sparse_index_type:
             return [
                 "query.retrieval.type is 'bm25' but indexing.sparse_index "
                 "is not configured"
@@ -240,10 +238,7 @@ class HybridRetriever(BaseRetriever):
     def validate_params(
         cls,
         params: dict[str, Any],
-        *,
-        registry: Any,
-        sparse_index_type: str,
-        top_k_retrieve: int,
+        ctx: ValidateContext,
     ) -> list[str]:
         """Validate a hybrid's raw ``params`` (child roster + fusion settings).
 
@@ -251,9 +246,12 @@ class HybridRetriever(BaseRetriever):
         ``validate_config``: the child roster shape, no nested hybrid, unique
         names, per-child positive top_k, the bm25-child-needs-sparse-index
         rule, fusion mode + rrf_k, and the weighted-fusion weights. The
-        cross-config values (``sparse_index_type``, ``top_k_retrieve``) and the
-        ``registry`` are supplied by the caller.
+        cross-config context (registry, configured sparse-index type, retrieve
+        budget) arrives via ``ctx``.
         """
+        registry = ctx.registry
+        sparse_index_type = ctx.sparse_index_type
+        top_k_retrieve = ctx.top_k_retrieve
         errors: list[str] = []
         params = params or {}
         children = params.get("retrievers")

@@ -30,7 +30,7 @@ from uwf_rag.core.types import (
 
 if TYPE_CHECKING:
     from uwf_rag.components.build import BuildContext
-    from uwf_rag.core.config import AgentDefinitionConfig
+    from uwf_rag.core.config import AgentDefinitionConfig, ValidateContext
 
 
 class ComponentParams(BaseModel):
@@ -241,19 +241,16 @@ class BaseRetriever(ABC):
     def validate_params(
         cls,
         params: dict[str, Any],
-        *,
-        registry: Any,
-        sparse_index_type: str,
-        top_k_retrieve: int,
+        ctx: ValidateContext,
     ) -> list[str]:
         """Return config-validation error strings for this retriever's params.
 
         Default: no retriever-specific checks. Overridden by retrievers whose
         params have structure to validate (BM25 needs a sparse index; hybrid
         has a child roster + fusion settings). Keeps that knowledge in the
-        component rather than in ``core.validate_config``. ``registry`` and the
-        cross-config values (``sparse_index_type``, ``top_k_retrieve``) are
-        supplied by the caller so the component never reaches into config.
+        component rather than in ``core.validate_config``. The cross-config
+        context (registry, configured sparse-index type, retrieve budget)
+        arrives via ``ctx`` so the component never reaches into global config.
         """
         return []
 

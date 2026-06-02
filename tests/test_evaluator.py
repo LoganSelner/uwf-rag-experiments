@@ -8,9 +8,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from uwf_rag.core.config import EvaluationConfig
+from uwf_rag.core.config import SUPPORTED_EVALUATOR_LLM_PROVIDERS, EvaluationConfig
 from uwf_rag.core.types import EvalSample, GenerationResult
 from uwf_rag.evaluation.evaluator import Evaluator, _load_dataset
+
+
+class TestJudgeProviderSourceOfTruth:
+    def test_builders_match_validated_provider_set(self) -> None:
+        # The validator's allow-list and the evaluator's per-provider builders
+        # must stay in lockstep (the builder itself raises on drift).
+        assert set(Evaluator._judge_builders()) == SUPPORTED_EVALUATOR_LLM_PROVIDERS
+
 
 # -----------------------------------------------------------------------
 # _load_dataset
