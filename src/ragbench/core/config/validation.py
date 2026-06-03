@@ -85,10 +85,23 @@ def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
     scoring_enabled = config.evaluation.mode != "none"
 
     eval_llm = config.evaluation.evaluator_llm
-    if eval_llm.provider and eval_llm.provider not in SUPPORTED_EVALUATOR_LLM_PROVIDERS:
+    if eval_llm.provider:
+        if eval_llm.provider not in SUPPORTED_EVALUATOR_LLM_PROVIDERS:
+            errors.append(
+                f"evaluation.evaluator_llm.provider: '{eval_llm.provider}' is not "
+                f"supported. Supported: {sorted(SUPPORTED_EVALUATOR_LLM_PROVIDERS)}"
+            )
+        elif scoring_enabled and not eval_llm.model_name:
+            errors.append(
+                "evaluation.evaluator_llm.model_name is empty but evaluation.mode "
+                f"is '{config.evaluation.mode}' — a judge model name is required "
+                "for scoring (RAGAS metrics need an LLM judge)"
+            )
+    elif scoring_enabled:
         errors.append(
-            f"evaluation.evaluator_llm.provider: '{eval_llm.provider}' is not "
-            f"supported. Supported: {sorted(SUPPORTED_EVALUATOR_LLM_PROVIDERS)}"
+            "evaluation.evaluator_llm.provider is empty but evaluation.mode is "
+            f"'{config.evaluation.mode}' — a judge LLM is required for scoring "
+            "(RAGAS metrics need an LLM judge); use mode 'none' to skip scoring"
         )
 
     eval_emb = config.evaluation.evaluator_embedding
