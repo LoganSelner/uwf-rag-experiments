@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,6 +25,13 @@ from ragbench.pipeline.rag import RAGPipeline
 # -----------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------
+
+
+def _record(call_order: list[str], name: str, result: Any) -> Any:
+    """Log a call into ``call_order`` and return ``result`` — a typed side-effect
+    seam so mock ``side_effect`` lambdas don't use ``list.append``'s None return."""
+    call_order.append(name)
+    return result
 
 
 def _make_rc(chunk_id: str, score: float) -> RetrievedChunk:
@@ -486,8 +494,8 @@ class TestAgentPipeline:
 
         pipeline = AgentPipeline.from_config(config, MagicMock())
 
-        assert pipeline._max_iterations == 7  # type: ignore[attr-defined]
-        assert pipeline._top_k_final == 4  # type: ignore[attr-defined]
+        assert pipeline._max_iterations == 7
+        assert pipeline._top_k_final == 4
         mock_build_generator.assert_called_once()  # reasoning generator built
         tool_cls.build.assert_called_once()  # tool built from its entry
 
@@ -538,8 +546,8 @@ class TestIndexingPipelineSparse:
         mock_chunker = MagicMock()
         mock_chunker.chunk.return_value = chunks
         mock_embedder = MagicMock()
-        mock_embedder.embed_chunks.side_effect = lambda c: (
-            call_order.append("embed") or [MagicMock()]
+        mock_embedder.embed_chunks.side_effect = lambda c: _record(
+            call_order, "embed", [MagicMock()]
         )
         mock_vs = MagicMock()
         mock_sparse = MagicMock()
@@ -618,16 +626,16 @@ class TestIndexingPipelineEnricher:
         mock_ingestor.ingest.return_value = [MagicMock(content="t", metadata={})]
         chunks = [Chunk(content="c", chunk_id="1", metadata={})]
         mock_chunker = MagicMock()
-        mock_chunker.chunk.side_effect = lambda d: call_order.append("chunk") or chunks
+        mock_chunker.chunk.side_effect = lambda d: _record(call_order, "chunk", chunks)
         mock_enricher = MagicMock()
-        mock_enricher.enrich.side_effect = lambda docs, c: (
-            call_order.append("enrich") or c
+        mock_enricher.enrich.side_effect = lambda docs, c: _record(
+            call_order, "enrich", c
         )
         mock_sparse = MagicMock()
         mock_sparse.add.side_effect = lambda c: call_order.append("sparse")
         mock_embedder = MagicMock()
-        mock_embedder.embed_chunks.side_effect = lambda c: (
-            call_order.append("embed") or [MagicMock()]
+        mock_embedder.embed_chunks.side_effect = lambda c: _record(
+            call_order, "embed", [MagicMock()]
         )
         mock_vs = MagicMock()
 
@@ -675,10 +683,11 @@ class TestIndexingPipelineEnricher:
 
 class TestQueryPipelineHybridWiring:
     def _index_artifact(self, sparse_index: object | None = None) -> IndexArtifact:
+        aux: dict[str, Any] = {"bm25": sparse_index} if sparse_index else {}
         return IndexArtifact(
             vectorstore=MagicMock(),
             embedder=MagicMock(),
-            auxiliary_stores={"bm25": sparse_index} if sparse_index else {},
+            auxiliary_stores=aux,
         )
 
     def test_hybrid_from_config_wires_children(self) -> None:
@@ -729,7 +738,7 @@ class TestQueryPipelineHybridWiring:
 
         pipeline = QueryPipeline.from_config(config, artifact, retrieval_only=True)
         # The hybrid retriever should have two children configured.
-        retriever = pipeline._retriever  # type: ignore[attr-defined]
+        retriever = pipeline._retriever
         assert hasattr(retriever, "_children")
         names = [name for name, _, _ in retriever._children]
         assert names == ["dense", "bm25"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import uuid
 
@@ -108,7 +109,7 @@ class TestFAISSVectorStore:
         store = FAISSVectorStore()
         store.add([])  # should not crash
 
-    def test_save_and_load_roundtrip(self, tmp_path: str) -> None:
+    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
         store = FAISSVectorStore({"metric": "cosine"})
         chunks = _make_embedded_chunks(5)
         store.add(chunks)
@@ -241,7 +242,7 @@ class TestChromaVectorStore:
         store = _unique_chroma()
         store.add([])  # should not crash
 
-    def test_save_and_load_roundtrip(self, tmp_path: str) -> None:
+    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
         col_name = f"test_{uuid.uuid4().hex[:12]}"
         store = ChromaVectorStore({"metric": "cosine", "collection_name": col_name})
         chunks = _make_embedded_chunks(5)
@@ -286,8 +287,8 @@ class TestChromaVectorStore:
         chunks = _make_embedded_chunks(7)
         expected_ids = [chunk.chunk.chunk_id for chunk in chunks]
 
-        store._client.get_max_batch_size = MagicMock(return_value=3)  # type: ignore[method-assign]
-        store._collection.upsert = MagicMock(wraps=store._collection.upsert)  # type: ignore[method-assign]
+        store._client.get_max_batch_size = MagicMock(return_value=3)
+        store._collection.upsert = MagicMock(wraps=store._collection.upsert)
 
         store.add(chunks)
 
@@ -305,7 +306,7 @@ class TestChromaVectorStore:
 
     @patch("chromadb.PersistentClient")
     def test_save_splits_upserts_by_max_batch_size(
-        self, mock_persistent_cls: MagicMock, tmp_path: str
+        self, mock_persistent_cls: MagicMock, tmp_path: Path
     ) -> None:
         store = _unique_chroma(metric="cosine")
         chunks = _make_embedded_chunks(7)
@@ -334,7 +335,7 @@ class TestChromaVectorStore:
 
     @patch("chromadb.PersistentClient")
     def test_save_deletes_existing_collection_before_creating(
-        self, mock_persistent_cls: MagicMock, tmp_path: str
+        self, mock_persistent_cls: MagicMock, tmp_path: Path
     ) -> None:
         store = _unique_chroma(metric="cosine")
         store.add(_make_embedded_chunks(2))
@@ -352,7 +353,7 @@ class TestChromaVectorStore:
 
     @patch("chromadb.PersistentClient")
     def test_save_handles_missing_collection_on_first_save(
-        self, mock_persistent_cls: MagicMock, tmp_path: str
+        self, mock_persistent_cls: MagicMock, tmp_path: Path
     ) -> None:
         import chromadb.errors
 

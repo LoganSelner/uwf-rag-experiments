@@ -8,7 +8,7 @@ from ragbench.components.defaults import (
     NoOpReranker,
     PassthroughQueryTransformer,
 )
-from ragbench.core.types import Chunk, RetrievedChunk, TransformedQuery
+from ragbench.core.types import Chunk, Message, RetrievedChunk, TransformedQuery
 
 
 def _make_rc(chunk_id: str, score: float) -> RetrievedChunk:
@@ -31,7 +31,7 @@ class TestPassthroughQueryTransformer:
 
     def test_ignores_history(self) -> None:
         qt = PassthroughQueryTransformer()
-        history = [{"role": "user", "content": "prior"}]
+        history: list[Message] = [{"role": "user", "content": "prior"}]
         result = qt.transform("Q?", history=history)
         assert result == [TransformedQuery(text="Q?")]
 

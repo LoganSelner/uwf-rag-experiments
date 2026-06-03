@@ -13,7 +13,7 @@ from ragbench.components.generators import (
     OllamaGenerator,
     OpenAIGenerator,
 )
-from ragbench.core.types import GenerationResult, ToolCall, ToolSpec
+from ragbench.core.types import GenerationResult, Message, ToolCall, ToolSpec
 
 
 def _tool_specs() -> list[ToolSpec]:
@@ -121,7 +121,7 @@ class TestOllamaGenerator:
     def test_message_list_prompt(self, mock_api: MagicMock) -> None:
         mock_api.return_value = {"message": {"content": "Response"}}
         gen = self._make_generator()
-        messages = [
+        messages: list[Message] = [
             {"role": "system", "content": "Be helpful."},
             {"role": "user", "content": "Hi"},
         ]
@@ -209,7 +209,7 @@ class TestGoogleGenerator:
         mock_client.models.generate_content.return_value = mock_response
 
         gen = self._make_generator()
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Hi"},
             {"role": "assistant", "content": "Hello!"},
             {"role": "user", "content": "How are you?"},
@@ -233,7 +233,7 @@ class TestGoogleGenerator:
         mock_client.models.generate_content.return_value = mock_response
 
         gen = self._make_generator()
-        messages = [
+        messages: list[Message] = [
             {"role": "system", "content": "Be helpful."},
             {"role": "user", "content": "Hi"},
         ]
@@ -385,7 +385,7 @@ class TestOpenAIGenerator:
         mock_client.chat.completions.create.return_value = mock_response
 
         gen = self._make_generator()
-        messages = [
+        messages: list[Message] = [
             {"role": "system", "content": "Be helpful."},
             {"role": "user", "content": "Hi"},
         ]
@@ -506,7 +506,7 @@ class TestOllamaToolCalling:
         self, mock_api: MagicMock
     ) -> None:
         mock_api.return_value = {"message": {"content": "final"}}
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Q?"},
             {
                 "role": "assistant",
@@ -621,7 +621,7 @@ class TestGoogleToolCalling:
         gen._client.models.generate_content.return_value = _google_response(
             text="final"
         )
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Q?"},
             {
                 "role": "assistant",
@@ -704,7 +704,7 @@ class TestEdenAIToolCalling:
 
         gen = self._make_generator()
         gen._client.bind_tools.return_value.invoke.return_value = self._result("final")
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Q?"},
             {
                 "role": "assistant",

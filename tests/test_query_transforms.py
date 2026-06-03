@@ -20,7 +20,7 @@ from ragbench.components.query_transforms import (
     MultiQueryQueryTransformer,
     _parse_numbered_list,
 )
-from ragbench.core.types import GenerationResult, TransformedQuery
+from ragbench.core.types import GenerationResult, Message, TransformedQuery
 
 
 def _mock_generator(answer: str = "Standalone question") -> MagicMock:
@@ -51,7 +51,7 @@ class TestContextualizerQueryTransformer:
     def test_with_history_calls_generator(self) -> None:
         gen = _mock_generator()
         qt = ContextualizerQueryTransformer({}, generator=gen)
-        history = [
+        history: list[Message] = [
             {"role": "user", "content": "Tell me about UWF."},
             {"role": "assistant", "content": "UWF is a university."},
         ]
@@ -62,7 +62,7 @@ class TestContextualizerQueryTransformer:
     def test_with_history_returns_reformulated_query(self) -> None:
         gen = _mock_generator("What programs does UWF offer?")
         qt = ContextualizerQueryTransformer({}, generator=gen)
-        history = [
+        history: list[Message] = [
             {"role": "user", "content": "Tell me about UWF."},
             {"role": "assistant", "content": "UWF is a university."},
         ]
@@ -73,7 +73,7 @@ class TestContextualizerQueryTransformer:
     def test_system_prompt_default(self) -> None:
         gen = _mock_generator()
         qt = ContextualizerQueryTransformer({}, generator=gen)
-        history = [{"role": "user", "content": "Hi"}]
+        history: list[Message] = [{"role": "user", "content": "Hi"}]
         qt.transform("Follow up", history=history)
 
         call_args = gen.generate.call_args[0][0]
@@ -86,7 +86,7 @@ class TestContextualizerQueryTransformer:
         qt = ContextualizerQueryTransformer(
             {"system_prompt": custom_prompt}, generator=gen
         )
-        history = [{"role": "user", "content": "Hi"}]
+        history: list[Message] = [{"role": "user", "content": "Hi"}]
         qt.transform("Follow up", history=history)
 
         call_args = gen.generate.call_args[0][0]
@@ -99,7 +99,7 @@ class TestContextualizerQueryTransformer:
     def test_result_is_single_element_list(self) -> None:
         gen = _mock_generator("Reformulated")
         qt = ContextualizerQueryTransformer({}, generator=gen)
-        history = [{"role": "user", "content": "Hi"}]
+        history: list[Message] = [{"role": "user", "content": "Hi"}]
         result = qt.transform("Follow up", history=history)
 
         assert isinstance(result, list)
@@ -110,7 +110,7 @@ class TestContextualizerQueryTransformer:
     def test_messages_include_history_and_query(self) -> None:
         gen = _mock_generator()
         qt = ContextualizerQueryTransformer({}, generator=gen)
-        history = [
+        history: list[Message] = [
             {"role": "user", "content": "First question"},
             {"role": "assistant", "content": "First answer"},
         ]

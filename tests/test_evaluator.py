@@ -181,13 +181,12 @@ class TestAggregateMetrics:
         assert abs(result["acc"] - 0.9) < 1e-9
 
     def test_none_filtered(self) -> None:
-        result = Evaluator._aggregate_metrics(
-            [
-                {"acc": 0.8},
-                {"acc": None},
-                {"acc": 1.0},
-            ]
-        )
+        per_run: list[dict[str, float]] = [
+            {"acc": 0.8},
+            {"acc": None},  # type: ignore[dict-item]  # intentionally probes None-filtering
+            {"acc": 1.0},
+        ]
+        result = Evaluator._aggregate_metrics(per_run)
         assert abs(result["acc"] - 0.9) < 1e-9
 
 
