@@ -23,7 +23,7 @@ text lives in `PromptConfig`. The pipeline reads these values;
 nothing overrides them at runtime.
 
 **Typed config end to end.** Config is a tree of **Pydantic v2 models**
-(`ExperimentConfig` and friends in `core/config.py`). Each component
+(`ExperimentConfig` and friends in `core/config`). Each component
 declares a nested `Params(ComponentParams)` model and validates its raw
 config dict into `self.p` exactly once at construction, so a component's
 defaults and constraints live in one typed place — not scattered across
@@ -94,7 +94,7 @@ cache identity.
          ▼                       ▼
 ┌─────────────────────────────────────────────┐
 │  core/                                      │  Foundation
-│    types.py    config.py    registry.py     │  Shared types, config,
+│    types.py    config/     registry.py     │  Shared types, config,
 │    git.py                                   │  component registry
 └─────────────────────────────────────────────┘
 ```
@@ -131,7 +131,11 @@ points.
 src/uwf_rag/
 ├── core/
 │   ├── types.py          Data contracts between pipeline stages (Message TypedDict, dataclasses)
-│   ├── config.py         Pydantic config models + YAML loading/inheritance + validation
+│   ├── config/           Config package (re-exported from its __init__):
+│   │   ├── models.py       Pydantic models + ValidateContext + index fingerprint
+│   │   ├── loading.py      YAML loading + extends-inheritance deep-merge
+│   │   ├── validation.py   validate_config + per-section checks
+│   │   └── errors.py       ConfigValidationError
 │   ├── registry.py       Component registry (@register / get)
 │   ├── fusion.py         Rank-list fusion primitives (RRF + weighted + max-dedup)
 │   └── git.py            Git SHA + dirty flag for reproducibility
@@ -480,7 +484,7 @@ construction (called in `scripts/run_experiment.py`). It checks:
 **Component-owned param checks.** Retrieval-type-specific rules (a `bm25`
 retriever needs `indexing.sparse_index`; a `hybrid` retriever's child roster,
 nesting ban, fusion mode, rrf_k, and weights) are *not* hard-coded in
-`core/config.py`. `validate_config` resolves the retriever class from the
+`core/config`. `validate_config` resolves the retriever class from the
 registry and calls its `validate_params(params, ctx)` classmethod — where `ctx`
 is a `ValidateContext` carrying the registry plus the cross-config values
 (`sparse_index_type`, `top_k_retrieve`) — folding the returned strings into the
