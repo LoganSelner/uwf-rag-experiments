@@ -19,7 +19,7 @@ Every component is swappable via config. No code changes needed.
 | **Ingestion** | PDF (PyMuPDF) | `indexing.sources[].ingest.type` |
 | **Chunking** | `recursive_langchain`, `recursive_custom`, `semantic` (embedding-breakpoint splits) | `indexing.chunking.type` |
 | **Chunk Enricher** | `none`, `contextual` (LLM situating context, retrieval-only) | `indexing.chunk_enricher.type` |
-| **Embedding** | `huggingface` (bge-m3 etc.), `google` (Gemini), `openai`, `edenai` (cloud gateway) | `indexing.embedding.type` |
+| **Embedding** | `huggingface` (bge-m3 etc.; auto query/passage prompts for e5 / bge-v1.5 families), `google` (Gemini), `openai`, `edenai` (cloud gateway) | `indexing.embedding.type` |
 | **Vectorstore** | `faiss` (cosine/L2), `chroma` (cosine/L2/IP) | `indexing.vectorstore.type` |
 | **Sparse Index** | `bm25` (via [`bm25s`](https://github.com/xhluca/bm25s)) | `indexing.sparse_index.type` |
 | **Retrieval** | `dense` (single-vector similarity), `bm25` (lexical), `hybrid` (dense + sparse fusion: RRF or weighted) | `query.retrieval.type` |
@@ -135,10 +135,10 @@ Experiments that share the same indexing config reuse the cached index automatic
 
 | Parameter | Config Path | Default |
 |-----------|------------|---------|
-| Query transform | `query.query_transform.type` | `contextualizer` (Eden AI GPT-4.1) |
+| Query transform | `query.query_transform.type` | `passthrough` (contextualizer is conversational — a no-op under single-turn eval) |
 | Multi-query fusion | `query.query_transform.fusion` | `rrf` (or `max`) |
-| Retrieval depth | `query.retrieval.top_k_retrieve` | 3 |
-| Final chunks | `query.retrieval.top_k_final` | 3 |
+| Retrieval depth | `query.retrieval.top_k_retrieve` | 10 |
+| Final chunks | `query.retrieval.top_k_final` | 5 |
 | Reranker | `query.reranking.type` | `none` |
 | Generator provider | `query.generator.provider` | `edenai` (sub-provider in `query.generator.params.sub_provider`) |
 | LLM model | `query.generator.model_name` | `gpt-4.1` |
@@ -197,7 +197,7 @@ Per-branch `top_k=20` is the production-standard pre-fusion depth. Stage-level `
 
 ### Query Optimization (HyDE / multi-query)
 
-Standard pre-retrieval query transformations. Each changes only `query.query_transform` from the baseline. Compare against `base.yaml` (contextualizer) to isolate the transform's effect.
+Standard pre-retrieval query transformations. Each changes only `query.query_transform` from the baseline. Compare against `base.yaml` (passthrough) to isolate the transform's effect.
 
 | Config | Transform | Retrieval | Notes |
 |--------|-----------|-----------|-------|

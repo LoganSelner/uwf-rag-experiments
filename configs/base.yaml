@@ -4,9 +4,11 @@
 #   - LangChain recursive chunking (1000 tokens, 100 overlap)
 #   - text-embedding-3-small embeddings via EdenAI (OpenAI sub-provider)
 #   - Chroma vector store (cosine)
-#   - Dense retrieval (top_k_retrieve=3, top_k_final=3)
+#   - Dense retrieval (top_k_retrieve=10, top_k_final=5)
 #   - No reranking
-#   - Contextualizer query transform via EdenAI GPT-4.1 (OpenAI sub-provider)
+#   - Passthrough query transform (single-turn eval has no history to
+#     contextualize; the contextualizer is a conversational component, so it is
+#     a no-op here — switch it on only once multi-turn evaluation lands)
 #   - EdenAI GPT-4.1 generation (OpenAI sub-provider)
 #
 # Evaluation defaults (formal):
@@ -47,21 +49,17 @@ indexing:
       metric: "cosine"
 
 query:
+  # Passthrough by default: the evaluator runs single-turn (no conversation
+  # history), so the history-dependent contextualizer would be a no-op. An
+  # experiment that wants query rewriting overrides query.query_transform.type
+  # (e.g. hyde, multi_query) and supplies its own generator.
   query_transform:
-    type: "contextualizer"
-    generator:
-      provider: "edenai"
-      model_name: "gpt-4.1"
-      temperature: 0.0
-      params:
-        sub_provider: "openai"
-    params:
-      system_prompt: "Given a chat history and the latest user question, rewrite it as a standalone question."
+    type: "passthrough"
 
   retrieval:
     type: "dense"
-    top_k_retrieve: 3
-    top_k_final: 3
+    top_k_retrieve: 10
+    top_k_final: 5
 
   reranking:
     type: "none"
