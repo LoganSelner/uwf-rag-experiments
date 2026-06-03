@@ -297,14 +297,10 @@ class TestGoogleGenerator:
 
 class TestEdenAIGeneratorInit:
     def test_missing_sub_provider_raises(self) -> None:
+        # The sub_provider check precedes any env/key access, so no env patch
+        # is needed — construction fails before EDENAI_API_KEY is read.
         with pytest.raises(ValueError, match="sub_provider"):
-            # Patch dotenv so it doesn't touch the real env
-            with patch(
-                "ragbench.components.generators.os.environ.get", return_value="fake-key"
-            ):
-                from ragbench.components.generators import EdenAIGenerator
-
-                EdenAIGenerator({"llm": {"model_name": "gpt-4o"}})
+            EdenAIGenerator({"llm": {"model_name": "gpt-4o"}})
 
     @patch.dict("os.environ", {"EDENAI_API_KEY": ""}, clear=False)
     def test_missing_api_key_raises(self) -> None:
