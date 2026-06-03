@@ -661,6 +661,20 @@ metadata, and truncates.
 | `memory` | `buffer_window` | `BufferWindowMemory` | `defaults.py` |
 | `tool` | `rag` | `RAGSearchTool` | `tools.py` |
 
+### Reserved / not-yet-active
+
+A couple of config surfaces are wired and honest stubs, but inert until a later
+phase — kept (rather than removed) because the seam is cheap and the harness
+values stable config keys:
+
+- **Agent memory** (`agent.memory`, `BufferWindowMemory`): registered and
+  constructed, but the single-turn ReAct loop does not thread history yet.
+  Activated by Phase E multi-turn evaluation.
+- **`query.prompt.max_context_tokens`**: carried through to the prompt template
+  but not enforced (no context-budget trimming today). A research harness
+  prefers a precise, opt-in token budget over an approximate one, so enforcement
+  is deferred rather than shipped as a char-count guess.
+
 ---
 
 ## Pipeline Orchestration
@@ -836,6 +850,26 @@ runs. NaN and None values (RAGAS returns these when the LLM judge
 fails to parse) are filtered before averaging. Metric keys are
 collected from all runs (not just the first), handling the case
 where different runs produce different metric sets.
+
+### Methodology & Caveats
+
+Two properties of the harness shape how results should be read:
+
+- **The cross-run std is mostly judge variance, not pipeline sampling.**
+  Generation defaults to `temperature=0`, so for a deterministic provider the
+  `num_runs` repeats produce near-identical pipeline outputs; the reported
+  `*_std` then largely reflects the RAGAS judge LLM's own nondeterminism (plus
+  any provider-side variation), not answer-sampling spread. Read it as a
+  measurement-stability band, not a model-variability estimate.
+
+- **Agent retrieval metrics score a re-capped chunk set.** In agent mode the
+  loop unions the chunks retrieved across all tool calls, dedups by `chunk_id`,
+  and caps at `top_k_final` before handing them to the evaluator
+  (`AgentPipeline._aggregate_chunks`). That keeps the context-precision/recall
+  denominator identical to the linear pipeline — but it can differ from the
+  superset of chunks the agent's own LLM actually saw across iterations. So a
+  linear-vs-agent retrieval-metric delta isolates control flow on a common
+  budget; it is not a claim about how much context the agent reasoned over.
 
 ### Results (`evaluation/results.py`)
 

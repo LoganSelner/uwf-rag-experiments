@@ -90,6 +90,14 @@ class ComponentRegistry:
         """Check if a (category, type_name) pair is registered."""
         return (category, type_name) in self._registry
 
+    def registered(self) -> list[tuple[str, str]]:
+        """All registered ``(category, type_name)`` pairs, sorted.
+
+        Used by the docs drift guard (``tests/test_docs.py``) to assert the
+        ARCHITECTURE.md inventory table stays in sync with the live registry.
+        """
+        return sorted(self._registry)
+
     def clear(self) -> None:
         """Remove all registrations. Useful for testing."""
         self._registry.clear()

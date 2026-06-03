@@ -75,36 +75,10 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 
 ### Registered Components
 
-| Category | Component | Registry Name | Notes |
-|----------|-----------|---------------|-------|
-| Ingest | `PDFIngestor` | `pdf` | PyMuPDF |
-| Chunking | `LangChainRecursiveChunker` | `recursive` | `langchain-text-splitters` wrapper (config-facing name is impl-agnostic) |
-| Chunking | `SemanticChunker` | `semantic` | Custom; embedding-breakpoint splits (no new dep) |
-| Chunk Enricher | `NoOpChunkEnricher` | `none` | No-op passthrough |
-| Chunk Enricher | `ContextualChunkEnricher` | `contextual` | LLM situating context; sets `index_text` only (retrieval-isolated) |
-| Embedding | `HuggingFaceEmbedder` | `huggingface` | sentence-transformers, bge-m3 default |
-| Embedding | `GoogleEmbedder` | `google` | `google-genai` SDK |
-| Embedding | `OpenAIEmbedder` | `openai` | `openai` SDK |
-| Embedding | `EdenAIEmbedder` | `edenai` | `langchain-community` gateway |
-| Vectorstore | `FAISSVectorStore` | `faiss` | Cosine + L2, metadata post-filtering |
-| Vectorstore | `ChromaVectorStore` | `chroma` | ChromaDB, native metadata filtering |
-| Sparse Index | `BM25LexicalIndex` | `bm25` | `bm25s` + PyStemmer; mmap load; metadata over-retrieve + post-filter |
-| Retrieval | `DenseRetriever` | `dense` | Single-vector similarity search |
-| Retrieval | `BM25Retriever` | `bm25` | Delegates to `sparse_index` |
-| Retrieval | `HybridRetriever` | `hybrid` | Composes named child retrievers; RRF or weighted fusion |
-| Query Transform | `PassthroughQueryTransformer` | `passthrough` | Returns query unchanged |
-| Query Transform | `ContextualizerQueryTransformer` | `contextualizer` | LLM reformulation with history |
-| Query Transform | `HyDEQueryTransformer` | `hyde` | LLM hypothetical-doc; per-branch routing for hybrid |
-| Query Transform | `MultiQueryQueryTransformer` | `multi_query` | LLM N reformulations; RRF fusion across them |
-| Reranking | `NoOpReranker` | `none` | Passes through, truncates to top_k |
-| Reranking | `CrossEncoderReranker` | `cross_encoder` | gte-reranker-modernbert-base default |
-| Generation | `OllamaGenerator` | `ollama` | Local LLM via Ollama |
-| Generation | `EdenAIGenerator` | `edenai` | Cloud LLM via Eden AI gateway |
-| Generation | `GoogleGenerator` | `google` | Gemini via `google-genai` SDK |
-| Generation | `OpenAIGenerator` | `openai` | OpenAI chat completions |
-| Prompts | `ChatPromptTemplate` | `chat` | Numbered/plain context, CoT, citations |
-| Memory | `NoMemory` | `none` | No-op |
-| Memory | `BufferWindowMemory` | `buffer_window` | Last N turns |
+The full component inventory (category → registry name → class → file) lives in
+the **Registered Implementations** table in [ARCHITECTURE.md](ARCHITECTURE.md),
+which a drift-guard test (`tests/test_docs.py`) keeps in sync with the live
+registry. It is not duplicated here.
 
 ### Infrastructure Completed
 
@@ -521,23 +495,54 @@ title-prepending).
   embedding. Performance only, no correctness issue. Could lazy-load
   `HuggingFaceEmbedder` if startup becomes a bottleneck.
 
-### Deferred quality follow-ups (documented, not scheduled)
+### Resolved by the 2026-06 hardening pass
 
-Surfaced by the 2026-06 hardening review; intentionally not done then to keep that
-PR focused. None affect correctness.
+The architecture-review cleanup addressed several long-standing items:
 
-- **Generators cross-provider duplication (LOW):** `components/generators.py` repeats
-  a Params/api-key/retry/extract skeleton per provider. A thin SDK-client base
-  (`_get_api_key`, unified `_call_api` naming, a message-translation base) could lift
-  ~20%. Quality only — provider APIs genuinely differ.
-- **Index persistence uses pickle (LOW):** FAISS/BM25 `chunks.pkl` is version-fragile
-  and unsafe to share. Move to a versioned/safe format only if indexes are ever shared.
+- **Stale-index hole closed:** the index fingerprint now hashes each source
+  file's content, so editing a document in place rebuilds rather than serving a
+  stale cache.
+- **Generators de-duplicated + split:** `components/generators/` is now a package
+  with a shared `_SDKGenerator` base (api-key helper + result assembly); each
+  provider keeps only its translation/call/parse.
+- **`recursive_custom` dropped; `recursive_langchain` → `recursive`:** one
+  recursive chunker, with an implementation-agnostic config name.
+- **Retry policy hoisted** to `core/retry.py` (one definition).
+- **`tests/` now type-checked** (relaxed `mypy` override); the first run caught
+  41 real interface-drift issues, all fixed.
+- **`OLLAMA_BASE_URL` env fallback** for the Ollama generator + judge.
+- **Docs drift guard:** `tests/test_docs.py` binds the ARCHITECTURE registry
+  table to the live registry; the ROADMAP component table now points at it
+  instead of duplicating it.
+
+### Considered & deferred (architectural decisions)
+
+Evaluated during the review and intentionally not pursued; recorded so they're
+explicit choices, not gaps. None affect correctness.
+
+- **Hydra — declined for now.** The `extends:` deep-merge already mirrors Hydra's
+  config-group *selection*, and YAML inheritance is more legible here than a
+  `defaults:` list. **Revisit if** we want CLI overrides + true Cartesian `-m`
+  sweeps (e.g. `top_k ∈ {3,5,10} × fusion ∈ {rrf,weighted}`); if adopted, layer
+  Hydra *above* the Pydantic models, not instead of them.
+- **MLflow / experiment tracking — deferred.** File-based `results/` + the
+  `compare.py` CLI suffice today. **Revisit if** the experiment count outgrows
+  eyeballing tables; start with MLflow's local file backend (no server) beside
+  the existing JSONL artifacts.
+- **Two-LLM-path & `langchain-*` surface — justified, not debt.** EdenAI is a
+  required gateway and only exists as `langchain-community`'s `ChatEdenAI`, which
+  forces the LangChain-wrapped RAGAS judge path; the four `langchain-*` deps
+  largely serve the judge. The pipeline's own generators stay on direct SDKs.
+  **Revisit only if** EdenAI is ever dropped as a judge — then the judge path can
+  collapse onto the SDK generators.
+- **Index persistence uses pickle (LOW):** FAISS/BM25 `chunks.pkl` is
+  version-fragile and unsafe to share. Move to a versioned/safe format only if
+  indexes are ever shared between machines.
 - **HyDE `num_hypotheticals>1` (LOW):** fuses rank lists rather than averaging
-  embeddings as in Gao et al.; the default (1) is paper-faithful. Documented in the
-  transformer's docstring.
-- **`recursive_custom` vs `recursive_langchain` (LOW):** two near-equivalent chunkers;
-  keep as a deliberate alt implementation or drop one.
-- **`tests/` excluded from mypy (LOW):** the strict type gate doesn't cover tests.
+  embeddings as in Gao et al.; the default (1) is paper-faithful. Documented in
+  the transformer's docstring.
+- **`py.typed` marker — not needed:** this is an application, not a published
+  library; nothing imports `ragbench` as a typed dependency.
 
 ---
 
