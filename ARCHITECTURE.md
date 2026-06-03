@@ -793,15 +793,34 @@ independent of the pipeline. This ensures all experiments are
 measured with the same embedding model regardless of which
 pipeline embedder is used — eliminating a confounding variable
 in cross-experiment comparisons. The embedder is adapted to
-RAGAS's `BaseRagasEmbedding` interface via
-`_wrap_embedder_for_ragas()`.
+RAGAS's `BaseRagasEmbedding` interface inside the ragas adapter
+(`evaluation/_ragas_adapter.wrap_embedder`).
 
 **Evaluator LLM:** RAGAS needs an LLM judge for most metrics
 (faithfulness, answer_correctness, context_precision, etc.).
-Configured via `evaluator_llm` in the config. Supports Ollama
-(local), EdenAI (cloud), and Google (cloud) providers. Built
-through `_build_evaluator_llm()` which returns a
-`LangchainLLMWrapper`.
+Configured via `evaluator_llm`; supports Ollama (local), EdenAI,
+Google, and OpenAI. `_build_evaluator_llm()` builds a per-provider
+**LangChain** chat model and hands it to the ragas adapter's
+`wrap_langchain_llm`.
+
+**RAGAS is quarantined.** Every `ragas` import — including the
+deprecated private `ragas.metrics._*` classes — lives in one module,
+`evaluation/_ragas_adapter.py`; the evaluator imports only that. The
+harness stays on the legacy `evaluate()` path (pinned `ragas<0.5`)
+because ragas's non-deprecated `collections` metrics require an
+`InstructorBaseRagasLLM` that can't wrap EdenAI, whereas
+`evaluate(llm=LangchainLLMWrapper(...))` can. A ragas bump touches that
+one file.
+
+**Two LLM construction paths (deliberate).** The pipeline's answer /
+reasoning generators are built by `build_generator(LLMConfig)` →
+provider **SDK clients** (`BaseGenerator`), while the RAGAS judge is a
+**LangChain** chat model wrapped for ragas. They are separate by
+necessity: ragas only accepts a LangChain-wrapped (or its own
+structured) LLM, and EdenAI — the harness's gateway provider — exists
+only as `langchain-community`'s `ChatEdenAI`. So the model named in
+`query.generator` vs `evaluation.evaluator_llm` runs through different
+client libraries; the upside is EdenAI works on both sides.
 
 **Run config:** `EvalRunConfig` controls RAGAS execution settings:
 `timeout` (seconds per evaluation call), `max_retries`,
