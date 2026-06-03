@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 from urllib.request import Request, urlopen
+
+from pydantic import Field
 
 from ragbench.components._tool_protocol import parse_arguments, to_openai_tools
 from ragbench.components.generators.base import _SDKGenerator
@@ -29,7 +32,14 @@ class OllamaGenerator(_SDKGenerator):
     provider_label = "ollama"
 
     class Params(_SDKGenerator.Params):
-        base_url: str = "http://localhost:11434"
+        # No explicit base_url in config → fall back to $OLLAMA_BASE_URL, then
+        # localhost. Lets a WSL→Windows host (or a remote Ollama) be set via env
+        # without baking a machine-specific URL into a tracked config.
+        base_url: str = Field(
+            default_factory=lambda: os.environ.get(
+                "OLLAMA_BASE_URL", "http://localhost:11434"
+            )
+        )
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)

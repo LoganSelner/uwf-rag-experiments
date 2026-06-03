@@ -336,7 +336,7 @@ CI runs on every push and pull request (ruff + mypy + pytest).
 | Problem | Fix |
 |---------|-----|
 | `EDENAI_API_KEY` / `GOOGLE_API_KEY` not found | Ensure `.env` exists with your keys. The app loads it automatically at startup. |
-| Ollama connection refused | Start Ollama with `ollama serve`. If using WSL, you may need to override `generation.params.base_url` in your experiment config. |
+| Ollama connection refused | Start Ollama with `ollama serve`. If the host isn't `localhost:11434` (e.g. WSL → Windows), set `OLLAMA_BASE_URL` in `.env` (preferred — nothing machine-specific lands in a tracked config) or override `generation.params.base_url` per experiment. |
 | Index cache stale after changing source PDFs | Use `--no-cache`: `python scripts/run_experiment.py configs/base.yaml --no-cache` |
 | Unknown component type in validation | Check that the `type:` value in your YAML matches a `@registry.register(...)` name exactly. |
 | RAGAS timeout on local Ollama | Increase `evaluation.run_config.timeout` (base default: 300s; `smoke.yaml` raises it to 1200s) or reduce `evaluation.run_config.max_workers`. |

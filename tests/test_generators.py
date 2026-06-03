@@ -76,12 +76,28 @@ class TestOllamaGenerator:
         }
         return OllamaGenerator(config)
 
-    def test_config_defaults(self) -> None:
+    def test_config_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
         gen = OllamaGenerator()
         assert gen._model == ""
         assert gen._temperature == 0.0
         assert gen._max_tokens is None
         assert gen._base_url == "http://localhost:11434"
+
+    def test_base_url_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # No explicit base_url → fall back to $OLLAMA_BASE_URL.
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://172.30.32.1:11434")
+        gen = OllamaGenerator({"llm": {"model_name": "m"}})
+        assert gen._base_url == "http://172.30.32.1:11434"
+
+    def test_explicit_base_url_wins_over_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://from-env:11434")
+        gen = OllamaGenerator(
+            {"llm": {"model_name": "m"}, "base_url": "http://explicit:11434"}
+        )
+        assert gen._base_url == "http://explicit:11434"
 
     @patch.object(OllamaGenerator, "_call_api")
     def test_string_prompt(self, mock_api: MagicMock) -> None:
