@@ -118,8 +118,9 @@ Key dependency boundaries:
 
 - `ragbench/components/__init__.py` triggers registration side effects
   (`@registry.register` decorators). This import happens only at
-  application entry points: `scripts/run_experiment.py` and
-  `tests/conftest.py` (`import ragbench.components`). Pipeline modules
+  application entry points: `scripts/run_experiment.py`,
+  `scripts/run_matrix.py`, and `tests/conftest.py`
+  (`import ragbench.components`). Pipeline modules
   never trigger it.
 
 All source lives under a single installed package, `src/ragbench/`
@@ -470,7 +471,8 @@ alongside the new sparse index, by design.
 ### Validation
 
 `validate_config(config, registry)` runs before pipeline
-construction (called in `scripts/run_experiment.py`). It checks:
+construction (called in `ragbench.experiment.run_single_experiment`).
+It checks:
 
 - Every component type referenced in config is registered
 - `query.query_transform.fusion` is one of `{rrf, max}`
@@ -782,10 +784,12 @@ every question in the dataset, `num_runs` times. Failed queries
 are logged and skipped (one bad response doesn't crash the run).
 Returns an `ExperimentResult` with aggregated and per-run metrics.
 
-**RAGAS integration:** Uses the RAGAS 0.4.x API
-(`EvaluationDataset`, `SingleTurnSample`, private metric
-submodules to avoid deprecation warnings). Metrics are built once
-and cached via `@functools.cache`.
+**RAGAS integration:** All `ragas` use is quarantined in
+`evaluation/_ragas_adapter.py` (see *RAGAS is quarantined* below) —
+the legacy `evaluate()` API (`EvaluationDataset`, `SingleTurnSample`,
+private metric submodules to avoid deprecation warnings; metrics
+built once via `@functools.cache`). The evaluator calls the adapter,
+never `ragas` directly.
 
 **Evaluator embedder:** The evaluator builds its own embedder from
 `evaluator_embedding` config via the component registry,
@@ -908,29 +912,35 @@ fresh `ComponentRegistry()` instance.
 ## Experiment Lifecycle
 
 ```
-scripts/run_experiment.py
+scripts/run_experiment.py  (thin CLI)
     │
     ├── import ragbench.components  (triggers registration)
-    ├── ExperimentConfig.from_yaml (loads + resolves inheritance)
-    ├── validate_config            (checks types, constraints, files)
-    ├── get_git_sha / get_git_dirty (captures repo state)
-    │
-    ├── RAGPipeline.from_config
-    │   ├── IndexingPipeline.run_or_load_cache
-    │   │   ├── check fingerprint cache → load or build
-    │   │   └── return IndexArtifact
-    │   └── QueryPipeline.from_config
-    │       └── build retriever(vectorstore + embedder) + build_generator(...)
-    │
-    ├── Evaluator.evaluate(rag)
-    │   ├── build evaluator embedder from config (via registry)
-    │   ├── for each run:
-    │   │   ├── for each question: rag.query() → EvalSample
-    │   │   └── RAGAS evaluate → per-sample scores
-    │   └── aggregate metrics (mean ± std)
-    │
-    └── save_experiment
-        └── write summary.json + config.yaml + run_N.jsonl
+    ├── configure_runtime()         (load .env, GPU perf)
+    └── ragbench.experiment.run_single_experiment()
+        ├── ExperimentConfig.from_yaml (loads + resolves inheritance)
+        ├── validate_config            (checks types, constraints, files)
+        ├── capture_git_info           (git sha + dirty, for reproducibility)
+        │
+        ├── RAGPipeline.from_config
+        │   ├── IndexingPipeline.run_or_load_cache
+        │   │   ├── check fingerprint cache → load or build
+        │   │   └── return IndexArtifact
+        │   └── QueryPipeline.from_config
+        │       └── build retriever(vectorstore + embedder) + build_generator(...)
+        │
+        ├── Evaluator.evaluate(rag)
+        │   ├── build evaluator embedder from config (via registry)
+        │   ├── for each run:
+        │   │   ├── for each question: rag.query() → EvalSample
+        │   │   └── RAGAS evaluate (via _ragas_adapter) → per-sample scores
+        │   └── aggregate metrics (mean ± std)
+        │
+        └── save_experiment
+            └── write summary.json + config.yaml + run_N.jsonl
+
+scripts/run_matrix.py wraps ragbench.experiment.run_matrix() — the same
+run_single_experiment over many configs (shared git snapshot, failures skipped),
+then an optional comparison table.
 ```
 
 ---

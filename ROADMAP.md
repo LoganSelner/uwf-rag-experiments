@@ -614,7 +614,7 @@ baseline is `configs/base.yaml` itself; no separate `dense.yaml`.
 ### Query Optimization (Phase B, done)
 
 All configs under `configs/experiments/query_transform/`. Compare
-against `base.yaml` (contextualizer) and the Phase A retrieval matrix.
+against `base.yaml` (passthrough) and the Phase A retrieval matrix.
 
 | Experiment | Isolates |
 |-----------|----------|
