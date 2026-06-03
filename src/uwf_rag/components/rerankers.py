@@ -55,6 +55,22 @@ class CrossEncoderReranker(BaseReranker):
         logger.info("Loading cross-encoder model: %s", self.p.model_name)
         self._model = CrossEncoder(self.p.model_name, device=self.p.device)
 
+        # Fail fast on a classification cross-encoder: predict() returns a
+        # per-class array there, so float(score) below would blow up mid-run.
+        raw_labels = getattr(getattr(self._model, "config", None), "num_labels", 1)
+        try:
+            num_labels = int(raw_labels)
+        except (TypeError, ValueError):
+            num_labels = 1  # unreadable (e.g. a test double) → assume regression
+        if num_labels > 1:
+            raise ValueError(
+                f"CrossEncoderReranker requires a regression reranker "
+                f"(num_labels=1), but '{self.p.model_name}' reports "
+                f"num_labels={num_labels}. A classification cross-encoder returns "
+                "a per-class score array, not a single relevance score. Use a "
+                "regression reranker (e.g. Alibaba-NLP/gte-reranker-modernbert-base)."
+            )
+
     def rerank(
         self,
         query: str,

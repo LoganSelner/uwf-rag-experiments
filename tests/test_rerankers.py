@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from uwf_rag.components.rerankers import CrossEncoderReranker
 from uwf_rag.core.types import Chunk, RetrievedChunk
@@ -30,6 +31,12 @@ class TestCrossEncoderReranker:
         result = reranker.rerank("Q?", chunks, top_k=3)
 
         assert [r.chunk.chunk_id for r in result] == ["b", "c", "a"]
+
+    def test_rejects_classification_cross_encoder(self, mock_ce_cls: MagicMock) -> None:
+        """A num_labels>1 (classification) model is rejected at construction."""
+        mock_ce_cls.return_value.config.num_labels = 2
+        with pytest.raises(ValueError, match="regression reranker"):
+            CrossEncoderReranker()
 
     def test_replaces_scores_with_cross_encoder_scores(
         self, mock_ce_cls: MagicMock
