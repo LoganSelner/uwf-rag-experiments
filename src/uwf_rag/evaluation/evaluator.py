@@ -8,7 +8,6 @@ See ROADMAP.md Section 9 for full specification.
 
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import math
@@ -22,6 +21,7 @@ from uwf_rag.core.config import (
 )
 from uwf_rag.core.registry import registry
 from uwf_rag.core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
+from uwf_rag.evaluation import _ragas_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -47,70 +47,6 @@ def _load_dataset(path: str) -> list[dict[str, str]]:
         if "id" not in item:
             item["id"] = str(i + 1)
     return data
-
-
-@functools.cache
-def _build_metric_map() -> dict[str, Any]:
-    """Build RAGAS metric instances.
-
-    Imports from private submodules to avoid the deprecation warnings
-    that ``ragas.metrics`` top-level imports trigger in RAGAS 0.4.x.
-    """
-    from ragas.metrics._answer_correctness import AnswerCorrectness
-    from ragas.metrics._answer_relevance import ResponseRelevancy
-    from ragas.metrics._answer_similarity import AnswerSimilarity
-    from ragas.metrics._context_entities_recall import ContextEntityRecall
-    from ragas.metrics._context_precision import ContextPrecision
-    from ragas.metrics._context_recall import ContextRecall
-    from ragas.metrics._factual_correctness import FactualCorrectness
-    from ragas.metrics._faithfulness import Faithfulness
-
-    return {
-        "faithfulness": Faithfulness(),
-        "answer_relevancy": ResponseRelevancy(),
-        "answer_correctness": AnswerCorrectness(),
-        "answer_similarity": AnswerSimilarity(),
-        "factual_correctness": FactualCorrectness(),
-        "context_precision": ContextPrecision(),
-        "context_recall": ContextRecall(),
-        "context_entity_recall": ContextEntityRecall(),
-    }
-
-
-def _wrap_embedder_for_ragas(embedder: Any) -> Any:
-    """Wrap a ``BaseEmbedder`` as a RAGAS-native ``BaseRagasEmbedding``.
-
-    Bridges the evaluator's dedicated embedding model (built from
-    ``evaluator_embedding`` config via the component registry) to the
-    interface that RAGAS ``evaluate()`` expects.
-
-    The class is defined inside the function so the ``ragas.embeddings``
-    import stays deferred (consistent with all other RAGAS imports in
-    this module).
-    """
-    from ragas.embeddings import BaseRagasEmbedding
-
-    class _EmbedderAdapter(BaseRagasEmbedding):
-        def __init__(self, base_embedder: Any) -> None:
-            super().__init__()
-            self._embedder = base_embedder
-
-        def embed_text(self, text: str, **kwargs: Any) -> list[float]:
-            return self._embedder.embed_query(text)
-
-        async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
-            return self._embedder.embed_query(text)
-
-        # Legacy LangChain interface — RAGAS 0.4.x metrics like
-        # answer_relevancy still call embed_query/embed_documents
-        # internally instead of the modern embed_text/embed_texts API.
-        def embed_query(self, text: str) -> list[float]:
-            return self._embedder.embed_query(text)
-
-        def embed_documents(self, texts: list[str]) -> list[list[float]]:
-            return [self._embedder.embed_query(t) for t in texts]
-
-    return _EmbedderAdapter(embedder)
 
 
 class Evaluator:
@@ -165,7 +101,7 @@ class Evaluator:
         if scoring_enabled and eval_emb_cfg.type:
             embedder_cls = registry.get("embedding", eval_emb_cfg.type)
             embedder_instance = embedder_cls(config=eval_emb_cfg.params)
-            self._embedder_adapter = _wrap_embedder_for_ragas(embedder_instance)
+            self._embedder_adapter = _ragas_adapter.wrap_embedder(embedder_instance)
 
         logger.info(
             "Starting evaluation: %d questions, %d runs, mode=%s",
@@ -277,10 +213,12 @@ class Evaluator:
     def _compute_metrics(
         self, samples: list[EvalSample]
     ) -> tuple[dict[str, float], list[dict[str, float | None]]]:
-        """Compute RAGAS metrics on a list of EvalSamples.
+        """Compute metrics on a list of EvalSamples via the ragas adapter.
 
-        Uses the RAGAS 0.4.x API (EvaluationDataset + SingleTurnSample)
-        with LangchainLLMWrapper for provider compatibility.
+        All ragas specifics (dataset/metric construction, ``evaluate()``) live
+        in :mod:`uwf_rag.evaluation._ragas_adapter`; this method only filters the
+        metric names, hands the judge LLM + embedder to the adapter, and
+        aggregates the returned per-sample scores.
 
         Returns:
             A tuple of (aggregate_metrics, per_sample_scores).
@@ -288,49 +226,26 @@ class Evaluator:
             per_sample_scores: one dict per sample with individual
             metric scores.  NaN values are converted to None.
         """
-        from ragas import EvaluationDataset, evaluate
-        from ragas.dataset_schema import SingleTurnSample
-
-        metric_map = _build_metric_map()
-        active = self.active_metrics
-        ragas_metrics = [metric_map[name] for name in active if name in metric_map]
-
-        if not ragas_metrics:
+        active = [m for m in self.active_metrics if m in _ragas_adapter.KNOWN_METRICS]
+        if not active:
             logger.warning("No valid RAGAS metrics to compute.")
             return {}, [{} for _ in samples]
 
-        ragas_samples = [
-            SingleTurnSample(
-                user_input=s.query,
-                response=s.response,
-                retrieved_contexts=s.retrieved_contexts,
-                reference=s.reference,
-            )
-            for s in samples
-        ]
-
-        eval_kwargs: dict[str, Any] = {
-            "run_config": self._make_run_config(),
-        }
-
+        llm = None
         if (
             self._config.evaluator_llm.provider
             and self._config.evaluator_llm.model_name
         ):
-            eval_kwargs["llm"] = self._build_evaluator_llm()
+            llm = self._build_evaluator_llm()
 
-        if self._embedder_adapter is not None:
-            eval_kwargs["embeddings"] = self._embedder_adapter
-
-        ragas_result: Any = evaluate(
-            dataset=EvaluationDataset(samples=ragas_samples),  # type: ignore[arg-type]
-            metrics=ragas_metrics,
-            **eval_kwargs,
+        # Per-sample score dicts, e.g. [{"faithfulness": 0.9, ...}].
+        scores_list = _ragas_adapter.run_eval(
+            samples,
+            active,
+            llm=llm,
+            embeddings=self._embedder_adapter,
+            run_config=self._make_run_config(),
         )
-
-        # ragas_result.scores is a list of per-sample dicts,
-        # e.g. [{"faithfulness": 0.9, "answer_correctness": 0.8}].
-        scores_list: list[dict[str, Any]] = ragas_result.scores
 
         # Aggregate: mean per metric across samples.
         # Filter both None and NaN — RAGAS returns NaN when the
@@ -360,11 +275,9 @@ class Evaluator:
         return result_dict, per_sample
 
     def _make_run_config(self) -> Any:
-        """Build a RAGAS RunConfig from evaluation settings."""
-        from ragas import RunConfig
-
+        """Build a ragas RunConfig from evaluation settings (via the adapter)."""
         cfg = self._config.run_config
-        return RunConfig(
+        return _ragas_adapter.make_run_config(
             timeout=cfg.timeout,
             max_retries=cfg.max_retries,
             max_wait=cfg.max_wait,
@@ -372,14 +285,12 @@ class Evaluator:
         )
 
     def _build_evaluator_llm(self) -> Any:
-        """Build a RAGAS-compatible LLM from config.
+        """Build a ragas-compatible judge LLM from config.
 
         Dispatches on ``evaluator_llm.provider`` to a per-provider builder that
-        returns a LangChain chat model, then wraps it once in
-        ``LangchainLLMWrapper`` (the shape RAGAS expects).
+        returns a LangChain chat model (provider knowledge, not ragas), then
+        hands it to the ragas adapter for the one ragas-side wrap.
         """
-        from ragas.llms.base import LangchainLLMWrapper
-
         llm_config = self._config.evaluator_llm
         builders = self._judge_builders()
         builder = builders.get(llm_config.provider)
@@ -388,7 +299,7 @@ class Evaluator:
                 f"Unsupported evaluator LLM provider: '{llm_config.provider}'. "
                 f"Supported: {sorted(builders)}."
             )
-        return LangchainLLMWrapper(builder(llm_config))
+        return _ragas_adapter.wrap_langchain_llm(builder(llm_config))
 
     @classmethod
     def _judge_builders(cls) -> dict[str, Any]:
