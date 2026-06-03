@@ -12,6 +12,7 @@ from uwf_rag.components.embedders import (
     GoogleEmbedder,
     HuggingFaceEmbedder,
     OpenAIEmbedder,
+    resolve_hf_prompts,
 )
 from uwf_rag.core.types import Chunk, EmbeddedChunk
 
@@ -50,7 +51,7 @@ class TestHuggingFaceEmbedder:
         embedder.embed_query("test")
 
         mock_model.encode.assert_called_once_with(
-            "test", normalize_embeddings=False, show_progress_bar=False
+            "test", normalize_embeddings=False, show_progress_bar=False, prompt=None
         )
 
     def test_embed_chunks_returns_embedded_chunks(self, mock_st_cls: MagicMock) -> None:
@@ -109,7 +110,67 @@ class TestHuggingFaceEmbedder:
         embedder.embed_query("test")
 
         mock_model.encode.assert_called_once_with(
-            "test", normalize_embeddings=True, show_progress_bar=False
+            "test", normalize_embeddings=True, show_progress_bar=False, prompt=None
+        )
+
+    def test_e5_model_applies_prompts(self, mock_st_cls: MagicMock) -> None:
+        """An e5 model auto-applies query:/passage: prompts to encode()."""
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.array([1.0])
+        mock_st_cls.return_value = mock_model
+
+        embedder = HuggingFaceEmbedder({"model_name": "intfloat/e5-base-v2"})
+        embedder.embed_query("test")
+        _, kwargs = mock_model.encode.call_args
+        assert kwargs["prompt"] == "query: "
+
+        mock_model.encode.return_value = np.array([[1.0]])
+        embedder.embed_chunks(_make_chunks(1))
+        _, kwargs = mock_model.encode.call_args
+        assert kwargs["prompt"] == "passage: "
+
+    def test_auto_prompt_off_sends_no_prompt(self, mock_st_cls: MagicMock) -> None:
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.array([1.0])
+        mock_st_cls.return_value = mock_model
+
+        embedder = HuggingFaceEmbedder(
+            {"model_name": "intfloat/e5-base-v2", "auto_prompt": False}
+        )
+        embedder.embed_query("test")
+        _, kwargs = mock_model.encode.call_args
+        assert kwargs["prompt"] is None
+
+
+class TestResolveHfPrompts:
+    def test_unknown_model_no_prompt(self) -> None:
+        assert resolve_hf_prompts("BAAI/bge-m3", None, None, True) == (None, None)
+
+    def test_e5_family_auto(self) -> None:
+        assert resolve_hf_prompts("intfloat/e5-base-v2", None, None, True) == (
+            "query: ",
+            "passage: ",
+        )
+
+    def test_multilingual_e5_family_auto(self) -> None:
+        assert resolve_hf_prompts(
+            "intfloat/multilingual-e5-large", None, None, True
+        ) == ("query: ", "passage: ")
+
+    def test_bge_v15_query_only(self) -> None:
+        q, d = resolve_hf_prompts("BAAI/bge-large-en-v1.5", None, None, True)
+        assert q is not None and d is None
+
+    def test_explicit_overrides_family(self) -> None:
+        assert resolve_hf_prompts("intfloat/e5-base-v2", "Q: ", "D: ", True) == (
+            "Q: ",
+            "D: ",
+        )
+
+    def test_auto_off_disables_family(self) -> None:
+        assert resolve_hf_prompts("intfloat/e5-base-v2", None, None, False) == (
+            None,
+            None,
         )
 
 

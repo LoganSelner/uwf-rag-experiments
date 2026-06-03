@@ -292,8 +292,14 @@ class SemanticChunker(BaseChunker):
     def _build_embed_fn(self) -> Callable[[list[str]], list[list[float]]]:
         from uwf_rag.components.embedders import HuggingFaceEmbedder
 
+        # auto_prompt=False: breakpoint detection embeds sentence groups, not
+        # queries/documents, so the family's retrieval prompts must not leak in.
         embedder = HuggingFaceEmbedder(
-            {"model_name": self.p.embedding_model, "normalize": True}
+            {
+                "model_name": self.p.embedding_model,
+                "normalize": True,
+                "auto_prompt": False,
+            }
         )
 
         def embed(texts: list[str]) -> list[list[float]]:

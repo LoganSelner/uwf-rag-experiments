@@ -5,6 +5,7 @@ Each embedder produces vector representations of text chunks and queries.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
 from typing import Any
@@ -36,6 +37,74 @@ _retry_decorator = retry(
 )
 
 
+@dataclass(frozen=True)
+class _ModelPrompts:
+    """Canonical encode prompts for an embedding-model family.
+
+    ``query`` is prepended to query text, ``document`` to indexed text. Either
+    may be ``None`` (e.g. BGE-v1.5 instructs only the query side).
+    """
+
+    query: str | None = None
+    document: str | None = None
+
+
+# Curated, declarative table of the asymmetric query/document prompts that
+# popular sentence-transformers retrieval models expect, applied automatically
+# (``auto_prompt``) so a model swapped in via config is wired the way it is used
+# in practice — not silently mis-prompted. Keyed by a lowercased ``model_name``
+# prefix; longest match wins. Models absent from the table (e.g. ``bge-m3``,
+# which needs no prefix) get no prompt. Explicit ``query_prompt`` /
+# ``document_prompt`` params always override this table.
+#
+# Sources: intfloat E5 model cards require "query: "/"passage: "; BAAI BGE-v1.5
+# English cards recommend the query instruction below.
+_BGE_V15_QUERY = "Represent this sentence for searching relevant passages: "
+_MODEL_PROMPT_DEFAULTS: dict[str, _ModelPrompts] = {
+    "intfloat/e5-": _ModelPrompts(query="query: ", document="passage: "),
+    "intfloat/multilingual-e5": _ModelPrompts(query="query: ", document="passage: "),
+    "baai/bge-small-en-v1.5": _ModelPrompts(query=_BGE_V15_QUERY),
+    "baai/bge-base-en-v1.5": _ModelPrompts(query=_BGE_V15_QUERY),
+    "baai/bge-large-en-v1.5": _ModelPrompts(query=_BGE_V15_QUERY),
+}
+
+
+def _match_family(model_name: str) -> _ModelPrompts | None:
+    """Case-insensitive longest-prefix match against ``_MODEL_PROMPT_DEFAULTS``."""
+    key = model_name.lower()
+    best: tuple[int, _ModelPrompts] | None = None
+    for prefix, prompts in _MODEL_PROMPT_DEFAULTS.items():
+        if key.startswith(prefix) and (best is None or len(prefix) > best[0]):
+            best = (len(prefix), prompts)
+    return best[1] if best else None
+
+
+def resolve_hf_prompts(
+    model_name: str,
+    query_prompt: str | None,
+    document_prompt: str | None,
+    auto_prompt: bool,
+) -> tuple[str | None, str | None]:
+    """Resolve the effective ``(query, document)`` encode prompts.
+
+    Explicit params win; otherwise, when ``auto_prompt`` is set, fall back to the
+    known-family default; otherwise ``None`` (no prompt — the historical
+    behavior). A pure function of its inputs, so the embedder and any audit agree
+    on what a given ``model_name`` resolves to. The result is therefore a
+    deterministic function of the (fingerprinted) ``model_name`` plus the
+    (git-tracked) table, so an auto-applied prompt stays reproducible without
+    living in the config.
+    """
+    family = _match_family(model_name) if auto_prompt else None
+    q = query_prompt if query_prompt is not None else (family.query if family else None)
+    d = (
+        document_prompt
+        if document_prompt is not None
+        else (family.document if family else None)
+    )
+    return q, d
+
+
 @registry.register("embedding", "huggingface")
 class HuggingFaceEmbedder(BaseEmbedder):
     """Embeds text using a HuggingFace sentence-transformers model.
@@ -50,12 +119,32 @@ class HuggingFaceEmbedder(BaseEmbedder):
         model_name: str = "BAAI/bge-m3"
         normalize: bool = True
         batch_size: int = 32
+        # Asymmetric retrieval prompts. Explicit values win; left None they are
+        # auto-resolved from the model family when ``auto_prompt`` is set (e5
+        # gets "query: "/"passage: ", bge-v1.5 a query instruction); a model
+        # with no known default (e.g. bge-m3) gets no prompt either way.
+        query_prompt: str | None = None
+        document_prompt: str | None = None
+        auto_prompt: bool = True
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self.p = self.Params.model_validate(self.config)
         self._normalize = self.p.normalize
         self._batch_size = self.p.batch_size
+        self._query_prompt, self._document_prompt = resolve_hf_prompts(
+            self.p.model_name,
+            self.p.query_prompt,
+            self.p.document_prompt,
+            self.p.auto_prompt,
+        )
+        if self._query_prompt is not None or self._document_prompt is not None:
+            logger.info(
+                "HuggingFaceEmbedder '%s' applying prompts (query=%r, document=%r)",
+                self.p.model_name,
+                self._query_prompt,
+                self._document_prompt,
+            )
         self._model = SentenceTransformer(self.p.model_name)
 
     def embed_chunks(self, chunks: list[Chunk]) -> list[EmbeddedChunk]:
@@ -65,6 +154,7 @@ class HuggingFaceEmbedder(BaseEmbedder):
             normalize_embeddings=self._normalize,
             batch_size=self._batch_size,
             show_progress_bar=False,
+            prompt=self._document_prompt,
         )
         return [
             EmbeddedChunk(chunk=chunk, embedding=vec.tolist())
@@ -76,6 +166,7 @@ class HuggingFaceEmbedder(BaseEmbedder):
             query,
             normalize_embeddings=self._normalize,
             show_progress_bar=False,
+            prompt=self._query_prompt,
         )
         return vec.tolist()
 
