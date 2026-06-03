@@ -13,7 +13,7 @@
 #   - multi_query_hybrid_rerank.yaml → adds reranking on top
 #
 # Variables changed from base.yaml:
-#   - query.query_transform.type: contextualizer → multi_query
+#   - query.query_transform.type: passthrough → multi_query
 #   - query.retrieval.type: dense → hybrid
 #   - indexing.sparse_index: adds bm25 (reuses Phase A index cache)
 

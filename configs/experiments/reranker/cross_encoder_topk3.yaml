@@ -1,12 +1,12 @@
-# Cross-encoder reranking with a wider candidate pool.
+# Cross-encoder reranking with a tighter final context.
 #
-# Expands retrieval from the baseline 3 candidates to 10, but still
-# keeps only 3 chunks after reranking. Tests whether the reranker
-# benefits from more candidates without changing final context length.
+# Reranks the baseline's 10-candidate pool but keeps only 3 chunks
+# (vs. the baseline's 5). Tests whether a tighter, higher-precision
+# final context helps after reranking.
 #
 # Variables changed vs baseline: reranking (none → cross_encoder),
-# top_k_retrieve (3 → 10)
-# Compare against: reranker_cross_encoder (isolates candidate-pool effect)
+# top_k_final (5 → 3); top_k_retrieve stays at the baseline's 10.
+# Compare against: reranker_cross_encoder (10/5) — isolates top_k_final.
 
 extends: ../../base.yaml
 

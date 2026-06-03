@@ -11,7 +11,7 @@
 #   - retrieval/hybrid_rrf.yaml → isolates HyDE vs. raw query on hybrid
 #
 # Variables changed from base.yaml:
-#   - query.query_transform.type: contextualizer → hyde
+#   - query.query_transform.type: passthrough → hyde
 #   - query.query_transform.params.include_original: true (route original to bm25)
 #   - query.query_transform.params.original_branch: "bm25"
 #   - query.retrieval.type: dense → hybrid (with bm25 + dense children)

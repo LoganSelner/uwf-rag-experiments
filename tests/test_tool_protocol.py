@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from uwf_rag.components._tool_protocol import (
+from ragbench.components._tool_protocol import (
     dump_arguments,
     parse_arguments,
     synthesize_call_id,
     to_openai_tools,
 )
-from uwf_rag.core.types import ToolSpec
+from ragbench.core.types import ToolSpec
 
 
 class TestToOpenAITools:

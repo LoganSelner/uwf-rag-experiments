@@ -8,8 +8,8 @@ import uuid
 import numpy as np
 import pytest
 
-from uwf_rag.components.vectorstores import ChromaVectorStore, FAISSVectorStore
-from uwf_rag.core.types import Chunk, EmbeddedChunk, RetrievedChunk
+from ragbench.components.vectorstores import ChromaVectorStore, FAISSVectorStore
+from ragbench.core.types import Chunk, EmbeddedChunk, RetrievedChunk
 
 
 def _unique_chroma(**overrides: object) -> ChromaVectorStore:
@@ -67,6 +67,24 @@ class TestFAISSVectorStore:
         results = store.search([0.1] * 8, top_k=5)
         for r in results:
             assert isinstance(r.score, float)
+
+    def test_cosine_normalizes_non_unit_vectors(self) -> None:
+        """Cosine must normalize internally: a parallel-but-non-unit query scores
+        ~1.0 and all scores stay in [-1, 1] (raw inner product would blow past 1)."""
+        store = FAISSVectorStore({"metric": "cosine"})
+        c0 = EmbeddedChunk(
+            chunk=Chunk(content="a", chunk_id="a", metadata={}),
+            embedding=[3.0, 4.0],  # norm 5 — deliberately non-unit
+        )
+        c1 = EmbeddedChunk(
+            chunk=Chunk(content="b", chunk_id="b", metadata={}),
+            embedding=[-4.0, 3.0],  # orthogonal to c0
+        )
+        store.add([c0, c1])
+        results = store.search([6.0, 8.0], top_k=2)  # parallel to c0, non-unit
+        assert all(-1.0001 <= r.score <= 1.0001 for r in results)
+        assert results[0].chunk.chunk_id == "a"
+        assert results[0].score == pytest.approx(1.0, abs=1e-4)
 
     def test_l2_metric_constructor(self) -> None:
         store = FAISSVectorStore({"metric": "l2"})

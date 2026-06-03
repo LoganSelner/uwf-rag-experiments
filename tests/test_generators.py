@@ -6,14 +6,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from uwf_rag.components._tool_protocol import to_openai_tools
-from uwf_rag.components.generators import (
+from ragbench.components._tool_protocol import to_openai_tools
+from ragbench.components.generators import (
     EdenAIGenerator,
     GoogleGenerator,
     OllamaGenerator,
     OpenAIGenerator,
 )
-from uwf_rag.core.types import GenerationResult, ToolCall, ToolSpec
+from ragbench.core.types import GenerationResult, ToolCall, ToolSpec
 
 
 def _tool_specs() -> list[ToolSpec]:
@@ -300,16 +300,16 @@ class TestEdenAIGeneratorInit:
         with pytest.raises(ValueError, match="sub_provider"):
             # Patch dotenv so it doesn't touch the real env
             with patch(
-                "uwf_rag.components.generators.os.environ.get", return_value="fake-key"
+                "ragbench.components.generators.os.environ.get", return_value="fake-key"
             ):
-                from uwf_rag.components.generators import EdenAIGenerator
+                from ragbench.components.generators import EdenAIGenerator
 
                 EdenAIGenerator({"llm": {"model_name": "gpt-4o"}})
 
     @patch.dict("os.environ", {"EDENAI_API_KEY": ""}, clear=False)
     def test_missing_api_key_raises(self) -> None:
         with pytest.raises(ValueError, match="EDENAI_API_KEY"):
-            from uwf_rag.components.generators import EdenAIGenerator
+            from ragbench.components.generators import EdenAIGenerator
 
             EdenAIGenerator(
                 {

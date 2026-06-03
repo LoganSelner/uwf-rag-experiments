@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 
-from uwf_rag.components.chunkers import (
+from ragbench.components.chunkers import (
     CustomRecursiveChunker,
     LangChainRecursiveChunker,
     SemanticChunker,
 )
-from uwf_rag.core.types import Document
+from ragbench.core.types import Document
 
 
 def _stub_embed(texts: list[str]) -> list[list[float]]:
@@ -177,13 +177,13 @@ class TestLangChainRecursiveChunker:
         assert len(chunks) >= 2
 
     def test_registered_as_recursive_langchain(self) -> None:
-        from uwf_rag.core.registry import registry
+        from ragbench.core.registry import registry
 
         cls = registry.get("chunking", "recursive_langchain")
         assert cls is LangChainRecursiveChunker
 
     def test_custom_registered_as_recursive_custom(self) -> None:
-        from uwf_rag.core.registry import registry
+        from ragbench.core.registry import registry
 
         cls = registry.get("chunking", "recursive_custom")
         assert cls is CustomRecursiveChunker
@@ -204,7 +204,7 @@ class TestSemanticChunker:
         return SemanticChunker(config=params, embed_fn=_stub_embed)
 
     def test_registered_as_semantic(self) -> None:
-        from uwf_rag.core.registry import registry
+        from ragbench.core.registry import registry
 
         assert registry.get("chunking", "semantic") is SemanticChunker
 

@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 
 # Trigger component registration so the registry is populated (side-effect import).
-import uwf_rag.components  # noqa: F401
-from uwf_rag.core.config import ExperimentConfig
-from uwf_rag.core.types import (
+import ragbench.components  # noqa: F401
+from ragbench.core.config import ExperimentConfig
+from ragbench.core.types import (
     Chunk,
     Document,
     EmbeddedChunk,

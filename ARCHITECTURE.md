@@ -23,7 +23,7 @@ text lives in `PromptConfig`. The pipeline reads these values;
 nothing overrides them at runtime.
 
 **Typed config end to end.** Config is a tree of **Pydantic v2 models**
-(`ExperimentConfig` and friends in `core/config.py`). Each component
+(`ExperimentConfig` and friends in `core/config`). Each component
 declares a nested `Params(ComponentParams)` model and validates its raw
 config dict into `self.p` exactly once at construction, so a component's
 defaults and constraints live in one typed place — not scattered across
@@ -67,9 +67,10 @@ cache identity.
 
 ```
 ┌─────────────────────────────────────────────┐
-│  scripts/                                   │  Application boundary
-│    run_experiment.py                        │  Orchestrates: load config →
-│    compare.py                               │  validate → build → evaluate → save
+│  scripts/ (thin CLIs)  +  ragbench.experiment│  Application boundary
+│    run_experiment.py   run_matrix.py        │  experiment.py orchestrates:
+│    compare.py                               │  load → validate → build →
+│                                             │  evaluate → save
 └────────┬──────────────────────┬─────────────┘
          │                      │
          ▼                      ▼
@@ -94,7 +95,7 @@ cache identity.
          ▼                       ▼
 ┌─────────────────────────────────────────────┐
 │  core/                                      │  Foundation
-│    types.py    config.py    registry.py     │  Shared types, config,
+│    types.py    config/     registry.py     │  Shared types, config,
 │    git.py                                   │  component registry
 └─────────────────────────────────────────────┘
 ```
@@ -108,19 +109,23 @@ Key dependency boundaries:
   implemented), and test mocks.
 
 - `pipeline/rag.py` does not import from `evaluation/`. The
-  experiment orchestration (build pipeline → evaluate → save)
-  lives in `scripts/run_experiment.py`, at the application
-  boundary.
+  experiment orchestration (load config → validate → build pipeline →
+  evaluate → save) lives in `ragbench.experiment`
+  (`run_single_experiment` / `run_matrix`); the `scripts/` are thin CLI
+  wrappers over it. `experiment.py` sits above both `pipeline/` and
+  `evaluation/`, so the rule "`pipeline` never imports `evaluation`"
+  still holds.
 
-- `uwf_rag/components/__init__.py` triggers registration side effects
+- `ragbench/components/__init__.py` triggers registration side effects
   (`@registry.register` decorators). This import happens only at
-  application entry points: `scripts/run_experiment.py` and
-  `tests/conftest.py` (`import uwf_rag.components`). Pipeline modules
+  application entry points: `scripts/run_experiment.py`,
+  `scripts/run_matrix.py`, and `tests/conftest.py`
+  (`import ragbench.components`). Pipeline modules
   never trigger it.
 
-All source lives under a single installed package, `src/uwf_rag/`
-(`uv pip install -e .`), so modules import as `uwf_rag.core`,
-`uwf_rag.components`, etc. — no `sys.path` manipulation at the entry
+All source lives under a single installed package, `src/ragbench/`
+(`uv pip install -e .`), so modules import as `ragbench.core`,
+`ragbench.components`, etc. — no `sys.path` manipulation at the entry
 points.
 
 ---
@@ -128,10 +133,14 @@ points.
 ## File Map
 
 ```
-src/uwf_rag/
+src/ragbench/
 ├── core/
 │   ├── types.py          Data contracts between pipeline stages (Message TypedDict, dataclasses)
-│   ├── config.py         Pydantic config models + YAML loading/inheritance + validation
+│   ├── config/           Config package (re-exported from its __init__):
+│   │   ├── models.py       Pydantic models + ValidateContext + index fingerprint
+│   │   ├── loading.py      YAML loading + extends-inheritance deep-merge
+│   │   ├── validation.py   validate_config + per-section checks
+│   │   └── errors.py       ConfigValidationError
 │   ├── registry.py       Component registry (@register / get)
 │   ├── fusion.py         Rank-list fusion primitives (RRF + weighted + max-dedup)
 │   └── git.py            Git SHA + dirty flag for reproducibility
@@ -161,17 +170,21 @@ src/uwf_rag/
 │   ├── agent.py           AgentPipeline (single-agent ReAct, native tool calling)
 │   └── rag.py             RAGPipeline (top-level dispatcher)
 │
-└── evaluation/
-    ├── evaluator.py       RAGAS integration + multi-run execution
-    ├── results.py         Experiment result serialization
-    └── comparison.py      Cross-experiment tables + config diffing
+├── evaluation/
+│   ├── evaluator.py       RAGAS integration + multi-run execution
+│   ├── _ragas_adapter.py  Anti-corruption layer: the only module importing ragas
+│   ├── results.py         Experiment result serialization
+│   └── comparison.py      Cross-experiment tables + config diffing
+│
+└── experiment.py         Orchestration: run_single_experiment / run_matrix
 
 configs/
 ├── base.yaml              Default baseline (all experiments inherit)
 └── experiments/            Per-experiment overrides (inherit from base)
 
 scripts/
-├── run_experiment.py      CLI entry point for running experiments
+├── run_experiment.py      CLI: run one experiment (wraps run_single_experiment)
+├── run_matrix.py          CLI: run + compare a matrix (wraps run_matrix)
 └── compare.py             CLI entry point for comparing results
 
 tests/
@@ -288,7 +301,7 @@ values are supported:
 
 ## Type System
 
-All types live in `src/uwf_rag/core/types.py`.
+All types live in `src/ragbench/core/types.py`.
 
 | Type | Produced By | Consumed By |
 |------|------------|-------------|
@@ -458,7 +471,8 @@ alongside the new sparse index, by design.
 ### Validation
 
 `validate_config(config, registry)` runs before pipeline
-construction (called in `scripts/run_experiment.py`). It checks:
+construction (called in `ragbench.experiment.run_single_experiment`).
+It checks:
 
 - Every component type referenced in config is registered
 - `query.query_transform.fusion` is one of `{rrf, max}`
@@ -480,7 +494,7 @@ construction (called in `scripts/run_experiment.py`). It checks:
 **Component-owned param checks.** Retrieval-type-specific rules (a `bm25`
 retriever needs `indexing.sparse_index`; a `hybrid` retriever's child roster,
 nesting ban, fusion mode, rrf_k, and weights) are *not* hard-coded in
-`core/config.py`. `validate_config` resolves the retriever class from the
+`core/config`. `validate_config` resolves the retriever class from the
 registry and calls its `validate_params(params, ctx)` classmethod — where `ctx`
 is a `ValidateContext` carrying the registry plus the cross-config values
 (`sparse_index_type`, `top_k_retrieve`) — folding the returned strings into the
@@ -499,7 +513,7 @@ config's component `params` against each component's `Params` model.
 ## Component Interfaces
 
 All abstract base classes (and `ComponentParams`) live in
-`src/uwf_rag/components/base.py`.
+`src/ragbench/components/base.py`.
 
 | Interface | Registry Category | Primary Method | Signature |
 |-----------|------------------|----------------|-----------|
@@ -770,10 +784,12 @@ every question in the dataset, `num_runs` times. Failed queries
 are logged and skipped (one bad response doesn't crash the run).
 Returns an `ExperimentResult` with aggregated and per-run metrics.
 
-**RAGAS integration:** Uses the RAGAS 0.4.x API
-(`EvaluationDataset`, `SingleTurnSample`, private metric
-submodules to avoid deprecation warnings). Metrics are built once
-and cached via `@functools.cache`.
+**RAGAS integration:** All `ragas` use is quarantined in
+`evaluation/_ragas_adapter.py` (see *RAGAS is quarantined* below) —
+the legacy `evaluate()` API (`EvaluationDataset`, `SingleTurnSample`,
+private metric submodules to avoid deprecation warnings; metrics
+built once via `@functools.cache`). The evaluator calls the adapter,
+never `ragas` directly.
 
 **Evaluator embedder:** The evaluator builds its own embedder from
 `evaluator_embedding` config via the component registry,
@@ -781,15 +797,34 @@ independent of the pipeline. This ensures all experiments are
 measured with the same embedding model regardless of which
 pipeline embedder is used — eliminating a confounding variable
 in cross-experiment comparisons. The embedder is adapted to
-RAGAS's `BaseRagasEmbedding` interface via
-`_wrap_embedder_for_ragas()`.
+RAGAS's `BaseRagasEmbedding` interface inside the ragas adapter
+(`evaluation/_ragas_adapter.wrap_embedder`).
 
 **Evaluator LLM:** RAGAS needs an LLM judge for most metrics
 (faithfulness, answer_correctness, context_precision, etc.).
-Configured via `evaluator_llm` in the config. Supports Ollama
-(local), EdenAI (cloud), and Google (cloud) providers. Built
-through `_build_evaluator_llm()` which returns a
-`LangchainLLMWrapper`.
+Configured via `evaluator_llm`; supports Ollama (local), EdenAI,
+Google, and OpenAI. `_build_evaluator_llm()` builds a per-provider
+**LangChain** chat model and hands it to the ragas adapter's
+`wrap_langchain_llm`.
+
+**RAGAS is quarantined.** Every `ragas` import — including the
+deprecated private `ragas.metrics._*` classes — lives in one module,
+`evaluation/_ragas_adapter.py`; the evaluator imports only that. The
+harness stays on the legacy `evaluate()` path (pinned `ragas<0.5`)
+because ragas's non-deprecated `collections` metrics require an
+`InstructorBaseRagasLLM` that can't wrap EdenAI, whereas
+`evaluate(llm=LangchainLLMWrapper(...))` can. A ragas bump touches that
+one file.
+
+**Two LLM construction paths (deliberate).** The pipeline's answer /
+reasoning generators are built by `build_generator(LLMConfig)` →
+provider **SDK clients** (`BaseGenerator`), while the RAGAS judge is a
+**LangChain** chat model wrapped for ragas. They are separate by
+necessity: ragas only accepts a LangChain-wrapped (or its own
+structured) LLM, and EdenAI — the harness's gateway provider — exists
+only as `langchain-community`'s `ChatEdenAI`. So the model named in
+`query.generator` vs `evaluation.evaluator_llm` runs through different
+client libraries; the upside is EdenAI works on both sides.
 
 **Run config:** `EvalRunConfig` controls RAGAS execution settings:
 `timeout` (seconds per evaluation call), `max_retries`,
@@ -877,36 +912,42 @@ fresh `ComponentRegistry()` instance.
 ## Experiment Lifecycle
 
 ```
-scripts/run_experiment.py
+scripts/run_experiment.py  (thin CLI)
     │
-    ├── import uwf_rag.components  (triggers registration)
-    ├── ExperimentConfig.from_yaml (loads + resolves inheritance)
-    ├── validate_config            (checks types, constraints, files)
-    ├── get_git_sha / get_git_dirty (captures repo state)
-    │
-    ├── RAGPipeline.from_config
-    │   ├── IndexingPipeline.run_or_load_cache
-    │   │   ├── check fingerprint cache → load or build
-    │   │   └── return IndexArtifact
-    │   └── QueryPipeline.from_config
-    │       └── build retriever(vectorstore + embedder) + build_generator(...)
-    │
-    ├── Evaluator.evaluate(rag)
-    │   ├── build evaluator embedder from config (via registry)
-    │   ├── for each run:
-    │   │   ├── for each question: rag.query() → EvalSample
-    │   │   └── RAGAS evaluate → per-sample scores
-    │   └── aggregate metrics (mean ± std)
-    │
-    └── save_experiment
-        └── write summary.json + config.yaml + run_N.jsonl
+    ├── import ragbench.components  (triggers registration)
+    ├── configure_runtime()         (load .env, GPU perf)
+    └── ragbench.experiment.run_single_experiment()
+        ├── ExperimentConfig.from_yaml (loads + resolves inheritance)
+        ├── validate_config            (checks types, constraints, files)
+        ├── capture_git_info           (git sha + dirty, for reproducibility)
+        │
+        ├── RAGPipeline.from_config
+        │   ├── IndexingPipeline.run_or_load_cache
+        │   │   ├── check fingerprint cache → load or build
+        │   │   └── return IndexArtifact
+        │   └── QueryPipeline.from_config
+        │       └── build retriever(vectorstore + embedder) + build_generator(...)
+        │
+        ├── Evaluator.evaluate(rag)
+        │   ├── build evaluator embedder from config (via registry)
+        │   ├── for each run:
+        │   │   ├── for each question: rag.query() → EvalSample
+        │   │   └── RAGAS evaluate (via _ragas_adapter) → per-sample scores
+        │   └── aggregate metrics (mean ± std)
+        │
+        └── save_experiment
+            └── write summary.json + config.yaml + run_N.jsonl
+
+scripts/run_matrix.py wraps ragbench.experiment.run_matrix() — the same
+run_single_experiment over many configs (shared git snapshot, failures skipped),
+then an optional comparison table.
 ```
 
 ---
 
 ## Adding a New Component
 
-1. Write the class in the appropriate `src/uwf_rag/components/*.py` file
+1. Write the class in the appropriate `src/ragbench/components/*.py` file
 2. Inherit from the base class, implement required methods
 3. Declare a nested `class Params(ComponentParams)` for its config and read
    `self.p` (validate it in `__init__` with `self.Params.model_validate(self.config)`)
@@ -915,7 +956,7 @@ scripts/run_experiment.py
    relying on the default `cls(config=params)`. Retrievers and tools must;
    most stages don't.
 5. Decorate with `@registry.register("category", "name")`
-6. Ensure the file is imported in `src/uwf_rag/components/__init__.py`
+6. Ensure the file is imported in `src/ragbench/components/__init__.py`
 7. Add an inventory assertion in `tests/test_registry.py`
 8. Reference `type: "name"` in a YAML experiment config
 9. Run `make qa` to verify

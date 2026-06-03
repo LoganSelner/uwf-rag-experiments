@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from uwf_rag.components.base import BaseGenerator
-from uwf_rag.components.defaults import NoOpChunkEnricher
-from uwf_rag.components.enrichers import ContextualChunkEnricher
-from uwf_rag.core.registry import registry
-from uwf_rag.core.types import Chunk, Document, GenerationResult
+from ragbench.components.base import BaseGenerator
+from ragbench.components.defaults import NoOpChunkEnricher
+from ragbench.components.enrichers import ContextualChunkEnricher
+from ragbench.core.registry import registry
+from ragbench.core.types import Chunk, Document, GenerationResult
 
 # --- fake generators registered for offline enrichment tests ---------------
 

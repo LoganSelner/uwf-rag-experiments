@@ -1,4 +1,4 @@
-"""Tests for src/uwf_rag/components/query_transforms.py.
+"""Tests for src/ragbench/components/query_transforms.py.
 
 The LLM-backed transformers receive their reasoning generator via constructor
 injection (the pipeline builds it through ``build_generator``), so tests pass a
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from uwf_rag.components.query_transforms import (
+from ragbench.components.query_transforms import (
     _DEFAULT_HYDE_SYSTEM_PROMPT,
     _DEFAULT_MULTI_QUERY_SYSTEM_PROMPT,
     _DEFAULT_SYSTEM_PROMPT,
@@ -20,7 +20,7 @@ from uwf_rag.components.query_transforms import (
     MultiQueryQueryTransformer,
     _parse_numbered_list,
 )
-from uwf_rag.core.types import GenerationResult, TransformedQuery
+from ragbench.core.types import GenerationResult, TransformedQuery
 
 
 def _mock_generator(answer: str = "Standalone question") -> MagicMock:

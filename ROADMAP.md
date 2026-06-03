@@ -522,6 +522,24 @@ title-prepending).
   embedding. Performance only, no correctness issue. Could lazy-load
   `HuggingFaceEmbedder` if startup becomes a bottleneck.
 
+### Deferred quality follow-ups (documented, not scheduled)
+
+Surfaced by the 2026-06 hardening review; intentionally not done then to keep that
+PR focused. None affect correctness.
+
+- **Generators cross-provider duplication (LOW):** `components/generators.py` repeats
+  a Params/api-key/retry/extract skeleton per provider. A thin SDK-client base
+  (`_get_api_key`, unified `_call_api` naming, a message-translation base) could lift
+  ~20%. Quality only — provider APIs genuinely differ.
+- **Index persistence uses pickle (LOW):** FAISS/BM25 `chunks.pkl` is version-fragile
+  and unsafe to share. Move to a versioned/safe format only if indexes are ever shared.
+- **HyDE `num_hypotheticals>1` (LOW):** fuses rank lists rather than averaging
+  embeddings as in Gao et al.; the default (1) is paper-faithful. Documented in the
+  transformer's docstring.
+- **`recursive_custom` vs `recursive_langchain` (LOW):** two near-equivalent chunkers;
+  keep as a deliberate alt implementation or drop one.
+- **`tests/` excluded from mypy (LOW):** the strict type gate doesn't cover tests.
+
 ---
 
 ## 8. Dependencies by Phase
@@ -590,13 +608,13 @@ baseline is `configs/base.yaml` itself; no separate `dense.yaml`.
 
 | Experiment | Isolates |
 |-----------|----------|
-| `cross_encoder` | reranking on/off |
-| `cross_encoder_topk{3,5,10}` | final-chunk count under reranking |
+| `cross_encoder` | reranking on/off (on the 10/5 baseline) |
+| `cross_encoder_topk{3,5,10}` | top_k under reranking (pool depth + final-chunk count) |
 
 ### Query Optimization (Phase B, done)
 
 All configs under `configs/experiments/query_transform/`. Compare
-against `base.yaml` (contextualizer) and the Phase A retrieval matrix.
+against `base.yaml` (passthrough) and the Phase A retrieval matrix.
 
 | Experiment | Isolates |
 |-----------|----------|
