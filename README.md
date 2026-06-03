@@ -276,9 +276,9 @@ results/<experiment_name>/
 Add a new component in four steps:
 
 ```python
-# 1. Write the class in src/uwf_rag/components/<category>.py
-from uwf_rag.components.base import BaseChunker, ComponentParams
-from uwf_rag.core.registry import registry
+# 1. Write the class in src/ragbench/components/<category>.py
+from ragbench.components.base import BaseChunker, ComponentParams
+from ragbench.core.registry import registry
 
 @registry.register("chunking", "my_chunker")
 class MyChunker(BaseChunker):
@@ -294,8 +294,8 @@ class MyChunker(BaseChunker):
 ```
 
 ```python
-# 2. Ensure the file is imported in src/uwf_rag/components/__init__.py
-from uwf_rag.components import my_module  # noqa: F401
+# 2. Ensure the file is imported in src/ragbench/components/__init__.py
+from ragbench.components import my_module  # noqa: F401
 ```
 
 ```python

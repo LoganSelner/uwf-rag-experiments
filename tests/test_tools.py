@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from uwf_rag.components.build import BuildContext
-from uwf_rag.components.tools import RAGSearchTool, tool_to_spec
-from uwf_rag.core.config import AgentDefinitionConfig, ExperimentConfig
-from uwf_rag.core.registry import registry
-from uwf_rag.core.types import Chunk, GenerationResult, RetrievedChunk, ToolResult
+from ragbench.components.build import BuildContext
+from ragbench.components.tools import RAGSearchTool, tool_to_spec
+from ragbench.core.config import AgentDefinitionConfig, ExperimentConfig
+from ragbench.core.registry import registry
+from ragbench.core.types import Chunk, GenerationResult, RetrievedChunk, ToolResult
 
 
 def _rc(chunk_id: str, text: str, score: float = 0.9) -> RetrievedChunk:
@@ -68,7 +68,7 @@ class TestRAGSearchTool:
         assert result.retrieved_chunks == []
         assert "failed" in result.content.lower()
 
-    @patch("uwf_rag.pipeline.query.QueryPipeline.from_config")
+    @patch("ragbench.pipeline.query.QueryPipeline.from_config")
     def test_build_forces_passthrough_transform(
         self, mock_from_config: MagicMock
     ) -> None:
@@ -102,7 +102,9 @@ class TestRAGSearchTool:
         assert passed_query_config.reranking.type == "cross_encoder"
         assert mock_from_config.call_args.kwargs.get("retrieval_only") is True
 
-    @patch("uwf_rag.pipeline.query.QueryPipeline.from_config", return_value=MagicMock())
+    @patch(
+        "ragbench.pipeline.query.QueryPipeline.from_config", return_value=MagicMock()
+    )
     def test_build_default_name_and_description(
         self, _mock_from_config: MagicMock
     ) -> None:

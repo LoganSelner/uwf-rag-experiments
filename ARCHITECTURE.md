@@ -67,7 +67,7 @@ cache identity.
 
 ```
 ┌─────────────────────────────────────────────┐
-│  scripts/ (thin CLIs)  +  uwf_rag.experiment│  Application boundary
+│  scripts/ (thin CLIs)  +  ragbench.experiment│  Application boundary
 │    run_experiment.py   run_matrix.py        │  experiment.py orchestrates:
 │    compare.py                               │  load → validate → build →
 │                                             │  evaluate → save
@@ -110,21 +110,21 @@ Key dependency boundaries:
 
 - `pipeline/rag.py` does not import from `evaluation/`. The
   experiment orchestration (load config → validate → build pipeline →
-  evaluate → save) lives in `uwf_rag.experiment`
+  evaluate → save) lives in `ragbench.experiment`
   (`run_single_experiment` / `run_matrix`); the `scripts/` are thin CLI
   wrappers over it. `experiment.py` sits above both `pipeline/` and
   `evaluation/`, so the rule "`pipeline` never imports `evaluation`"
   still holds.
 
-- `uwf_rag/components/__init__.py` triggers registration side effects
+- `ragbench/components/__init__.py` triggers registration side effects
   (`@registry.register` decorators). This import happens only at
   application entry points: `scripts/run_experiment.py` and
-  `tests/conftest.py` (`import uwf_rag.components`). Pipeline modules
+  `tests/conftest.py` (`import ragbench.components`). Pipeline modules
   never trigger it.
 
-All source lives under a single installed package, `src/uwf_rag/`
-(`uv pip install -e .`), so modules import as `uwf_rag.core`,
-`uwf_rag.components`, etc. — no `sys.path` manipulation at the entry
+All source lives under a single installed package, `src/ragbench/`
+(`uv pip install -e .`), so modules import as `ragbench.core`,
+`ragbench.components`, etc. — no `sys.path` manipulation at the entry
 points.
 
 ---
@@ -132,7 +132,7 @@ points.
 ## File Map
 
 ```
-src/uwf_rag/
+src/ragbench/
 ├── core/
 │   ├── types.py          Data contracts between pipeline stages (Message TypedDict, dataclasses)
 │   ├── config/           Config package (re-exported from its __init__):
@@ -300,7 +300,7 @@ values are supported:
 
 ## Type System
 
-All types live in `src/uwf_rag/core/types.py`.
+All types live in `src/ragbench/core/types.py`.
 
 | Type | Produced By | Consumed By |
 |------|------------|-------------|
@@ -511,7 +511,7 @@ config's component `params` against each component's `Params` model.
 ## Component Interfaces
 
 All abstract base classes (and `ComponentParams`) live in
-`src/uwf_rag/components/base.py`.
+`src/ragbench/components/base.py`.
 
 | Interface | Registry Category | Primary Method | Signature |
 |-----------|------------------|----------------|-----------|
@@ -891,7 +891,7 @@ fresh `ComponentRegistry()` instance.
 ```
 scripts/run_experiment.py
     │
-    ├── import uwf_rag.components  (triggers registration)
+    ├── import ragbench.components  (triggers registration)
     ├── ExperimentConfig.from_yaml (loads + resolves inheritance)
     ├── validate_config            (checks types, constraints, files)
     ├── get_git_sha / get_git_dirty (captures repo state)
@@ -918,7 +918,7 @@ scripts/run_experiment.py
 
 ## Adding a New Component
 
-1. Write the class in the appropriate `src/uwf_rag/components/*.py` file
+1. Write the class in the appropriate `src/ragbench/components/*.py` file
 2. Inherit from the base class, implement required methods
 3. Declare a nested `class Params(ComponentParams)` for its config and read
    `self.p` (validate it in `__init__` with `self.Params.model_validate(self.config)`)
@@ -927,7 +927,7 @@ scripts/run_experiment.py
    relying on the default `cls(config=params)`. Retrievers and tools must;
    most stages don't.
 5. Decorate with `@registry.register("category", "name")`
-6. Ensure the file is imported in `src/uwf_rag/components/__init__.py`
+6. Ensure the file is imported in `src/ragbench/components/__init__.py`
 7. Add an inventory assertion in `tests/test_registry.py`
 8. Reference `type: "name"` in a YAML experiment config
 9. Run `make qa` to verify

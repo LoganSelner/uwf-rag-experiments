@@ -23,7 +23,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from uwf_rag.evaluation.comparison import (
+from ragbench.evaluation.comparison import (
     DEFAULT_METRICS,
     METRIC_SHORT_NAMES,
     compare_experiments,

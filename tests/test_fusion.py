@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from uwf_rag.core.fusion import (
+from ragbench.core.fusion import (
     max_score_dedup,
     reciprocal_rank_fusion,
     weighted_score_fusion,

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from uwf_rag.core.types import (
+from ragbench.core.types import (
     Chunk,
     GenerationResult,
     RetrievedChunk,
@@ -16,10 +16,10 @@ from uwf_rag.core.types import (
     ToolSpec,
     TransformedQuery,
 )
-from uwf_rag.pipeline.agent import AgentPipeline
-from uwf_rag.pipeline.indexing import IndexArtifact
-from uwf_rag.pipeline.query import QueryPipeline
-from uwf_rag.pipeline.rag import RAGPipeline
+from ragbench.pipeline.agent import AgentPipeline
+from ragbench.pipeline.indexing import IndexArtifact
+from ragbench.pipeline.query import QueryPipeline
+from ragbench.pipeline.rag import RAGPipeline
 
 # -----------------------------------------------------------------------
 # Helpers
@@ -131,7 +131,7 @@ class TestQueryPipeline:
 
 class TestIndexingPipeline:
     def test_build_flow(self) -> None:
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         mock_ingestor = MagicMock()
         mock_ingestor.ingest.return_value = [
@@ -160,7 +160,7 @@ class TestIndexingPipeline:
         mock_vs.add.assert_called_once()
 
     def test_stats_dict(self) -> None:
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         mock_ingestor = MagicMock()
         mock_ingestor.ingest.return_value = [MagicMock(content="t", metadata={})]
@@ -185,7 +185,7 @@ class TestIndexingPipeline:
         assert artifact.stats["source_counts"]["src"] == 1
 
     def test_source_name_in_metadata(self) -> None:
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         doc = MagicMock(content="text", metadata={})
         mock_ingestor = MagicMock()
@@ -205,9 +205,9 @@ class TestIndexingPipeline:
         pipeline.build()
         assert doc.metadata["source_name"] == "handbook"
 
-    @patch("uwf_rag.pipeline.indexing.IndexingPipeline.from_config")
+    @patch("ragbench.pipeline.indexing.IndexingPipeline.from_config")
     def test_run_or_load_cache_fresh(self, mock_from_config: MagicMock) -> None:
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         mock_pipeline = MagicMock()
         mock_artifact = MagicMock(spec=IndexArtifact)
@@ -228,11 +228,11 @@ class TestIndexingPipeline:
         mock_pipeline.build.assert_called_once()
         assert artifact is mock_artifact
 
-    @patch("uwf_rag.pipeline.indexing.IndexingPipeline.from_config")
+    @patch("ragbench.pipeline.indexing.IndexingPipeline.from_config")
     def test_run_or_load_cache_loads_cached(
         self, mock_from_config: MagicMock, tmp_path: Path
     ) -> None:
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         # Create cache directory matching fingerprint
         fingerprint = "cached_fp"
@@ -272,7 +272,7 @@ class TestRAGPipeline:
         mock_config = MagicMock()
         mock_config.pipeline_mode = "unknown_mode"
 
-        with patch("uwf_rag.pipeline.rag.IndexingPipeline.run_or_load_cache"):
+        with patch("ragbench.pipeline.rag.IndexingPipeline.run_or_load_cache"):
             with pytest.raises(ValueError, match="Unknown pipeline_mode"):
                 RAGPipeline.from_config(mock_config)
 
@@ -281,9 +281,9 @@ class TestRAGPipeline:
         mock_config.pipeline_mode = "agent"
         agent = MagicMock()
 
-        with patch("uwf_rag.pipeline.rag.IndexingPipeline.run_or_load_cache"):
+        with patch("ragbench.pipeline.rag.IndexingPipeline.run_or_load_cache"):
             with patch(
-                "uwf_rag.pipeline.rag.AgentPipeline.from_config", return_value=agent
+                "ragbench.pipeline.rag.AgentPipeline.from_config", return_value=agent
             ) as mock_from:
                 rag = RAGPipeline.from_config(mock_config)
 
@@ -452,16 +452,16 @@ class TestAgentPipeline:
         assert observation["role"] == "tool"
         assert "ghost_tool" in observation["content"]
 
-    @patch("uwf_rag.pipeline.agent.build_generator")
-    @patch("uwf_rag.pipeline.agent.tool_to_spec")
-    @patch("uwf_rag.pipeline.agent.registry")
+    @patch("ragbench.pipeline.agent.build_generator")
+    @patch("ragbench.pipeline.agent.tool_to_spec")
+    @patch("ragbench.pipeline.agent.registry")
     def test_from_config_wires_generator_tools_and_budget(
         self,
         mock_registry: MagicMock,
         mock_tool_to_spec: MagicMock,
         mock_build_generator: MagicMock,
     ) -> None:
-        from uwf_rag.core.config import ExperimentConfig
+        from ragbench.core.config import ExperimentConfig
 
         tool_cls = MagicMock()
         mem_cls = MagicMock()
@@ -526,7 +526,7 @@ class TestIndexingPipelineSparse:
         Order matters: a misconfigured BM25 tokenizer should fail
         before we spend embedding API budget.
         """
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         call_order: list[str] = []
 
@@ -559,7 +559,7 @@ class TestIndexingPipelineSparse:
         assert artifact.stats["has_sparse_index"] is True
 
     def test_build_without_sparse_index_unchanged(self) -> None:
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         mock_ingestor = MagicMock()
         mock_ingestor.ingest.return_value = [MagicMock(content="t", metadata={})]
@@ -583,7 +583,7 @@ class TestIndexingPipelineSparse:
         assert artifact.stats["has_sparse_index"] is False
 
     def test_save_index_writes_sparse_subdir(self, tmp_path: Path) -> None:
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         mock_vs = MagicMock()
         mock_sparse = MagicMock()
@@ -610,7 +610,7 @@ class TestIndexingPipelineEnricher:
     def test_enrich_runs_after_chunk_before_sparse_and_embed(self) -> None:
         """The enricher must run before both the sparse index and embedder,
         since both consume ``Chunk.text_for_index``."""
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         call_order: list[str] = []
 
@@ -646,7 +646,7 @@ class TestIndexingPipelineEnricher:
         assert artifact.stats["has_chunk_enricher"] is True
 
     def test_build_without_enricher_unchanged(self) -> None:
-        from uwf_rag.pipeline.indexing import IndexingPipeline
+        from ragbench.pipeline.indexing import IndexingPipeline
 
         mock_ingestor = MagicMock()
         mock_ingestor.ingest.return_value = [MagicMock(content="t", metadata={})]
@@ -683,9 +683,9 @@ class TestQueryPipelineHybridWiring:
 
     def test_hybrid_from_config_wires_children(self) -> None:
         # Build a real BaseLexicalIndex-shaped mock for the bm25 child
-        from uwf_rag.components.base import BaseLexicalIndex
-        from uwf_rag.core.config import QueryConfig
-        from uwf_rag.pipeline.query import QueryPipeline
+        from ragbench.components.base import BaseLexicalIndex
+        from ragbench.core.config import QueryConfig
+        from ragbench.pipeline.query import QueryPipeline
 
         class _FakeIdx(BaseLexicalIndex):
             def add(self, chunks: list) -> None: ...
@@ -735,8 +735,8 @@ class TestQueryPipelineHybridWiring:
         assert names == ["dense", "bm25"]
 
     def test_bm25_retriever_requires_aux_store(self) -> None:
-        from uwf_rag.core.config import QueryConfig
-        from uwf_rag.pipeline.query import QueryPipeline
+        from ragbench.core.config import QueryConfig
+        from ragbench.pipeline.query import QueryPipeline
 
         artifact = self._index_artifact(sparse_index=None)
         config = QueryConfig.from_dict(

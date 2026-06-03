@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from uwf_rag.components.lexical_indexes import BM25LexicalIndex
-from uwf_rag.core.types import Chunk, RetrievedChunk
+from ragbench.components.lexical_indexes import BM25LexicalIndex
+from ragbench.core.types import Chunk, RetrievedChunk
 
 
 def _make_chunks() -> list[Chunk]:

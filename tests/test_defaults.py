@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from uwf_rag.components.defaults import (
+from ragbench.components.defaults import (
     BufferWindowMemory,
     NoMemory,
     NoOpReranker,
     PassthroughQueryTransformer,
 )
-from uwf_rag.core.types import Chunk, RetrievedChunk, TransformedQuery
+from ragbench.core.types import Chunk, RetrievedChunk, TransformedQuery
 
 
 def _make_rc(chunk_id: str, score: float) -> RetrievedChunk:

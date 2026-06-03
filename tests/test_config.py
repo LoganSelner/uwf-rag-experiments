@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from uwf_rag.core.config import (
+from ragbench.core.config import (
     AgentConfig,
     ComponentConfig,
     ConfigValidationError,
@@ -21,7 +21,7 @@ from uwf_rag.core.config import (
     load_yaml_with_inheritance,
     validate_config,
 )
-from uwf_rag.core.registry import registry
+from ragbench.core.registry import registry
 
 # -----------------------------------------------------------------------
 # _deep_merge

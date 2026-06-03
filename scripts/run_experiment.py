@@ -14,9 +14,9 @@ import logging
 from pathlib import Path
 
 # Trigger component registration at the application boundary
-import uwf_rag.components  # noqa: F401
-from uwf_rag.evaluation.comparison import load_summary
-from uwf_rag.experiment import (
+import ragbench.components  # noqa: F401
+from ragbench.evaluation.comparison import load_summary
+from ragbench.experiment import (
     DEFAULT_RESULTS_DIR,
     configure_runtime,
     run_single_experiment,
