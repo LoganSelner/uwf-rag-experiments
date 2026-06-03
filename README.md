@@ -99,6 +99,19 @@ What happens:
 5. The run repeats `num_runs` times (default: 3) for statistical significance
 6. Results are saved with full config snapshot and git SHA for reproducibility
 
+To sweep a whole set at once — each config is a file, directory, or glob; a
+failing config is skipped, not fatal; experiments sharing an index build it only
+once — use the matrix runner:
+
+```bash
+# every config under configs/experiments/, then print a comparison table
+python scripts/run_matrix.py --compare
+
+# a subset (directory / glob), or via Make
+python scripts/run_matrix.py configs/experiments/retrieval --compare
+make matrix CONFIGS=configs/experiments/chunking
+```
+
 ### 3. Compare results
 
 ```bash

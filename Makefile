@@ -6,10 +6,11 @@ SHELL := /bin/bash
 # --- Vars ---
 UV      ?= uv
 CONFIG  ?= configs/base.yaml
+CONFIGS ?=
 DIRS    ?= results/*
 
 # --- Phony ---
-.PHONY: help bootstrap update env test test-all experiment compare \
+.PHONY: help bootstrap update env test test-all experiment matrix compare \
 	fmt fmt-check lint typecheck qa precommit clean deep-clean
 
 help: ## Show available targets
@@ -43,6 +44,9 @@ env: ## Print tool versions
 # ---------- RAG workflow ----------
 experiment: ## Run an experiment (CONFIG=configs/base.yaml)
 	$(UV) run python scripts/run_experiment.py $(CONFIG)
+
+matrix: ## Run + compare a matrix (CONFIGS="configs/experiments/retrieval"; default: all experiments)
+	$(UV) run python scripts/run_matrix.py $(CONFIGS) --compare
 
 compare: ## Compare experiment results (DIRS="results/a results/b")
 	$(UV) run python scripts/compare.py $(DIRS)

@@ -67,9 +67,10 @@ cache identity.
 
 ```
 ┌─────────────────────────────────────────────┐
-│  scripts/                                   │  Application boundary
-│    run_experiment.py                        │  Orchestrates: load config →
-│    compare.py                               │  validate → build → evaluate → save
+│  scripts/ (thin CLIs)  +  uwf_rag.experiment│  Application boundary
+│    run_experiment.py   run_matrix.py        │  experiment.py orchestrates:
+│    compare.py                               │  load → validate → build →
+│                                             │  evaluate → save
 └────────┬──────────────────────┬─────────────┘
          │                      │
          ▼                      ▼
@@ -108,9 +109,12 @@ Key dependency boundaries:
   implemented), and test mocks.
 
 - `pipeline/rag.py` does not import from `evaluation/`. The
-  experiment orchestration (build pipeline → evaluate → save)
-  lives in `scripts/run_experiment.py`, at the application
-  boundary.
+  experiment orchestration (load config → validate → build pipeline →
+  evaluate → save) lives in `uwf_rag.experiment`
+  (`run_single_experiment` / `run_matrix`); the `scripts/` are thin CLI
+  wrappers over it. `experiment.py` sits above both `pipeline/` and
+  `evaluation/`, so the rule "`pipeline` never imports `evaluation`"
+  still holds.
 
 - `uwf_rag/components/__init__.py` triggers registration side effects
   (`@registry.register` decorators). This import happens only at
@@ -165,17 +169,21 @@ src/uwf_rag/
 │   ├── agent.py           AgentPipeline (single-agent ReAct, native tool calling)
 │   └── rag.py             RAGPipeline (top-level dispatcher)
 │
-└── evaluation/
-    ├── evaluator.py       RAGAS integration + multi-run execution
-    ├── results.py         Experiment result serialization
-    └── comparison.py      Cross-experiment tables + config diffing
+├── evaluation/
+│   ├── evaluator.py       RAGAS integration + multi-run execution
+│   ├── _ragas_adapter.py  Anti-corruption layer: the only module importing ragas
+│   ├── results.py         Experiment result serialization
+│   └── comparison.py      Cross-experiment tables + config diffing
+│
+└── experiment.py         Orchestration: run_single_experiment / run_matrix
 
 configs/
 ├── base.yaml              Default baseline (all experiments inherit)
 └── experiments/            Per-experiment overrides (inherit from base)
 
 scripts/
-├── run_experiment.py      CLI entry point for running experiments
+├── run_experiment.py      CLI: run one experiment (wraps run_single_experiment)
+├── run_matrix.py          CLI: run + compare a matrix (wraps run_matrix)
 └── compare.py             CLI entry point for comparing results
 
 tests/
