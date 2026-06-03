@@ -8,38 +8,18 @@ see raw chunks. The pipeline calls PromptTemplate.format() first.
 from __future__ import annotations
 
 import json
-import logging
 import os
 from typing import Any
 from urllib.request import Request, urlopen
 
 from pydantic import Field
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from ragbench.components._tool_protocol import parse_arguments, to_openai_tools
 from ragbench.components.base import BaseGenerator, ComponentParams
 from ragbench.core.config import LLMConfig
 from ragbench.core.registry import registry
+from ragbench.core.retry import retry_transient
 from ragbench.core.types import GenerationResult, Message, ToolCall, ToolSpec
-
-logger = logging.getLogger(__name__)
-
-_NON_RETRYABLE = (TypeError, ValueError, KeyError, AttributeError, SyntaxError)
-
-
-_retry_decorator = retry(
-    retry=retry_if_exception(lambda e: not isinstance(e, _NON_RETRYABLE)),
-    wait=wait_exponential(multiplier=1, min=2, max=60),
-    stop=stop_after_attempt(4),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    reraise=True,
-)
 
 
 def build_generator(llm: LLMConfig) -> BaseGenerator:
@@ -194,7 +174,7 @@ class OllamaGenerator(BaseGenerator):
             )
         return out
 
-    @_retry_decorator
+    @retry_transient
     def _call_api(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Make an HTTP POST to Ollama's /api/chat endpoint."""
         url = f"{self._base_url}/api/chat"
@@ -390,7 +370,7 @@ class GoogleGenerator(BaseGenerator):
                     answer_parts.append(part.text)
         return "".join(answer_parts), tool_calls
 
-    @_retry_decorator
+    @retry_transient
     def _call_api(self, contents: list[Any], config: Any) -> Any:
         """Call Gemini with automatic retry on transient failures."""
         return self._client.models.generate_content(
@@ -450,7 +430,7 @@ class EdenAIGenerator(BaseGenerator):
             edenai_api_key=api_key,  # type: ignore[arg-type]
         )
 
-    @_retry_decorator
+    @retry_transient
     def _invoke_with_retry(
         self, messages: list[Any], tools: list[ToolSpec] | None = None
     ) -> Any:
@@ -648,7 +628,7 @@ class OpenAIGenerator(BaseGenerator):
             metadata=metadata,
         )
 
-    @_retry_decorator
+    @retry_transient
     def _call_api(
         self, messages: list[Message], tools: list[ToolSpec] | None = None
     ) -> Any:
