@@ -10,7 +10,6 @@ retriever evaluation without LLM cost.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from ragbench.components.base import (
     BaseGenerator,
@@ -116,15 +115,13 @@ class QueryPipeline:
 
             if config.prompt.type:
                 prompt_cls = registry.get("prompts", config.prompt.type)
-                prompt_config: dict[str, Any] = {
-                    "system_template": config.prompt.system_template,
-                    "context_format": config.prompt.context_format,
-                    "use_chain_of_thought": config.prompt.use_chain_of_thought,
-                    "citation_style": config.prompt.citation_style,
-                    "few_shot_examples": config.prompt.few_shot_examples,
-                    "max_context_tokens": config.prompt.max_context_tokens,
-                }
-                prompt_template = prompt_cls(config=prompt_config)
+                # Pass the prompt config straight through (minus the impl
+                # selector ``type``) so a new PromptConfig field can't be
+                # silently dropped at this seam; ChatPromptTemplate.Params
+                # (extra="forbid") owns which keys are valid.
+                prompt_template = prompt_cls(
+                    config=config.prompt.model_dump(exclude={"type"})
+                )
 
         return cls(
             query_transformer=query_transformer,
