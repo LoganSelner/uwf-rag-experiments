@@ -62,6 +62,19 @@ class FAISSVectorStore(BaseVectorStore):
         else:
             self._index = faiss.IndexFlatL2(dim)
 
+    def _prepare(self, vectors: np.ndarray) -> np.ndarray:
+        """L2-normalize for cosine so inner product == cosine; no-op otherwise.
+
+        ``IndexFlatIP`` computes a raw inner product, which equals cosine
+        similarity only on unit-norm vectors. Some embedders (notably several
+        cloud providers) don't return unit vectors, so the store normalizes here
+        rather than trusting the upstream embedder — making ``metric="cosine"``
+        correct for any embedder. A no-op for already-normalized inputs.
+        """
+        if self._metric == "cosine":
+            faiss.normalize_L2(vectors)
+        return vectors
+
     def add(self, chunks: list[EmbeddedChunk]) -> None:
         if not chunks:
             return
@@ -71,7 +84,9 @@ class FAISSVectorStore(BaseVectorStore):
         if self._index is None:
             raise RuntimeError("FAISS index was not created by _ensure_index()")
 
-        vectors = np.array([ec.embedding for ec in chunks], dtype=np.float32)
+        vectors = self._prepare(
+            np.array([ec.embedding for ec in chunks], dtype=np.float32)
+        )
         self._index.add(vectors)
         self._chunks.extend(ec.chunk for ec in chunks)
 
@@ -87,7 +102,7 @@ class FAISSVectorStore(BaseVectorStore):
         if filters:
             return self._filtered_search(query_vector, top_k, filters)
 
-        vec = np.array([query_vector], dtype=np.float32)
+        vec = self._prepare(np.array([query_vector], dtype=np.float32))
         scores, indices = self._index.search(vec, min(top_k, self._index.ntotal))
 
         results: list[RetrievedChunk] = []
@@ -117,7 +132,7 @@ class FAISSVectorStore(BaseVectorStore):
         if self._index is None:
             raise RuntimeError("FAISS index is not initialized — call add() first")
         fetch_k = min(max(top_k * 4, 50), self._index.ntotal)
-        vec = np.array([query_vector], dtype=np.float32)
+        vec = self._prepare(np.array([query_vector], dtype=np.float32))
         scores, indices = self._index.search(vec, fetch_k)
 
         results: list[RetrievedChunk] = []
@@ -276,7 +291,7 @@ class ChromaVectorStore(BaseVectorStore):
         kwargs: dict[str, Any] = {
             "query_embeddings": [query_vector],
             "n_results": n_results,
-            "include": ["documents", "metadatas", "distances", "embeddings"],
+            "include": ["documents", "metadatas", "distances"],
         }
         if where is not None:
             kwargs["where"] = where

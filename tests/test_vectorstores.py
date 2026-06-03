@@ -68,6 +68,24 @@ class TestFAISSVectorStore:
         for r in results:
             assert isinstance(r.score, float)
 
+    def test_cosine_normalizes_non_unit_vectors(self) -> None:
+        """Cosine must normalize internally: a parallel-but-non-unit query scores
+        ~1.0 and all scores stay in [-1, 1] (raw inner product would blow past 1)."""
+        store = FAISSVectorStore({"metric": "cosine"})
+        c0 = EmbeddedChunk(
+            chunk=Chunk(content="a", chunk_id="a", metadata={}),
+            embedding=[3.0, 4.0],  # norm 5 — deliberately non-unit
+        )
+        c1 = EmbeddedChunk(
+            chunk=Chunk(content="b", chunk_id="b", metadata={}),
+            embedding=[-4.0, 3.0],  # orthogonal to c0
+        )
+        store.add([c0, c1])
+        results = store.search([6.0, 8.0], top_k=2)  # parallel to c0, non-unit
+        assert all(-1.0001 <= r.score <= 1.0001 for r in results)
+        assert results[0].chunk.chunk_id == "a"
+        assert results[0].score == pytest.approx(1.0, abs=1e-4)
+
     def test_l2_metric_constructor(self) -> None:
         store = FAISSVectorStore({"metric": "l2"})
         store.add(_make_embedded_chunks(3))
