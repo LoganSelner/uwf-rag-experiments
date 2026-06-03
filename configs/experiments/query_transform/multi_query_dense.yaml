@@ -6,7 +6,7 @@
 # on dense retrieval, and against multi_query_hybrid.yaml to see how
 # much fusion across retrieval methods adds on top.
 #
-# Variable changed: query.query_transform.type (contextualizer →
+# Variable changed: query.query_transform.type (passthrough →
 # multi_query). The RRF fusion across N reformulations is configured by
 # query_transform.fusion = "rrf" (default).
 #

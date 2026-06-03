@@ -3,10 +3,10 @@
 # Replaces the user's question with a generated hypothetical answer for
 # the embedding-based search. The rationale (Gao et al., 2022): an
 # answer-shaped passage resembles supporting documents more closely than
-# a question does. Compare against base.yaml (passthrough/contextualizer
-# on the same dense stack) to isolate HyDE's effect.
+# a question does. Compare against base.yaml (passthrough on the same
+# dense stack) to isolate HyDE's effect.
 #
-# Variable changed: query.query_transform.type (contextualizer → hyde).
+# Variable changed: query.query_transform.type (passthrough → hyde).
 # Retrieval is unchanged (dense — base.yaml). No branch routing is set:
 # the single hypothetical broadcasts to the (only) dense retriever.
 # Branch routing is opt-in and only matters for hybrid retrieval — see

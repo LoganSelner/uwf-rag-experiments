@@ -184,13 +184,13 @@ These configs demonstrate the harness's flexibility by reconstructing a specific
 
 ### Reranking Sweep
 
-Each changes only the reranking-related parameters from `base.yaml`. Compare against the no-reranker baseline run to isolate the reranker's effect.
+Each adds the cross-encoder reranker and varies the candidate pool / final context. Compare against the no-reranker baseline (`base.yaml`, dense 10 → 5) to isolate the reranker's effect; each adjacent variant isolates one knob.
 
 | Config | top_k_retrieve → top_k_final |
 |--------|------------------------------|
-| `reranker/cross_encoder.yaml` | 3 → 3 (baseline pool, reranker reorders in place) |
-| `reranker/cross_encoder_topk3.yaml` | 10 → 3 (wider pool, same final context) |
-| `reranker/cross_encoder_topk5.yaml` | 10 → 5 (wider pool, slightly larger context) |
+| `reranker/cross_encoder.yaml` | 10 → 5 (reranker on the baseline pool) |
+| `reranker/cross_encoder_topk3.yaml` | 10 → 3 (tighter final context) |
+| `reranker/cross_encoder_topk5.yaml` | 20 → 5 (deeper candidate pool) |
 | `reranker/cross_encoder_topk10.yaml` | 20 → 10 (high-recall upper bound) |
 
 All four use `Alibaba-NLP/gte-reranker-modernbert-base`.

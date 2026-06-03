@@ -1,22 +1,24 @@
-# Cross-encoder reranking with a larger final context.
+# Cross-encoder reranking with a deeper candidate pool.
 #
-# Uses the same wider retrieval pool as the 10→3 reranker variant,
-# but keeps 5 chunks after reranking instead of 3. Tests whether
-# a modestly larger final context helps after reranking.
+# Doubles the baseline's candidate pool (10 → 20) while keeping the
+# baseline's final context of 5. Tests whether giving the reranker more
+# candidates to choose from improves precision at a fixed context size.
+# (With the deeper 10/5 baseline, a 10→5 variant would just be the
+# baseline reranker — reranker_cross_encoder — so this varies the pool.)
 #
 # Variables changed vs baseline: reranking (none → cross_encoder),
-# top_k_retrieve (3 → 10), top_k_final (3 → 5)
-# Compare against: reranker_cross_encoder_topk_3 (isolates top_k_final effect)
+# top_k_retrieve (10 → 20); top_k_final stays at the baseline's 5.
+# Compare against: reranker_cross_encoder (10/5) — isolates pool depth.
 
 extends: ../../base.yaml
 
 name: "reranker_cross_encoder_topk_5"
-description: "Cross-encoder reranking with top_k_retrieve=10, top_k_final=5"
+description: "Cross-encoder reranking with top_k_retrieve=20, top_k_final=5"
 
 query:
   retrieval:
     type: "dense"
-    top_k_retrieve: 10
+    top_k_retrieve: 20
     top_k_final: 5
 
   reranking:

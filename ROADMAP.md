@@ -608,8 +608,8 @@ baseline is `configs/base.yaml` itself; no separate `dense.yaml`.
 
 | Experiment | Isolates |
 |-----------|----------|
-| `cross_encoder` | reranking on/off |
-| `cross_encoder_topk{3,5,10}` | final-chunk count under reranking |
+| `cross_encoder` | reranking on/off (on the 10/5 baseline) |
+| `cross_encoder_topk{3,5,10}` | top_k under reranking (pool depth + final-chunk count) |
 
 ### Query Optimization (Phase B, done)
 

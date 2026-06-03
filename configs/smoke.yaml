@@ -3,7 +3,7 @@
 # Changes from base.yaml:
 #   - Indexing embedding: HuggingFace (local, free) instead of EdenAI
 #   - Query generation: Ollama (local, free) instead of EdenAI
-#   - Query transform: Ollama contextualizer instead of EdenAI contextualizer
+#   - Query transform: passthrough (inherited from base.yaml — no LLM call)
 #   - Evaluation mode: "none" — runs the pipeline against the dataset but
 #     skips RAGAS scoring entirely. Per-sample query/response/contexts are
 #     still written to run_1.jsonl so the output is inspectable.
@@ -32,13 +32,6 @@ indexing:
       model_name: "BAAI/bge-m3"
 
 query:
-  query_transform:
-    generator:
-      provider: "ollama"
-      model_name: "qwen3:14b"
-      params:
-        # Change this if your Ollama server is not running on the default local port.
-        base_url: "http://localhost:11434"
   generator:
     provider: "ollama"
     model_name: "qwen3:14b"

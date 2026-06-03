@@ -25,5 +25,8 @@ indexing:
 query:
   retrieval:
     type: "bm25"
-    top_k_retrieve: 3
-    top_k_final: 3
+    # Match the dense baseline's depth so dense-vs-sparse is the only
+    # variable (switching retrieval.type replaces the whole subtree, so
+    # these are set explicitly rather than inherited from base.yaml).
+    top_k_retrieve: 10
+    top_k_final: 5
