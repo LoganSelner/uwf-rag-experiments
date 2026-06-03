@@ -632,8 +632,7 @@ metadata, and truncates.
 | Category | Name | Class | File |
 |----------|------|-------|------|
 | `ingest` | `pdf` | `PDFIngestor` | `ingestors.py` |
-| `chunking` | `recursive_langchain` | `LangChainRecursiveChunker` | `chunkers.py` |
-| `chunking` | `recursive_custom` | `CustomRecursiveChunker` | `chunkers.py` |
+| `chunking` | `recursive` | `LangChainRecursiveChunker` | `chunkers.py` |
 | `chunking` | `semantic` | `SemanticChunker` | `chunkers.py` |
 | `chunk_enricher` | `none` | `NoOpChunkEnricher` | `defaults.py` |
 | `chunk_enricher` | `contextual` | `ContextualChunkEnricher` | `enrichers.py` |

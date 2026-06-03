@@ -8,12 +8,12 @@ Usage:
 
     from ragbench.core.registry import registry
 
-    @registry.register("chunking", "recursive_langchain")
+    @registry.register("chunking", "recursive")
     class RecursiveChunker(BaseChunker):
         ...
 
     # Later, in pipeline construction:
-    cls = registry.get("chunking", "recursive_langchain")
+    cls = registry.get("chunking", "recursive")
     instance = cls(config=params)
 """
 
@@ -51,7 +51,7 @@ class ComponentRegistry:
         Args:
             category: The component category (e.g. "chunking", "embedding").
             type_name: The name used in YAML configs
-                (e.g. "recursive_langchain", "bge").
+                (e.g. "recursive", "bge").
         """
 
         def decorator(cls: type[Any]) -> type[Any]:

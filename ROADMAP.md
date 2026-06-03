@@ -78,8 +78,7 @@ behind `BaseReranker`), and PDF parsing (`pymupdf` behind
 | Category | Component | Registry Name | Notes |
 |----------|-----------|---------------|-------|
 | Ingest | `PDFIngestor` | `pdf` | PyMuPDF |
-| Chunking | `RecursiveChunker` | `recursive_custom` | Custom implementation |
-| Chunking | `LangChainRecursiveChunker` | `recursive_langchain` | `langchain-text-splitters` wrapper |
+| Chunking | `LangChainRecursiveChunker` | `recursive` | `langchain-text-splitters` wrapper (config-facing name is impl-agnostic) |
 | Chunking | `SemanticChunker` | `semantic` | Custom; embedding-breakpoint splits (no new dep) |
 | Chunk Enricher | `NoOpChunkEnricher` | `none` | No-op passthrough |
 | Chunk Enricher | `ContextualChunkEnricher` | `contextual` | LLM situating context; sets `index_text` only (retrieval-isolated) |

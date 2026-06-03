@@ -18,7 +18,7 @@ def _make_config() -> ExperimentConfig:
             "pipeline_mode": "linear",
             "indexing": {
                 "sources": [{"name": "s", "path": "/f", "ingest": {"type": "pdf"}}],
-                "chunking": {"type": "recursive_langchain"},
+                "chunking": {"type": "recursive"},
                 "embedding": {"type": "huggingface"},
                 "vectorstore": {"type": "faiss"},
             },
@@ -62,7 +62,7 @@ class TestSaveExperiment:
         snap = summary["config_snapshot"]
 
         assert snap["pipeline_mode"] == "linear"
-        assert snap["chunking_type"] == "recursive_langchain"
+        assert snap["chunking_type"] == "recursive"
         assert snap["embedding_type"] == "huggingface"
         assert snap["vectorstore_type"] == "faiss"
         assert snap["query_transform_type"] == "passthrough"

@@ -17,7 +17,7 @@ Every component is swappable via config. No code changes needed.
 | Stage | Available Types | Config Key |
 |-------|----------------|------------|
 | **Ingestion** | PDF (PyMuPDF) | `indexing.sources[].ingest.type` |
-| **Chunking** | `recursive_langchain`, `recursive_custom`, `semantic` (embedding-breakpoint splits) | `indexing.chunking.type` |
+| **Chunking** | `recursive`, `semantic` (embedding-breakpoint splits) | `indexing.chunking.type` |
 | **Chunk Enricher** | `none`, `contextual` (LLM situating context, retrieval-only) | `indexing.chunk_enricher.type` |
 | **Embedding** | `huggingface` (bge-m3 etc.; auto query/passage prompts for e5 / bge-v1.5 families), `google` (Gemini), `openai`, `edenai` (cloud gateway) | `indexing.embedding.type` |
 | **Vectorstore** | `faiss` (cosine/L2), `chroma` (cosine/L2/IP) | `indexing.vectorstore.type` |
@@ -134,7 +134,7 @@ The base config defines all default values. Experiment configs use `extends:` to
 | Parameter | Config Path | Default |
 |-----------|------------|---------|
 | Source documents | `indexing.sources[]` | — |
-| Chunking strategy | `indexing.chunking.type` | `recursive_langchain` |
+| Chunking strategy | `indexing.chunking.type` | `recursive` |
 | Chunk size | `indexing.chunking.params.chunk_size` | 1000 |
 | Chunk overlap | `indexing.chunking.params.chunk_overlap` | 100 |
 | Embedding model | `indexing.embedding.type` + `.params.model_name` | `edenai` / `text-embedding-3-small` |
