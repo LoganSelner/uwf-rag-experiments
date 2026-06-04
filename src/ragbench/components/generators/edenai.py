@@ -98,7 +98,27 @@ class EdenAIGenerator(_SDKGenerator):
             tool_calls,
             finish_reason="tool_calls" if tool_calls else "stop",
             sub_provider=self._sub_provider,
+            **self._extract_usage(result),
         )
+
+    @staticmethod
+    def _extract_usage(result: Any) -> dict[str, int]:
+        """Best-effort token usage from a LangChain result.
+
+        ``ChatEdenAI`` exposes usage via ``AIMessage.usage_metadata`` when the
+        sub-provider reports it; some sub-providers omit it, in which case no
+        keys are returned (no fabricated counts). Normalized to the
+        cross-provider ``prompt_tokens`` / ``completion_tokens`` keys.
+        """
+        usage = getattr(result, "usage_metadata", None)
+        if not isinstance(usage, dict):
+            return {}
+        out: dict[str, int] = {}
+        if isinstance(usage.get("input_tokens"), int):
+            out["prompt_tokens"] = usage["input_tokens"]
+        if isinstance(usage.get("output_tokens"), int):
+            out["completion_tokens"] = usage["output_tokens"]
+        return out
 
     @staticmethod
     def _to_langchain_messages(prompt: str | list[Message]) -> list[Any]:
