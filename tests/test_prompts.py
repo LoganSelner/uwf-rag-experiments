@@ -7,7 +7,7 @@ from ragbench.components.prompts import (
     _format_chunks_numbered,
     _format_chunks_plain,
 )
-from ragbench.core.types import Chunk, RetrievedChunk
+from ragbench.core.types import Chunk, Message, RetrievedChunk
 
 
 def _rc(content: str, score: float = 0.9) -> RetrievedChunk:
@@ -16,6 +16,13 @@ def _rc(content: str, score: float = 0.9) -> RetrievedChunk:
         chunk=Chunk(content=content, chunk_id="id", metadata={}),
         score=score,
     )
+
+
+def _content(msg: Message) -> str:
+    """A message's content as a definite ``str`` (the schema types it str|None)."""
+    content = msg.get("content")
+    assert content is not None
+    return content
 
 
 # -----------------------------------------------------------------------
@@ -57,40 +64,40 @@ class TestChatPromptTemplate:
         tpl = ChatPromptTemplate({"system_template": "You are a helpful assistant."})
         msgs = tpl.format("What is X?", [_rc("Context about X")])
         assert msgs[0]["role"] == "system"
-        assert "helpful assistant" in msgs[0]["content"]
+        assert "helpful assistant" in _content(msgs[0])
         assert msgs[-1]["role"] == "user"
         assert msgs[-1]["content"] == "What is X?"
 
     def test_numbered_context_default(self) -> None:
         tpl = ChatPromptTemplate()
         msgs = tpl.format("Q?", [_rc("chunk1"), _rc("chunk2")])
-        system = msgs[0]["content"]
+        system = _content(msgs[0])
         assert "[1]" in system
         assert "[2]" in system
 
     def test_plain_context(self) -> None:
         tpl = ChatPromptTemplate({"context_format": "plain"})
         msgs = tpl.format("Q?", [_rc("chunk1"), _rc("chunk2")])
-        system = msgs[0]["content"]
+        system = _content(msgs[0])
         assert "---" in system
         assert "[1]" not in system
 
     def test_chain_of_thought(self) -> None:
         tpl = ChatPromptTemplate({"use_chain_of_thought": True})
         msgs = tpl.format("Q?", [_rc("ctx")])
-        system = msgs[0]["content"]
+        system = _content(msgs[0])
         assert "step by step" in system.lower()
 
     def test_inline_citation(self) -> None:
         tpl = ChatPromptTemplate({"citation_style": "inline"})
         msgs = tpl.format("Q?", [_rc("ctx")])
-        system = msgs[0]["content"]
+        system = _content(msgs[0])
         assert "[1]" in system or "Cite" in system
 
     def test_verbatim_citation(self) -> None:
         tpl = ChatPromptTemplate({"citation_style": "verbatim"})
         msgs = tpl.format("Q?", [_rc("ctx")])
-        system = msgs[0]["content"]
+        system = _content(msgs[0])
         assert "verbatim" in system.lower()
 
     def test_few_shot_examples(self) -> None:
@@ -110,7 +117,7 @@ class TestChatPromptTemplate:
 
     def test_history_included(self) -> None:
         tpl = ChatPromptTemplate({"system_template": "Sys"})
-        history = [
+        history: list[Message] = [
             {"role": "user", "content": "Hi"},
             {"role": "assistant", "content": "Hello!"},
         ]
@@ -131,4 +138,4 @@ class TestChatPromptTemplate:
         tpl = ChatPromptTemplate({"system_template": "Be concise."})
         msgs = tpl.format("Q?", [])
         assert msgs[0]["role"] == "system"
-        assert "CONTEXT" not in msgs[0]["content"]
+        assert "CONTEXT" not in _content(msgs[0])

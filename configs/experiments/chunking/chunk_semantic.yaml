@@ -7,7 +7,7 @@
 # base.yaml).
 #
 # Variables changed from base.yaml:
-#   - indexing.chunking.type: recursive_langchain -> semantic
+#   - indexing.chunking.type: recursive -> semantic
 #   - indexing.chunking.params: semantic knobs (breakpoint threshold, buffer)
 #
 # Changing indexing.chunking.type to "semantic" replaces the chunker's params

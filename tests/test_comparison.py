@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -150,7 +151,7 @@ class TestSortRows:
         assert sorted_rows[0]["experiment"] == "b"
 
     def test_missing_values_last(self) -> None:
-        rows = [
+        rows: list[dict[str, Any]] = [
             {"experiment": "a", "acc": None},
             {"experiment": "b", "acc": 0.9},
         ]

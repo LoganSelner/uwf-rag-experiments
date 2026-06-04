@@ -32,12 +32,11 @@ indexing:
       model_name: "BAAI/bge-m3"
 
 query:
+  # Ollama host comes from $OLLAMA_BASE_URL (else http://localhost:11434). Set it
+  # in .env for a non-local host (e.g. WSL → Windows) rather than hardcoding here.
   generator:
     provider: "ollama"
     model_name: "qwen3:14b"
-    params:
-      # Change this if your Ollama server is not running on the default local port.
-      base_url: "http://localhost:11434"
 
 evaluation:
   dataset: "data/datasets/testKB_dataset.jsonl"
@@ -49,9 +48,6 @@ evaluation:
   evaluator_llm:
     provider: "ollama"
     model_name: "qwen3:14b"
-    params:
-      # Change this if your Ollama server is not running on the default local port.
-      base_url: "http://localhost:11434"
   evaluator_embedding:
     type: "huggingface"
     params:

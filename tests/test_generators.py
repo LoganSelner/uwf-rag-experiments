@@ -1,4 +1,5 @@
-"""Tests for src/components/generators.py — Ollama, Google, and EdenAI generators."""
+"""Tests for the ragbench.components.generators package — Ollama, Google, EdenAI,
+and OpenAI generators."""
 
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from ragbench.components.generators import (
     OllamaGenerator,
     OpenAIGenerator,
 )
-from ragbench.core.types import GenerationResult, ToolCall, ToolSpec
+from ragbench.core.types import GenerationResult, Message, ToolCall, ToolSpec
 
 
 def _tool_specs() -> list[ToolSpec]:
@@ -76,12 +77,28 @@ class TestOllamaGenerator:
         }
         return OllamaGenerator(config)
 
-    def test_config_defaults(self) -> None:
+    def test_config_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
         gen = OllamaGenerator()
         assert gen._model == ""
         assert gen._temperature == 0.0
         assert gen._max_tokens is None
         assert gen._base_url == "http://localhost:11434"
+
+    def test_base_url_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # No explicit base_url → fall back to $OLLAMA_BASE_URL.
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://172.30.32.1:11434")
+        gen = OllamaGenerator({"llm": {"model_name": "m"}})
+        assert gen._base_url == "http://172.30.32.1:11434"
+
+    def test_explicit_base_url_wins_over_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://from-env:11434")
+        gen = OllamaGenerator(
+            {"llm": {"model_name": "m"}, "base_url": "http://explicit:11434"}
+        )
+        assert gen._base_url == "http://explicit:11434"
 
     @patch.object(OllamaGenerator, "_call_api")
     def test_string_prompt(self, mock_api: MagicMock) -> None:
@@ -105,7 +122,7 @@ class TestOllamaGenerator:
     def test_message_list_prompt(self, mock_api: MagicMock) -> None:
         mock_api.return_value = {"message": {"content": "Response"}}
         gen = self._make_generator()
-        messages = [
+        messages: list[Message] = [
             {"role": "system", "content": "Be helpful."},
             {"role": "user", "content": "Hi"},
         ]
@@ -193,7 +210,7 @@ class TestGoogleGenerator:
         mock_client.models.generate_content.return_value = mock_response
 
         gen = self._make_generator()
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Hi"},
             {"role": "assistant", "content": "Hello!"},
             {"role": "user", "content": "How are you?"},
@@ -217,7 +234,7 @@ class TestGoogleGenerator:
         mock_client.models.generate_content.return_value = mock_response
 
         gen = self._make_generator()
-        messages = [
+        messages: list[Message] = [
             {"role": "system", "content": "Be helpful."},
             {"role": "user", "content": "Hi"},
         ]
@@ -297,14 +314,10 @@ class TestGoogleGenerator:
 
 class TestEdenAIGeneratorInit:
     def test_missing_sub_provider_raises(self) -> None:
+        # The sub_provider check precedes any env/key access, so no env patch
+        # is needed — construction fails before EDENAI_API_KEY is read.
         with pytest.raises(ValueError, match="sub_provider"):
-            # Patch dotenv so it doesn't touch the real env
-            with patch(
-                "ragbench.components.generators.os.environ.get", return_value="fake-key"
-            ):
-                from ragbench.components.generators import EdenAIGenerator
-
-                EdenAIGenerator({"llm": {"model_name": "gpt-4o"}})
+            EdenAIGenerator({"llm": {"model_name": "gpt-4o"}})
 
     @patch.dict("os.environ", {"EDENAI_API_KEY": ""}, clear=False)
     def test_missing_api_key_raises(self) -> None:
@@ -373,7 +386,7 @@ class TestOpenAIGenerator:
         mock_client.chat.completions.create.return_value = mock_response
 
         gen = self._make_generator()
-        messages = [
+        messages: list[Message] = [
             {"role": "system", "content": "Be helpful."},
             {"role": "user", "content": "Hi"},
         ]
@@ -494,7 +507,7 @@ class TestOllamaToolCalling:
         self, mock_api: MagicMock
     ) -> None:
         mock_api.return_value = {"message": {"content": "final"}}
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Q?"},
             {
                 "role": "assistant",
@@ -609,7 +622,7 @@ class TestGoogleToolCalling:
         gen._client.models.generate_content.return_value = _google_response(
             text="final"
         )
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Q?"},
             {
                 "role": "assistant",
@@ -692,7 +705,7 @@ class TestEdenAIToolCalling:
 
         gen = self._make_generator()
         gen._client.bind_tools.return_value.invoke.return_value = self._result("final")
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Q?"},
             {
                 "role": "assistant",

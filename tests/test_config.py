@@ -122,10 +122,8 @@ class TestLoadYamlWithInheritance:
 
 class TestComponentConfig:
     def test_from_dict(self) -> None:
-        cfg = ComponentConfig.from_dict(
-            {"type": "recursive_langchain", "params": {"k": 5}}
-        )
-        assert cfg.type == "recursive_langchain"
+        cfg = ComponentConfig.from_dict({"type": "recursive", "params": {"k": 5}})
+        assert cfg.type == "recursive"
         assert cfg.params == {"k": 5}
 
     def test_from_none(self) -> None:
@@ -148,7 +146,7 @@ class TestExperimentConfig:
         cfg = ExperimentConfig.from_dict(minimal_config_dict)
         assert cfg.name == "test_baseline"
         assert cfg.pipeline_mode == "linear"
-        assert cfg.indexing.chunking.type == "recursive_langchain"
+        assert cfg.indexing.chunking.type == "recursive"
         assert cfg.query.retrieval.top_k_final == 3
 
     def test_defaults(self) -> None:
@@ -161,7 +159,7 @@ class TestExperimentConfig:
     def test_from_yaml(self, fixtures_dir: Path) -> None:
         cfg = ExperimentConfig.from_yaml(fixtures_dir / "base.yaml")
         assert cfg.name == "baseline"
-        assert cfg.indexing.chunking.type == "recursive_langchain"
+        assert cfg.indexing.chunking.type == "recursive"
 
 
 # -----------------------------------------------------------------------
@@ -341,6 +339,37 @@ class TestIndexFingerprint:
         cfg2 = ExperimentConfig.from_dict(raw)
         assert cfg1.index_fingerprint() != cfg2.index_fingerprint()
 
+    def test_changes_with_source_content(self, tmp_path: Path) -> None:
+        """Editing a source file in place (same path) must change the fingerprint."""
+        src = tmp_path / "doc.pdf"
+        src.write_bytes(b"original content")
+        raw = {
+            "indexing": {
+                "sources": [{"name": "s", "path": str(src), "ingest": {"type": "pdf"}}]
+            }
+        }
+        fp_before = ExperimentConfig.from_dict(raw).index_fingerprint()
+        src.write_bytes(b"edited content -- different bytes")
+        fp_after = ExperimentConfig.from_dict(raw).index_fingerprint()
+        assert fp_before != fp_after
+
+    def test_missing_source_path_is_stable(self) -> None:
+        """A missing source still fingerprints deterministically (no crash)."""
+        raw = {
+            "indexing": {
+                "sources": [
+                    {
+                        "name": "s",
+                        "path": "does/not/exist.pdf",
+                        "ingest": {"type": "pdf"},
+                    }
+                ]
+            }
+        }
+        cfg = ExperimentConfig.from_dict(raw)
+        assert cfg.index_fingerprint() == cfg.index_fingerprint()
+        assert len(cfg.index_fingerprint()) == 12
+
 
 # -----------------------------------------------------------------------
 # validate_config
@@ -357,7 +386,7 @@ class TestValidateConfig:
             "pipeline_mode": "linear",
             "indexing": {
                 "sources": [{"name": "s", "path": "", "ingest": {"type": "pdf"}}],
-                "chunking": {"type": "recursive_langchain"},
+                "chunking": {"type": "recursive"},
                 "embedding": {"type": "huggingface"},
                 "vectorstore": {"type": "faiss"},
             },
@@ -369,6 +398,7 @@ class TestValidateConfig:
             "evaluation": {
                 "dataset": "",
                 "mode": "full",
+                "evaluator_llm": {"provider": "ollama", "model_name": "judge-model"},
                 "evaluator_embedding": {"type": "huggingface"},
             },
         }
@@ -393,7 +423,7 @@ class TestValidateConfig:
     def test_error_lists_available_types(self) -> None:
         cfg = self._make_valid_config()
         cfg.indexing.chunking.type = "bogus"
-        with pytest.raises(ConfigValidationError, match="recursive_langchain"):
+        with pytest.raises(ConfigValidationError, match="recursive"):
             validate_config(cfg, registry)
 
     def test_top_k_constraint(self) -> None:
@@ -630,10 +660,23 @@ class TestValidateConfig:
             cfg.evaluation.evaluator_llm.provider = provider
             validate_config(cfg, registry)  # should not raise
 
-    def test_empty_evaluator_llm_provider_passes(self) -> None:
-        cfg = self._make_valid_config()
+    def test_empty_evaluator_llm_provider_raises_when_scoring(self) -> None:
+        cfg = self._make_valid_config()  # mode "full" → scoring enabled
         cfg.evaluation.evaluator_llm.provider = ""
-        validate_config(cfg, registry)  # should not raise
+        with pytest.raises(ConfigValidationError, match="a judge LLM is required"):
+            validate_config(cfg, registry)
+
+    def test_empty_evaluator_llm_provider_passes_when_mode_none(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.mode = "none"
+        cfg.evaluation.evaluator_llm.provider = ""
+        validate_config(cfg, registry)  # no scoring → no judge needed
+
+    def test_evaluator_llm_missing_model_name_raises_when_scoring(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.evaluator_llm.model_name = ""
+        with pytest.raises(ConfigValidationError, match="model name is required"):
+            validate_config(cfg, registry)
 
     def test_evaluator_embedding_type_empty_raises(self) -> None:
         cfg = self._make_valid_config()
@@ -742,7 +785,7 @@ class TestValidateConfigSparseAndHybrid:
                 "pipeline_mode": "linear",
                 "indexing": {
                     "sources": [{"name": "s", "path": "", "ingest": {"type": "pdf"}}],
-                    "chunking": {"type": "recursive_langchain"},
+                    "chunking": {"type": "recursive"},
                     "embedding": {"type": "huggingface"},
                     "vectorstore": {"type": "faiss"},
                 },
@@ -757,6 +800,7 @@ class TestValidateConfigSparseAndHybrid:
                 },
                 "evaluation": {
                     "mode": "full",
+                    "evaluator_llm": {"provider": "ollama", "model_name": "judge"},
                     "evaluator_embedding": {"type": "huggingface"},
                 },
             }
@@ -1037,7 +1081,7 @@ class TestValidateAgentConfig:
             "pipeline_mode": "agent",
             "indexing": {
                 "sources": [{"name": "s", "path": "", "ingest": {"type": "pdf"}}],
-                "chunking": {"type": "recursive_langchain"},
+                "chunking": {"type": "recursive"},
                 "embedding": {"type": "huggingface"},
                 "vectorstore": {"type": "faiss"},
             },
@@ -1055,6 +1099,7 @@ class TestValidateAgentConfig:
             "evaluation": {
                 "dataset": "",
                 "mode": "full",
+                "evaluator_llm": {"provider": "ollama", "model_name": "judge-model"},
                 "evaluator_embedding": {"type": "huggingface"},
             },
         }

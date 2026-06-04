@@ -10,7 +10,7 @@ from ragbench.components.base import BaseGenerator
 from ragbench.components.defaults import NoOpChunkEnricher
 from ragbench.components.enrichers import ContextualChunkEnricher
 from ragbench.core.registry import registry
-from ragbench.core.types import Chunk, Document, GenerationResult
+from ragbench.core.types import Chunk, Document, GenerationResult, Message, ToolSpec
 
 # --- fake generators registered for offline enrichment tests ---------------
 
@@ -19,7 +19,9 @@ from ragbench.core.types import Chunk, Document, GenerationResult
 class _FakeContextGenerator(BaseGenerator):
     """Returns a constant situating blurb, ignoring the prompt."""
 
-    def generate(self, prompt: str | list[dict[str, str]]) -> GenerationResult:
+    def generate(
+        self, prompt: str | list[Message], tools: list[ToolSpec] | None = None
+    ) -> GenerationResult:
         return GenerationResult(query="", answer="CTX")
 
 
@@ -27,7 +29,9 @@ class _FakeContextGenerator(BaseGenerator):
 class _FailingGenerator(BaseGenerator):
     """Always raises, to exercise per-chunk graceful fallback."""
 
-    def generate(self, prompt: str | list[dict[str, str]]) -> GenerationResult:
+    def generate(
+        self, prompt: str | list[Message], tools: list[ToolSpec] | None = None
+    ) -> GenerationResult:
         raise RuntimeError("boom")
 
 

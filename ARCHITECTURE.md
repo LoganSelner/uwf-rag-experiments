@@ -88,7 +88,7 @@ cache identity.
 │    base.py (ABCs)   │          │  Interfaces + implementations
 │    chunkers.py      │          │
 │    embedders.py     │          │
-│    generators.py    │          │
+│    generators/      │          │
 │    ...              │          │
 └────────┬────────────┘          │
          │                       │
@@ -156,7 +156,7 @@ src/ragbench/
 │   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
 │   ├── lexical_indexes.py   BM25LexicalIndex (bm25s + PyStemmer)
 │   ├── retrievers.py     DenseRetriever, BM25Retriever, HybridRetriever
-│   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator, OpenAIGenerator + build_generator
+│   ├── generators/      One module per provider (ollama/edenai/google/openai) + base.py (_SDKGenerator + build_generator)
 │   ├── prompts.py        ChatPromptTemplate
 │   ├── query_transforms.py  ContextualizerQueryTransformer, HyDEQueryTransformer, MultiQueryQueryTransformer
 │   ├── rerankers.py      CrossEncoderReranker
@@ -449,14 +449,19 @@ Multi-level inheritance is supported (child → parent → grandparent).
 ### Index Fingerprinting
 
 `ExperimentConfig.index_fingerprint()` returns a 12-char hex SHA-256
-of: sources + chunking + embedding + vectorstore + sparse_index +
-chunk_enricher (the last two only when set) config.
+of: sources (config **and file content**) + chunking + embedding +
+vectorstore + sparse_index + chunk_enricher (the last two only when
+set) config.
 
-**Included:** Source names, paths, ingest types/params. Chunking,
-embedding, vectorstore types and all params. Sparse-index type and
-params, *only when its `type` is non-empty* — empty `ComponentConfig`s
-canonicalize to absence, so adding an unused optional component
-doesn't disturb the fingerprint of existing experiments.
+**Included:** Source names, paths, ingest types/params, **and a
+content digest of each source file** (sha256 of its bytes, with a
+`(size, mtime)` fallback) — so editing a document in place changes the
+fingerprint and rebuilds, rather than silently serving a stale cache.
+Chunking, embedding, vectorstore types and all params. Sparse-index
+type and params, *only when its `type` is non-empty* — empty
+`ComponentConfig`s canonicalize to absence, so adding an unused
+optional component doesn't disturb the fingerprint of existing
+experiments.
 
 **Excluded:** Everything in QueryConfig, AgentConfig,
 EvaluationConfig. Pipeline mode.
@@ -544,7 +549,7 @@ pipeline calls `PromptTemplate.format()` first. The generator is a
 pure LLM wrapper that knows nothing about retrieval context. This
 is what makes prompt config changes actually affect output. Every
 generator is built through one factory, `build_generator(LLMConfig)`
-in `components/generators.py`, used by the linear pipeline, the agent's
+in `components/generators/` (its `base.py`), used by the linear pipeline, the agent's
 reasoning LLM, and the query transformers / contextual enricher — there
 is a single construction path, not a per-call-site idiom.
 
@@ -632,8 +637,7 @@ metadata, and truncates.
 | Category | Name | Class | File |
 |----------|------|-------|------|
 | `ingest` | `pdf` | `PDFIngestor` | `ingestors.py` |
-| `chunking` | `recursive_langchain` | `LangChainRecursiveChunker` | `chunkers.py` |
-| `chunking` | `recursive_custom` | `CustomRecursiveChunker` | `chunkers.py` |
+| `chunking` | `recursive` | `LangChainRecursiveChunker` | `chunkers.py` |
 | `chunking` | `semantic` | `SemanticChunker` | `chunkers.py` |
 | `chunk_enricher` | `none` | `NoOpChunkEnricher` | `defaults.py` |
 | `chunk_enricher` | `contextual` | `ContextualChunkEnricher` | `enrichers.py` |
@@ -653,14 +657,28 @@ metadata, and truncates.
 | `query_transform` | `multi_query` | `MultiQueryQueryTransformer` | `query_transforms.py` |
 | `reranking` | `none` | `NoOpReranker` | `defaults.py` |
 | `reranking` | `cross_encoder` | `CrossEncoderReranker` | `rerankers.py` |
-| `generation` | `ollama` | `OllamaGenerator` | `generators.py` |
-| `generation` | `edenai` | `EdenAIGenerator` | `generators.py` |
-| `generation` | `google` | `GoogleGenerator` | `generators.py` |
-| `generation` | `openai` | `OpenAIGenerator` | `generators.py` |
+| `generation` | `ollama` | `OllamaGenerator` | `generators/ollama.py` |
+| `generation` | `edenai` | `EdenAIGenerator` | `generators/edenai.py` |
+| `generation` | `google` | `GoogleGenerator` | `generators/google.py` |
+| `generation` | `openai` | `OpenAIGenerator` | `generators/openai.py` |
 | `prompts` | `chat` | `ChatPromptTemplate` | `prompts.py` |
 | `memory` | `none` | `NoMemory` | `defaults.py` |
 | `memory` | `buffer_window` | `BufferWindowMemory` | `defaults.py` |
 | `tool` | `rag` | `RAGSearchTool` | `tools.py` |
+
+### Reserved / not-yet-active
+
+A couple of config surfaces are wired and honest stubs, but inert until a later
+phase — kept (rather than removed) because the seam is cheap and the harness
+values stable config keys:
+
+- **Agent memory** (`agent.memory`, `BufferWindowMemory`): registered and
+  constructed, but the single-turn ReAct loop does not thread history yet.
+  Activated by Phase E multi-turn evaluation.
+- **`query.prompt.max_context_tokens`**: carried through to the prompt template
+  but not enforced (no context-budget trimming today). A research harness
+  prefers a precise, opt-in token budget over an approximate one, so enforcement
+  is deferred rather than shipped as a char-count guess.
 
 ---
 
@@ -837,6 +855,26 @@ runs. NaN and None values (RAGAS returns these when the LLM judge
 fails to parse) are filtered before averaging. Metric keys are
 collected from all runs (not just the first), handling the case
 where different runs produce different metric sets.
+
+### Methodology & Caveats
+
+Two properties of the harness shape how results should be read:
+
+- **The cross-run std is mostly judge variance, not pipeline sampling.**
+  Generation defaults to `temperature=0`, so for a deterministic provider the
+  `num_runs` repeats produce near-identical pipeline outputs; the reported
+  `*_std` then largely reflects the RAGAS judge LLM's own nondeterminism (plus
+  any provider-side variation), not answer-sampling spread. Read it as a
+  measurement-stability band, not a model-variability estimate.
+
+- **Agent retrieval metrics score a re-capped chunk set.** In agent mode the
+  loop unions the chunks retrieved across all tool calls, dedups by `chunk_id`,
+  and caps at `top_k_final` before handing them to the evaluator
+  (`AgentPipeline._aggregate_chunks`). That keeps the context-precision/recall
+  denominator identical to the linear pipeline — but it can differ from the
+  superset of chunks the agent's own LLM actually saw across iterations. So a
+  linear-vs-agent retrieval-metric delta isolates control flow on a common
+  budget; it is not a claim about how much context the agent reasoned over.
 
 ### Results (`evaluation/results.py`)
 

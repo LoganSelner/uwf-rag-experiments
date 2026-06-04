@@ -8,12 +8,12 @@ Usage:
 
     from ragbench.core.registry import registry
 
-    @registry.register("chunking", "recursive_langchain")
+    @registry.register("chunking", "recursive")
     class RecursiveChunker(BaseChunker):
         ...
 
     # Later, in pipeline construction:
-    cls = registry.get("chunking", "recursive_langchain")
+    cls = registry.get("chunking", "recursive")
     instance = cls(config=params)
 """
 
@@ -51,7 +51,7 @@ class ComponentRegistry:
         Args:
             category: The component category (e.g. "chunking", "embedding").
             type_name: The name used in YAML configs
-                (e.g. "recursive_langchain", "bge").
+                (e.g. "recursive", "bge").
         """
 
         def decorator(cls: type[Any]) -> type[Any]:
@@ -89,6 +89,14 @@ class ComponentRegistry:
     def is_registered(self, category: str, type_name: str) -> bool:
         """Check if a (category, type_name) pair is registered."""
         return (category, type_name) in self._registry
+
+    def registered(self) -> list[tuple[str, str]]:
+        """All registered ``(category, type_name)`` pairs, sorted.
+
+        Used by the docs drift guard (``tests/test_docs.py``) to assert the
+        ARCHITECTURE.md inventory table stays in sync with the live registry.
+        """
+        return sorted(self._registry)
 
     def clear(self) -> None:
         """Remove all registrations. Useful for testing."""

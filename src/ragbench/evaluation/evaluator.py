@@ -328,13 +328,19 @@ class Evaluator:
 
     @staticmethod
     def _build_ollama_judge(llm_config: LLMConfig) -> Any:
+        import os
+
         from langchain_ollama import OllamaLLM
 
         kwargs: dict[str, Any] = {
             "model": llm_config.model_name,
             "temperature": llm_config.temperature,
         }
-        base_url = llm_config.params.get("base_url")
+        # Explicit config wins, then $OLLAMA_BASE_URL, else OllamaLLM's localhost
+        # default — same precedence as OllamaGenerator (see components/generators).
+        base_url = llm_config.params.get("base_url") or os.environ.get(
+            "OLLAMA_BASE_URL"
+        )
         if base_url:
             kwargs["base_url"] = base_url
         return OllamaLLM(**kwargs)

@@ -256,6 +256,30 @@ class EvaluationConfig(ConfigModel):
 # ---------------------------------------------------------------------------
 
 
+def _source_content_digest(path: str) -> str:
+    """Best-effort content fingerprint for a source file.
+
+    Returns a SHA-256 of the file's bytes so that editing a source document *in
+    place* (same path) changes the index fingerprint and triggers a rebuild —
+    closing the silently-stale-cache hole where only paths/config were hashed.
+    Falls back to a ``(size, mtime)`` marker when the bytes can't be read and to
+    ``"absent"`` when no path is set. Every branch is deterministic, so a missing
+    file still fingerprints stably (and fails later in ingest with a clear error)
+    rather than serving a stale cache.
+    """
+    if not path:
+        return "absent"
+    p = Path(path)
+    try:
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+    except OSError:
+        try:
+            st = p.stat()
+            return f"size={st.st_size},mtime={int(st.st_mtime)}"
+        except OSError:
+            return "unreadable"
+
+
 class ExperimentConfig(ConfigModel):
     """Top-level config for an experiment run."""
 
@@ -276,9 +300,10 @@ class ExperimentConfig(ConfigModel):
     def index_fingerprint(self) -> str:
         """Compute a SHA-256 fingerprint (12 hex chars) of indexing config.
 
-        Includes: sources, chunking, embedding, vectorstore, and the
-        optional ``sparse_index`` / ``chunk_enricher`` (each only when its
-        ``type`` is set).
+        Includes: sources (name, path, ingest config, **and a content digest
+        of each source file** so editing a document in place rebuilds), chunking,
+        embedding, vectorstore, and the optional ``sparse_index`` /
+        ``chunk_enricher`` (each only when its ``type`` is set).
         Excludes: query, agent, evaluation, pipeline_mode.
 
         Empty-config canonicalization: any ``ComponentConfig`` with an
@@ -292,7 +317,10 @@ class ExperimentConfig(ConfigModel):
         """
         idx = self.indexing
         data: dict[str, Any] = {
-            "sources": [s.model_dump() for s in idx.sources],
+            "sources": [
+                {**s.model_dump(), "content_digest": _source_content_digest(s.path)}
+                for s in idx.sources
+            ],
             "chunking": idx.chunking.model_dump(),
             "embedding": idx.embedding.model_dump(),
             "vectorstore": idx.vectorstore.model_dump(),

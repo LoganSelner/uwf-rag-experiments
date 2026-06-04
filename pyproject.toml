@@ -69,10 +69,20 @@ warn_unreachable = true
 disallow_untyped_defs = true
 no_implicit_optional = true
 strict_optional = true
-exclude = '^tests/'
 mypy_path = ["src"]
-files = ["src"]
+files = ["src", "tests"]
 explicit_package_bases = true
+
+# Tests are type-checked too, but with the strict flags that fight pytest
+# idioms (mocks, monkeypatch, fixtures) relaxed: bodies are still checked
+# (catching wrong mock/call signatures + fixture-type mismatches), while a
+# contributor isn't forced to annotate every quick test. Tighten toward the
+# src-level strictness later if desired.
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+check_untyped_defs = true
+warn_unreachable = false
 
 [[tool.mypy.overrides]]
 module = ["datasets", "datasets.*"]

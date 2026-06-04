@@ -30,13 +30,12 @@ agent:
     You are an advising assistant. You MUST call the `knowledge_base` search
     tool to look up relevant passages BEFORE answering — do not answer from
     prior knowledge. After searching, answer only from the retrieved passages.
+  # Ollama host comes from $OLLAMA_BASE_URL (else http://localhost:11434); set it
+  # in .env for a WSL2 → Windows-host server rather than hardcoding here.
   llm:
     provider: "ollama"
     model_name: "qwen3:14b"
     temperature: 0.0
-    params:
-      # WSL2 → Windows-host Ollama. Change to your server's address/port.
-      base_url: "http://localhost:11434"
   memory:
     type: "none"
   tools:

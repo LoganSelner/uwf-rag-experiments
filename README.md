@@ -17,7 +17,7 @@ Every component is swappable via config. No code changes needed.
 | Stage | Available Types | Config Key |
 |-------|----------------|------------|
 | **Ingestion** | PDF (PyMuPDF) | `indexing.sources[].ingest.type` |
-| **Chunking** | `recursive_langchain`, `recursive_custom`, `semantic` (embedding-breakpoint splits) | `indexing.chunking.type` |
+| **Chunking** | `recursive`, `semantic` (embedding-breakpoint splits) | `indexing.chunking.type` |
 | **Chunk Enricher** | `none`, `contextual` (LLM situating context, retrieval-only) | `indexing.chunk_enricher.type` |
 | **Embedding** | `huggingface` (bge-m3 etc.; auto query/passage prompts for e5 / bge-v1.5 families), `google` (Gemini), `openai`, `edenai` (cloud gateway) | `indexing.embedding.type` |
 | **Vectorstore** | `faiss` (cosine/L2), `chroma` (cosine/L2/IP) | `indexing.vectorstore.type` |
@@ -93,7 +93,7 @@ make experiment CONFIG=configs/experiments/reranker/cross_encoder.yaml
 
 What happens:
 1. Config is loaded and validated (typos caught before any model loads)
-2. Index is built from source PDFs, or loaded from cache if the indexing config hasn't changed
+2. Index is built from source PDFs, or loaded from cache if the indexing config and source files are unchanged
 3. Each evaluation question is run through the pipeline
 4. RAGAS computes metrics (answer correctness, context precision, faithfulness, context entity recall, answer relevancy)
 5. The run repeats `num_runs` times (default: 3) for statistical significance
@@ -134,7 +134,7 @@ The base config defines all default values. Experiment configs use `extends:` to
 | Parameter | Config Path | Default |
 |-----------|------------|---------|
 | Source documents | `indexing.sources[]` | — |
-| Chunking strategy | `indexing.chunking.type` | `recursive_langchain` |
+| Chunking strategy | `indexing.chunking.type` | `recursive` |
 | Chunk size | `indexing.chunking.params.chunk_size` | 1000 |
 | Chunk overlap | `indexing.chunking.params.chunk_overlap` | 100 |
 | Embedding model | `indexing.embedding.type` + `.params.model_name` | `edenai` / `text-embedding-3-small` |
@@ -336,8 +336,8 @@ CI runs on every push and pull request (ruff + mypy + pytest).
 | Problem | Fix |
 |---------|-----|
 | `EDENAI_API_KEY` / `GOOGLE_API_KEY` not found | Ensure `.env` exists with your keys. The app loads it automatically at startup. |
-| Ollama connection refused | Start Ollama with `ollama serve`. If using WSL, you may need to override `generation.params.base_url` in your experiment config. |
-| Index cache stale after changing source PDFs | Use `--no-cache`: `python scripts/run_experiment.py configs/base.yaml --no-cache` |
+| Ollama connection refused | Start Ollama with `ollama serve`. If the host isn't `localhost:11434` (e.g. WSL → Windows), set `OLLAMA_BASE_URL` in `.env` (preferred — nothing machine-specific lands in a tracked config) or override `generation.params.base_url` per experiment. |
+| Want to force a fresh index (e.g. debugging) | `--no-cache`: `python scripts/run_experiment.py configs/base.yaml --no-cache`. Note: editing a source file's *contents* already changes the index fingerprint and rebuilds automatically, so this is only needed to force a rebuild otherwise. |
 | Unknown component type in validation | Check that the `type:` value in your YAML matches a `@registry.register(...)` name exactly. |
 | RAGAS timeout on local Ollama | Increase `evaluation.run_config.timeout` (base default: 300s; `smoke.yaml` raises it to 1200s) or reduce `evaluation.run_config.max_workers`. |
 

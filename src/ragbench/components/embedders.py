@@ -12,29 +12,13 @@ from typing import Any
 
 import requests
 from sentence_transformers import SentenceTransformer
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from ragbench.components.base import BaseEmbedder, ComponentParams
 from ragbench.core.registry import registry
+from ragbench.core.retry import retry_transient
 from ragbench.core.types import Chunk, EmbeddedChunk
 
 logger = logging.getLogger(__name__)
-
-_NON_RETRYABLE = (TypeError, ValueError, KeyError, AttributeError, SyntaxError)
-
-_retry_decorator = retry(
-    retry=retry_if_exception(lambda e: not isinstance(e, _NON_RETRYABLE)),
-    wait=wait_exponential(multiplier=1, min=2, max=60),
-    stop=stop_after_attempt(4),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    reraise=True,
-)
 
 
 @dataclass(frozen=True)
@@ -234,7 +218,7 @@ class GoogleEmbedder(BaseEmbedder):
         result = self._embed_with_retry([query], self._task_type_query)
         return result.embeddings[0].values
 
-    @_retry_decorator
+    @retry_transient
     def _embed_with_retry(self, texts: list[str], task_type: str) -> Any:
         """Call the Google embedding API with automatic retry."""
         return self._client.models.embed_content(
@@ -298,7 +282,7 @@ class OpenAIEmbedder(BaseEmbedder):
         result = self._embed_with_retry([query])
         return result.data[0].embedding
 
-    @_retry_decorator
+    @retry_transient
     def _embed_with_retry(self, texts: list[str]) -> Any:
         """Call the OpenAI embedding API with automatic retry."""
         return self._client.embeddings.create(
@@ -407,7 +391,7 @@ class EdenAIEmbedder(BaseEmbedder):
     def embed_query(self, query: str) -> list[float]:
         return self._embed_with_retry([query])[0]
 
-    @_retry_decorator
+    @retry_transient
     def _embed_with_retry(self, texts: list[str]) -> list[list[float]]:
         """Call Eden AI embedding API with retry."""
         return self._call_api(texts)
