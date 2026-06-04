@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from ragbench.components.build import BuildContext
 from ragbench.components.tools import RAGSearchTool, tool_to_spec
-from ragbench.core.config import AgentDefinitionConfig, ExperimentConfig
+from ragbench.core.config import ExperimentConfig, ToolConfig
 from ragbench.core.registry import registry
 from ragbench.core.types import Chunk, GenerationResult, RetrievedChunk, ToolResult
 
@@ -86,7 +86,7 @@ class TestRAGSearchTool:
                 }
             }
         )
-        entry = AgentDefinitionConfig(name="knowledge_base", type="rag")
+        entry = ToolConfig(name="knowledge_base", type="rag")
         ctx = BuildContext(
             registry=registry, index=MagicMock(), query=experiment_config.query
         )
@@ -105,10 +105,51 @@ class TestRAGSearchTool:
     @patch(
         "ragbench.pipeline.query.QueryPipeline.from_config", return_value=MagicMock()
     )
+    def test_build_applies_param_retrieval_scope(
+        self, mock_from_config: MagicMock
+    ) -> None:
+        """cfg.params filters/top_k scope the tool's retrieval (multitool rung)."""
+        experiment_config = ExperimentConfig.from_dict(
+            {
+                "query": {
+                    "retrieval": {
+                        "type": "dense",
+                        "top_k_retrieve": 10,
+                        "top_k_final": 5,
+                        "filters": {"lang": "en"},
+                    }
+                }
+            }
+        )
+        entry = ToolConfig(
+            name="handbook",
+            type="rag",
+            params={
+                "filters": {"source_name": "student_handbook"},
+                "top_k_final": 3,
+            },
+        )
+        ctx = BuildContext(
+            registry=registry, index=MagicMock(), query=experiment_config.query
+        )
+        RAGSearchTool.build(entry, ctx)
+
+        passed = mock_from_config.call_args[0][0]
+        # Per-tool filters merge over the stack's defaults; top_k overrides.
+        assert passed.retrieval.filters == {
+            "lang": "en",
+            "source_name": "student_handbook",
+        }
+        assert passed.retrieval.top_k_final == 3
+        assert passed.retrieval.top_k_retrieve == 10  # untouched
+
+    @patch(
+        "ragbench.pipeline.query.QueryPipeline.from_config", return_value=MagicMock()
+    )
     def test_build_default_name_and_description(
         self, _mock_from_config: MagicMock
     ) -> None:
-        entry = AgentDefinitionConfig(type="rag")  # no name / description
+        entry = ToolConfig(type="rag")  # no name / description
         ctx = BuildContext(
             registry=registry,
             index=MagicMock(),

@@ -312,11 +312,49 @@ class TestSpecificConfigs:
         assert cfg.max_iterations == 8
         assert cfg.system_prompt == "You are an advising agent."
 
-    def test_agent_definition_description_round_trip(self) -> None:
+    def test_tool_config_description_and_params_round_trip(self) -> None:
         cfg = AgentConfig.from_dict(
-            {"tools": [{"name": "kb", "type": "rag", "description": "Search docs."}]}
+            {
+                "tools": [
+                    {
+                        "name": "kb",
+                        "type": "rag",
+                        "description": "Search docs.",
+                        "params": {"filters": {"source_name": "handbook"}},
+                    }
+                ]
+            }
         )
         assert cfg.tools[0].description == "Search docs."
+        assert cfg.tools[0].params == {"filters": {"source_name": "handbook"}}
+
+    def test_agent_config_multi_roster_round_trip(self) -> None:
+        cfg = AgentConfig.from_dict(
+            {
+                "mode": "multi",
+                "agents": [
+                    {
+                        "name": "handbook",
+                        "description": "Student conduct, honor code, policies.",
+                        "system_prompt": "Answer from the handbook only.",
+                        "retrieval": {"filters": {"source_name": "student_handbook"}},
+                        "tools": [{"name": "handbook_search", "type": "rag"}],
+                    },
+                    {
+                        "name": "kb",
+                        "description": "Registration, deadlines, IT, services.",
+                        "llm": {"provider": "ollama", "model_name": "qwen3:14b"},
+                    },
+                ],
+            }
+        )
+        assert cfg.mode == "multi"
+        assert len(cfg.agents) == 2
+        assert cfg.agents[0].retrieval.filters == {"source_name": "student_handbook"}
+        assert cfg.agents[0].tools[0].name == "handbook_search"
+        # Empty llm.provider ⇒ inherit the supervisor's reasoning LLM.
+        assert cfg.agents[0].llm.provider == ""
+        assert cfg.agents[1].llm.provider == "ollama"
 
 
 # -----------------------------------------------------------------------

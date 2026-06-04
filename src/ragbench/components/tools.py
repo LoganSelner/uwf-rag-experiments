@@ -23,7 +23,7 @@ from ragbench.core.types import RetrievedChunk, ToolResult, ToolSpec
 
 if TYPE_CHECKING:
     from ragbench.components.build import BuildContext
-    from ragbench.core.config import AgentDefinitionConfig
+    from ragbench.core.config import RetrievalConfig, ToolConfig
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +94,19 @@ class RAGSearchTool(BaseTool):
         self._description = description
 
     @classmethod
-    def build(cls, cfg: AgentDefinitionConfig, ctx: BuildContext) -> RAGSearchTool:
+    def build(cls, cfg: ToolConfig, ctx: BuildContext) -> RAGSearchTool:
         """Build a retrieval-only QueryPipeline from the active query stack.
 
         Reuses ``ctx.query`` (the experiment's retrieval + rerank stack) over
         ``ctx.index`` in retrieval-only mode, with the query transform forced to
         passthrough — the agent has already decided what to search for.
+
+        ``cfg.params`` may carry a per-tool retrieval-scope override —
+        ``filters`` (merged over the stack's defaults), ``top_k_retrieve``, and
+        ``top_k_final`` — so one agent can hold several ``rag`` tools each scoped
+        to a different source (the ``agent_multitool`` rung), and a D2
+        specialist's source-scoped tool reuses the same path.
+
         ``QueryPipeline`` is imported lazily so this component module never
         depends on the pipeline layer at import time (keeping the dependency
         graph pointing inward).
@@ -111,8 +118,12 @@ class RAGSearchTool(BaseTool):
                 "RAGSearchTool.build requires both ctx.query (the query stack) "
                 "and ctx.index (the populated index) in the BuildContext."
             )
+        retrieval = cls._scoped_retrieval(ctx.query.retrieval, cfg.params)
         query_config = ctx.query.model_copy(
-            update={"query_transform": QueryTransformConfig(type="passthrough")},
+            update={
+                "query_transform": QueryTransformConfig(type="passthrough"),
+                "retrieval": retrieval,
+            },
         )
         pipeline = QueryPipeline.from_config(
             query_config, ctx.index, retrieval_only=True
@@ -122,6 +133,27 @@ class RAGSearchTool(BaseTool):
             name=cfg.name or "knowledge_base",
             description=cfg.description or _DEFAULT_RAG_DESCRIPTION,
         )
+
+    @staticmethod
+    def _scoped_retrieval(
+        base: RetrievalConfig, params: dict[str, Any]
+    ) -> RetrievalConfig:
+        """Apply an optional per-tool retrieval-scope override to the stack config.
+
+        ``params`` may carry ``filters`` (merged over the stack's defaults so a
+        config-level filter and a per-tool scope compose, mirroring the
+        retrievers' own ``{**default, **call}`` merge), ``top_k_retrieve``, and
+        ``top_k_final``. Absent keys leave the base config untouched.
+        """
+        update: dict[str, Any] = {}
+        extra_filters = params.get("filters")
+        if extra_filters:
+            update["filters"] = {**base.filters, **extra_filters}
+        if "top_k_retrieve" in params:
+            update["top_k_retrieve"] = params["top_k_retrieve"]
+        if "top_k_final" in params:
+            update["top_k_final"] = params["top_k_final"]
+        return base.model_copy(update=update) if update else base
 
     @property
     def name(self) -> str:
