@@ -177,6 +177,18 @@ class TestFAISSVectorStore:
         assert FAISSVectorStore._matches_filters(chunk, {"k": "other"}) is False
         assert FAISSVectorStore._matches_filters(chunk, {"missing": 1}) is False
 
+    def test_matches_filters_list_is_membership(self) -> None:
+        # A list value scopes to a group ($in semantics) — e.g. several sources.
+        chunk = Chunk(content="x", chunk_id="1", metadata={"source_name": "kb"})
+        assert (
+            FAISSVectorStore._matches_filters(chunk, {"source_name": ["kb", "hb"]})
+            is True
+        )
+        assert (
+            FAISSVectorStore._matches_filters(chunk, {"source_name": ["hb", "other"]})
+            is False
+        )
+
     def test_invalid_metric_raises(self) -> None:
         with pytest.raises(ValueError, match="metric must be one of"):
             FAISSVectorStore({"metric": "invalid"})
@@ -188,6 +200,17 @@ class TestFAISSVectorStore:
 
 
 class TestChromaVectorStore:
+    def test_build_where_scalar_and_list(self) -> None:
+        # Empty → no filter; scalar → $eq; list → $in; multi-key → $and.
+        assert ChromaVectorStore._build_where({}) is None
+        assert ChromaVectorStore._build_where({"s": "kb"}) == {"s": {"$eq": "kb"}}
+        assert ChromaVectorStore._build_where({"s": ["kb", "hb"]}) == {
+            "s": {"$in": ["kb", "hb"]}
+        }
+        assert ChromaVectorStore._build_where({"s": "kb", "n": 5}) == {
+            "$and": [{"s": {"$eq": "kb"}}, {"n": {"$eq": 5}}]
+        }
+
     def test_add_and_search_basic(self) -> None:
         store = _unique_chroma(metric="cosine")
         chunks = _make_embedded_chunks(5)

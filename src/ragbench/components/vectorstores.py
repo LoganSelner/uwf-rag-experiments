@@ -154,9 +154,19 @@ class FAISSVectorStore(BaseVectorStore):
 
     @staticmethod
     def _matches_filters(chunk: Chunk, filters: dict[str, Any]) -> bool:
-        """Check if a chunk's metadata matches all filter criteria."""
+        """Check if a chunk's metadata matches all filter criteria.
+
+        A scalar value requires equality; a list/tuple/set value matches if the
+        chunk's metadata value is a member (``$in`` semantics), so a filter can
+        scope to a *group* of values — e.g. ``{"source_name": ["a", "b"]}`` for a
+        specialist that spans several sources.
+        """
         for key, value in filters.items():
-            if chunk.metadata.get(key) != value:
+            actual = chunk.metadata.get(key)
+            if isinstance(value, (list, tuple, set)):
+                if actual not in value:
+                    return False
+            elif actual != value:
                 return False
         return True
 
@@ -244,13 +254,25 @@ class ChromaVectorStore(BaseVectorStore):
 
     @staticmethod
     def _build_where(filters: dict[str, Any]) -> dict[str, Any] | None:
-        """Translate a simple ``{key: value}`` filter dict to ChromaDB's
-        ``where`` syntax.  Returns ``None`` when *filters* is empty."""
+        """Translate a ``{key: value}`` filter dict to ChromaDB ``where`` syntax.
+
+        A scalar value becomes an equality match; a list/tuple/set value becomes
+        an ``$in`` membership match (scoping to a group of values — e.g. several
+        sources). Returns ``None`` when *filters* is empty.
+        """
         if not filters:
             return None
-        if len(filters) == 1:
-            return filters
-        return {"$and": [{k: {"$eq": v}} for k, v in filters.items()]}
+
+        def clause(value: Any) -> dict[str, Any]:
+            if isinstance(value, (list, tuple, set)):
+                return {"$in": list(value)}
+            return {"$eq": value}
+
+        clauses: list[dict[str, Any]] = [{k: clause(v)} for k, v in filters.items()]
+        if len(clauses) == 1:
+            return clauses[0]
+        conjunction: dict[str, Any] = {"$and": clauses}
+        return conjunction
 
     # ------------------------------------------------------------------
     # BaseVectorStore interface
