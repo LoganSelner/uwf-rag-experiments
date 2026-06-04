@@ -1,0 +1,41 @@
+# Smoke: single agent with per-source RAG tools — all-local, keyless.
+#
+# Extends smoke.yaml (HuggingFace embeddings + Ollama qwen3:14b, 1-question
+# dataset, evaluation.mode: "none"). Verifies the per-source RAG tools (the
+# `agent_multitool` rung) fire and retrieve from the right source.
+#
+# Usage: python scripts/run_experiment.py configs/smoke_agent_multitool.yaml -v
+# Inspect results/<name>/run_1.jsonl — metadata.steps shows which tool fired and
+# retrieved_contexts should carry the matching source.
+
+extends: smoke.yaml
+
+name: "smoke_agent_multitool"
+description: "Local smoke: one agent, per-source RAG tools (handbook + KB)"
+
+pipeline_mode: "agent"
+
+agent:
+  mode: "single"
+  max_iterations: 4
+  system_prompt: |
+    You are an advising assistant. Use `handbook_search` for student conduct and
+    policy questions, and `kb_search` for registration, deadlines, and services.
+    Search before answering; answer only from the retrieved passages.
+  llm:
+    provider: "ollama"
+    model_name: "qwen3:14b"
+    temperature: 0.0
+  memory:
+    type: "none"
+  tools:
+    - name: "handbook_search"
+      type: "rag"
+      params:
+        filters:
+          source_name: "student_handbook"
+    - name: "kb_search"
+      type: "rag"
+      params:
+        filters:
+          source_name: "knowledge_base"

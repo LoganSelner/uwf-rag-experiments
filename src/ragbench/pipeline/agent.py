@@ -1,4 +1,4 @@
-"""Agent pipeline — single-agent ReAct (Phase D1).
+"""Agent pipeline — single-agent ReAct (D1) + multi-agent supervisor (D2).
 
 One reasoning LLM drives a reason→act(tool)→observe loop over a roster of
 tools, deciding for itself when it has enough evidence to answer. The
@@ -14,8 +14,11 @@ reasoning-strategy abstraction) — there is exactly one mechanism today. A
 future text-protocol strategy, if a non-tool-calling backend ever needs one,
 would lift cleanly out of the ``run`` loop / ``_execute_tool_calls``.
 
-Multi-agent (supervisor) mode is Phase D2; the validator rejects
-``agent.mode == "multi"`` for now.
+**Multi-agent (``agent.mode == "multi"``)** is the *same* loop: a supervisor is
+just an ``AgentPipeline`` whose tools are :class:`SubAgentTool`s wrapping
+specialist ``AgentPipeline``s (agents-as-tools). The mode only changes
+construction (``from_config`` → ``_build_supervisor`` vs ``_build_single``);
+``run`` never branches on it.
 """
 
 from __future__ import annotations

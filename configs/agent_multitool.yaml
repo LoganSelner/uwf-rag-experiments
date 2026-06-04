@@ -1,0 +1,57 @@
+# Single-agent ReAct with per-source RAG tools (Phase D ladder — middle rung).
+#
+# ONE reasoning LLM, but TWO `rag` tools — one scoped to each source via a
+# per-tool `params.filters` over `source_name`. This isolates tool/scope
+# granularity from agentic control flow: compare against `agent_single.yaml`
+# (one undifferentiated RAG tool) below it and `agent_multi.yaml` (a supervisor
+# over per-source SPECIALIST agents) above it. The gap between this rung and
+# agent_multi is the value added by per-specialist reasoning + a supervisor, net
+# of "just having per-source tools".
+#
+# Shares base.yaml's two-source cached index (the fingerprint excludes
+# agent/query/eval config), so every ladder rung is mutually comparable.
+
+extends: base.yaml
+
+name: "agent_multitool"
+description: "Single agent, per-source RAG tools (handbook + KB) vs agent_single/agent_multi"
+
+pipeline_mode: "agent"
+
+agent:
+  mode: "single"
+  max_iterations: 5
+  system_prompt: |
+    You are an academic advising assistant for the University of West Florida.
+    You have two search tools: `handbook_search` covers the student handbook
+    (conduct, honor code, academic policies, student rights) and `kb_search`
+    covers the operational knowledge base (registration, deadlines, IT, campus
+    services, calendars). Choose the tool that fits the question; you may search
+    more than once or use both. Answer ONLY from the retrieved passages; if they
+    don't contain the answer, say so. Do not invent policies, dates, or numbers.
+  llm:
+    provider: "edenai"
+    model_name: "gpt-4.1"
+    temperature: 0.0
+    max_tokens: 1024
+    params:
+      sub_provider: "openai"
+  memory:
+    type: "none"
+  tools:
+    - name: "handbook_search"
+      type: "rag"
+      description: >-
+        Search the UWF student handbook: conduct, the honor code, academic
+        policies, and student rights and responsibilities.
+      params:
+        filters:
+          source_name: "student_handbook"
+    - name: "kb_search"
+      type: "rag"
+      description: >-
+        Search the UWF operational knowledge base: registration, deadlines, IT
+        help, campus services, and the academic calendar.
+      params:
+        filters:
+          source_name: "knowledge_base"
