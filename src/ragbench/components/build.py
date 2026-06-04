@@ -9,7 +9,7 @@ Each component exposes a polymorphic ``build(...)`` classmethod (see
 ``components.base``); the pipeline resolves the class from the registry and calls
 ``build`` with a :class:`BuildContext`, so the pipeline never branches on a
 concrete implementation name. Components that compose others (the hybrid
-retriever; the Phase D2 supervisor) recurse through ``ctx.registry`` + ``build``,
+retriever; the multi-agent supervisor) recurse through ``ctx.registry`` + ``build``,
 which is the substrate multi-agent construction leans on.
 
 This module lives in the *components* layer and references the populated index
@@ -62,7 +62,7 @@ class BuildContext:
 
     Args:
         registry: The component registry, for recursive child construction
-            (hybrid retriever, future multi-agent supervisor).
+            (hybrid retriever, multi-agent supervisor).
         index: The populated index (vector store + embedder + auxiliary
             stores), or ``None`` for stages built before/without an index.
         query: The active query stack, reused by the agent's RAG tool to

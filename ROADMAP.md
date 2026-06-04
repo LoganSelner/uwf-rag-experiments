@@ -113,7 +113,8 @@ registry. It is not duplicated here.
 - Experiment result saving (summary.json + config.yaml + JSONL)
 - Cross-experiment comparison with config diffing
 - CI pipeline (ruff + mypy + pytest), pre-commit, Makefile
-- Single-agent ReAct pipeline (Phase D1) via native tool calling
+- Agent pipeline (Phase D) via native tool calling: single-agent ReAct and a
+  multi-agent supervisor (agents-as-tools), plus a `web_search` tool
 - Uniform construction contract: `BuildContext` + polymorphic `build`
   (`components/build.py`) so the pipeline resolves components by name and
   never branches on a concrete implementation; symmetric `ValidateContext`
@@ -143,8 +144,9 @@ With **Phases A, B, and C complete**, the harness now covers the field's
 de facto strong-baseline retrieval matrix (dense + sparse + hybrid +
 reranking), standard query optimization (HyDE, multi-query), and standard
 chunking (recursive at multiple sizes + semantic + contextual enrichment).
-The standard pipeline is fully covered; remaining work is advanced
-paradigms (Phase D agentic) and evaluation depth (Phase E).
+The standard pipeline is fully covered, and the advanced agentic paradigm
+(Phase D) has landed; remaining work is evaluation depth (Phase E) and the
+advanced/optional techniques (Phase F).
 
 ---
 
@@ -164,8 +166,9 @@ The priority ordering reflects how standard each piece is:
    chunker + a `BaseChunkEnricher` stage with the `contextual` enricher
    (situating context applied to retrieval text only).
 4. **Phase D — Agentic RAG** (single-agent ReAct, then multi-agent).
-   Kept because agentic retrieval is now a standard paradigm, not
-   because it replicates any prior version.
+   ✅ **Done.** Single-agent ReAct + a `web_search` tool + a multi-agent
+   supervisor (agents-as-tools over per-source specialists), all on the same
+   loop. Kept because agentic retrieval is now a standard paradigm.
 5. **Phase E — Evaluation depth & robustness** (retrieval/answer
    decoupling analysis, abstention, knowledge-conflict probes).
 6. **Phase F — Advanced/optional** (late-interaction reranking,
@@ -174,8 +177,10 @@ The priority ordering reflects how standard each piece is:
 
 Phases A and B both landed within the existing linear pipeline; Phase C
 added one well-scoped extension (Section 7.2 — the chunk-enricher stage)
-plus the `index_text` decoupling. Phase D activates the dormant agent
-pipeline. Phases E–F are open-ended.
+plus the `index_text` decoupling. Phase D activated the agent pipeline
+(single + multi-agent supervisor) and migrated the corpus to two sources
+(handbook + knowledge base) so routing has separable domains. Phases E–F
+are open-ended.
 
 ---
 
@@ -305,7 +310,7 @@ This is **not** framed as replicating any prior agent version.
 |---|-----------|----------|--------|
 | 7 | ReAct agent loop | `pipeline/agent.py` | ✅ Done — reason → act (tool) → observe → repeat |
 | 8 | RAG tool wrapper | `components/tools.py` | ✅ Done — wraps a retrieval-only QueryPipeline |
-| 9 | Web search tool | `components/tools.py` | Pending (end of D1) — `BaseTool`; external API |
+| 9 | Web search tool | `components/tools.py` | ✅ Done — `WebSearchTool` (`tool/web_search`); Tavily + keyless DuckDuckGo; fenced as its own arm |
 
 The agent treats retrieval as one tool among several, deciding for
 itself when it has gathered enough evidence. **Mechanism: native
@@ -328,6 +333,15 @@ loop runs up to `agent.max_iterations` steps, forcing a final answer
 (`tools=None`) if the budget is exhausted; tool failures become recoverable
 observations. Chief risk to measure: error propagation from a bad early step.
 
+**Web search (`tool/web_search`) ✅.** A first-class `BaseTool` (provider-agnostic:
+Tavily by default, keyless DuckDuckGo for smoke, both stdlib HTTP) but
+**fenced** as its own experiment arm (`configs/agent_websearch.yaml` +
+`smoke_agent_websearch.yaml`), kept out of the reproducible matrix because live
+web results vary run-to-run and inject open-web knowledge into a closed-domain
+eval. Web hits carry **no** `retrieved_chunks`, so they never enter the RAGAS
+context-precision denominator. Tools self-validate via an optional
+`BaseTool.validate_params` (mirroring `BaseRetriever.validate_params`).
+
 Architectural prerequisites shipped as a foundation first (mirroring Phase B):
 `ToolSpec`/`ToolCall` types + the `GenerationResult.tool_calls` extension, the
 `generate(prompt, tools=None)` interface change, `AgentConfig.max_iterations` /
@@ -336,27 +350,44 @@ validation. Experiment config: `configs/agent_single.yaml` (shares
 `base.yaml`'s cached index, so linear-vs-agent isolates control flow);
 `configs/smoke_agent.yaml` for a free local Ollama smoke.
 
-#### Phase D2 — Multi-Agent Supervisor
+#### Phase D2 — Multi-Agent Supervisor ✅ Done
 
-| # | Component | Location | Notes |
-|---|-----------|----------|-------|
-| 10 | Supervisor routing | `pipeline/agent.py` | LLM routes queries to specialized agents |
-| 11 | Agent roster | `pipeline/agent.py` | Per-agent retrieval filters + prompts |
+| # | Component | Location | Status |
+|---|-----------|----------|--------|
+| 10 | Supervisor routing | `pipeline/agent.py` | ✅ Done — agents-as-tools (supervisor reasons over specialists exposed as tools) |
+| 11 | Agent roster | `pipeline/agent.py` | ✅ Done — per-specialist `filters` (source scope) + `system_prompt` + optional `llm` |
 
-A supervisor LLM routes each query to a specialized agent; each agent
-has its own retrieval filters and prompt (e.g., a handbook-only agent
-vs. a deadlines agent). Resolves GAP 1.
+**Mechanism: agents-as-tools** (the dominant 2025–26 pattern, and the *fairest*
+comparison — the supervisor uses the same native-tool-calling loop as the single
+agent, so multi-vs-single isolates routing + specialization, not the control
+mechanism). A supervisor is an `AgentPipeline` whose tools are `SubAgentTool`s
+wrapping specialist `AgentPipeline`s, built by recursing through the
+`BuildContext` seam (`components/build.py`) — the same pattern the hybrid
+retriever uses for its children. `run` never branches on mode; only construction
+(`from_config` → `_build_supervisor` vs `_build_single`) does.
 
-**Construction substrate (ready).** The `BuildContext` + polymorphic `build`
-seam (`components/build.py`) is the recursion D2 builds on: a `multi`
-`AgentPipeline` builds a supervisor that constructs each specialist sub-agent
-via `ctx.build`-style recursion through the registry — the same pattern the
-hybrid retriever already uses to build its children. The dead D1-era
-`SupervisorConfig` / `AgentConfig.agents` / per-agent `AgentDefinitionConfig`
-fields were removed; D2 reintroduces a coherent supervisor + agent-roster
-config (each agent carrying its own `llm` / `tools` / retrieval / prompt) rather
-than carrying speculative fields ahead of the implementation. `AgentConfig.mode`
-is the seam; `multi` is rejected by the validator until this phase lands.
+Each specialist is scoped by a `source_name` **retrieval filter** (the
+corpus-agnostic namespace; `filters` accepts a list for multi-source domains via
+the F2 `$in` support) and carries its own `system_prompt`; its `llm` and
+iteration budget default to the supervisor's, and its tool roster defaults to one
+`rag` tool over the scoped stack. `SubAgentTool.execute` returns the specialist's
+synthesized answer as the observation and surfaces its `retrieved_chunks` upward,
+so the supervisor's union/dedup/cap keeps multi-agent retrieval metrics
+comparable to linear (`top_k_final` is held equal across all rungs). Resolves
+GAP 1.
+
+**Experiment ladder** (each rung isolates one variable; all share `base.yaml`'s
+two-source cached index): `linear` (base) → `agent_single` (1 RAG tool) →
+`agent_multitool` (one agent, per-source RAG tools) → `agent_multi` (supervisor +
+per-source specialists). The `multitool` rung separates "supervisor adds value"
+from "just more tools". See the multi-agent measurement caveats in
+ARCHITECTURE.md (the supervisor sees specialist answers not raw chunks;
+cross-source score comparability; faithfulness vs. unread chunks).
+
+**Cost:** a supervisor step runs a full specialist loop, so LLM cost is
+multiplicative — `agent_multi` keeps `max_iterations` low (3). Per-query latency
+is now measured (`latency_mean_s`) so the milestone's "or just adds latency" is
+answerable.
 
 **Milestone:** linear vs. single-agent vs. multi-agent on identical
 indexing, measuring whether agentic control flow actually improves
@@ -430,11 +461,12 @@ are not yet implemented.
 
 | Variable | Config Location | Status |
 |----------|----------------|--------|
-| Pipeline mode | `pipeline_mode` | linear + **agent (single)** done |
-| Agent mode | `agent.mode` | single done; **multi** pending (D2) |
+| Pipeline mode | `pipeline_mode` | linear + agent done |
+| Agent mode | `agent.mode` | single + multi (supervisor) done |
 | Max iterations | `agent.max_iterations` | done |
 | Reasoning LLM | `agent.llm` | done (native tool calling, 4 providers) |
-| Tool roster | `agent.tools` | done (`rag`; **web_search** pending — end of D1) |
+| Tool roster | `agent.tools` | done (`rag`, `web_search`) |
+| Specialist roster | `agent.agents` | done (`AgentSpecConfig`: filters + prompt + optional llm + tools) |
 | Memory | `agent.memory.type` | none, buffer_window done (plumbed; single-turn loop) |
 
 ### 6.4 Evaluation Variables
@@ -638,10 +670,17 @@ against `base.yaml` (passthrough) and the Phase A retrieval matrix.
 
 ### Agentic (Phase D)
 
+The ladder (each rung isolates one variable; all share `base.yaml`'s two-source
+index, so run them together, e.g. `run_matrix.py configs/base.yaml
+configs/agent_single.yaml configs/agent_multitool.yaml configs/agent_multi.yaml
+--compare`):
+
 | Experiment | Isolates |
 |-----------|----------|
-| `agent_single` | ReAct single-agent vs. linear |
-| `agent_multi` | multi-agent vs. single-agent |
+| `agent_single` | ReAct single-agent (1 RAG tool) vs. linear (`base.yaml`) — agentic control flow |
+| `agent_multitool` | one agent, per-source RAG tools vs. `agent_single` — tool/scope granularity |
+| `agent_multi` | supervisor + per-source specialists vs. `agent_multitool` — per-specialist reasoning + supervision |
+| `agent_websearch` | **fenced arm** (not in the matrix): KB + Tavily web-search tool selection |
 
 ### Standing Methodology Note
 
