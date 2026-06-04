@@ -1,4 +1,5 @@
-"""Tests for src/components/generators.py — Ollama, Google, and EdenAI generators."""
+"""Tests for the ragbench.components.generators package — Ollama, Google, EdenAI,
+and OpenAI generators."""
 
 from __future__ import annotations
 

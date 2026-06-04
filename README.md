@@ -93,7 +93,7 @@ make experiment CONFIG=configs/experiments/reranker/cross_encoder.yaml
 
 What happens:
 1. Config is loaded and validated (typos caught before any model loads)
-2. Index is built from source PDFs, or loaded from cache if the indexing config hasn't changed
+2. Index is built from source PDFs, or loaded from cache if the indexing config and source files are unchanged
 3. Each evaluation question is run through the pipeline
 4. RAGAS computes metrics (answer correctness, context precision, faithfulness, context entity recall, answer relevancy)
 5. The run repeats `num_runs` times (default: 3) for statistical significance
@@ -337,7 +337,7 @@ CI runs on every push and pull request (ruff + mypy + pytest).
 |---------|-----|
 | `EDENAI_API_KEY` / `GOOGLE_API_KEY` not found | Ensure `.env` exists with your keys. The app loads it automatically at startup. |
 | Ollama connection refused | Start Ollama with `ollama serve`. If the host isn't `localhost:11434` (e.g. WSL → Windows), set `OLLAMA_BASE_URL` in `.env` (preferred — nothing machine-specific lands in a tracked config) or override `generation.params.base_url` per experiment. |
-| Index cache stale after changing source PDFs | Use `--no-cache`: `python scripts/run_experiment.py configs/base.yaml --no-cache` |
+| Want to force a fresh index (e.g. debugging) | `--no-cache`: `python scripts/run_experiment.py configs/base.yaml --no-cache`. Note: editing a source file's *contents* already changes the index fingerprint and rebuilds automatically, so this is only needed to force a rebuild otherwise. |
 | Unknown component type in validation | Check that the `type:` value in your YAML matches a `@registry.register(...)` name exactly. |
 | RAGAS timeout on local Ollama | Increase `evaluation.run_config.timeout` (base default: 300s; `smoke.yaml` raises it to 1200s) or reduce `evaluation.run_config.max_workers`. |
 

@@ -88,7 +88,7 @@ cache identity.
 │    base.py (ABCs)   │          │  Interfaces + implementations
 │    chunkers.py      │          │
 │    embedders.py     │          │
-│    generators.py    │          │
+│    generators/      │          │
 │    ...              │          │
 └────────┬────────────┘          │
          │                       │
@@ -156,7 +156,7 @@ src/ragbench/
 │   ├── vectorstores.py   FAISSVectorStore, ChromaVectorStore
 │   ├── lexical_indexes.py   BM25LexicalIndex (bm25s + PyStemmer)
 │   ├── retrievers.py     DenseRetriever, BM25Retriever, HybridRetriever
-│   ├── generators.py     OllamaGenerator, EdenAIGenerator, GoogleGenerator, OpenAIGenerator + build_generator
+│   ├── generators/      One module per provider (ollama/edenai/google/openai) + base.py (_SDKGenerator + build_generator)
 │   ├── prompts.py        ChatPromptTemplate
 │   ├── query_transforms.py  ContextualizerQueryTransformer, HyDEQueryTransformer, MultiQueryQueryTransformer
 │   ├── rerankers.py      CrossEncoderReranker
@@ -449,14 +449,19 @@ Multi-level inheritance is supported (child → parent → grandparent).
 ### Index Fingerprinting
 
 `ExperimentConfig.index_fingerprint()` returns a 12-char hex SHA-256
-of: sources + chunking + embedding + vectorstore + sparse_index +
-chunk_enricher (the last two only when set) config.
+of: sources (config **and file content**) + chunking + embedding +
+vectorstore + sparse_index + chunk_enricher (the last two only when
+set) config.
 
-**Included:** Source names, paths, ingest types/params. Chunking,
-embedding, vectorstore types and all params. Sparse-index type and
-params, *only when its `type` is non-empty* — empty `ComponentConfig`s
-canonicalize to absence, so adding an unused optional component
-doesn't disturb the fingerprint of existing experiments.
+**Included:** Source names, paths, ingest types/params, **and a
+content digest of each source file** (sha256 of its bytes, with a
+`(size, mtime)` fallback) — so editing a document in place changes the
+fingerprint and rebuilds, rather than silently serving a stale cache.
+Chunking, embedding, vectorstore types and all params. Sparse-index
+type and params, *only when its `type` is non-empty* — empty
+`ComponentConfig`s canonicalize to absence, so adding an unused
+optional component doesn't disturb the fingerprint of existing
+experiments.
 
 **Excluded:** Everything in QueryConfig, AgentConfig,
 EvaluationConfig. Pipeline mode.
@@ -544,7 +549,7 @@ pipeline calls `PromptTemplate.format()` first. The generator is a
 pure LLM wrapper that knows nothing about retrieval context. This
 is what makes prompt config changes actually affect output. Every
 generator is built through one factory, `build_generator(LLMConfig)`
-in `components/generators.py`, used by the linear pipeline, the agent's
+in `components/generators/` (its `base.py`), used by the linear pipeline, the agent's
 reasoning LLM, and the query transformers / contextual enricher — there
 is a single construction path, not a per-call-site idiom.
 
@@ -652,10 +657,10 @@ metadata, and truncates.
 | `query_transform` | `multi_query` | `MultiQueryQueryTransformer` | `query_transforms.py` |
 | `reranking` | `none` | `NoOpReranker` | `defaults.py` |
 | `reranking` | `cross_encoder` | `CrossEncoderReranker` | `rerankers.py` |
-| `generation` | `ollama` | `OllamaGenerator` | `generators.py` |
-| `generation` | `edenai` | `EdenAIGenerator` | `generators.py` |
-| `generation` | `google` | `GoogleGenerator` | `generators.py` |
-| `generation` | `openai` | `OpenAIGenerator` | `generators.py` |
+| `generation` | `ollama` | `OllamaGenerator` | `generators/ollama.py` |
+| `generation` | `edenai` | `EdenAIGenerator` | `generators/edenai.py` |
+| `generation` | `google` | `GoogleGenerator` | `generators/google.py` |
+| `generation` | `openai` | `OpenAIGenerator` | `generators/openai.py` |
 | `prompts` | `chat` | `ChatPromptTemplate` | `prompts.py` |
 | `memory` | `none` | `NoMemory` | `defaults.py` |
 | `memory` | `buffer_window` | `BufferWindowMemory` | `defaults.py` |
