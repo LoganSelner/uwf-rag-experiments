@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import statistics
+import time
 from typing import Any
 
 from ragbench.core.config import (
@@ -47,6 +48,23 @@ def _load_dataset(path: str) -> list[dict[str, str]]:
         if "id" not in item:
             item["id"] = str(i + 1)
     return data
+
+
+def _mean_latency(samples: list[EvalSample]) -> float:
+    """Mean per-query wall-clock latency (seconds) across a run's samples.
+
+    Surfaces the cost side of the linear-vs-agent comparison (the D2 milestone
+    asks whether agentic control flow improves quality *or just adds latency*).
+    Folded into the per-run ``metrics`` dict so ``_aggregate_metrics`` carries it
+    to ``summary.json`` as a mean ± std like any other metric — and it works in
+    ``mode="none"`` too, where the rest of ``metrics`` is empty.
+    """
+    latencies = [
+        s.metadata["latency_s"]
+        for s in samples
+        if isinstance(s.metadata.get("latency_s"), (int, float))
+    ]
+    return statistics.fmean(latencies) if latencies else 0.0
 
 
 class Evaluator:
@@ -130,6 +148,10 @@ class Evaluator:
             else:
                 metrics = {}
                 sample_scores = [dict[str, float | None]() for _ in samples]
+            # Latency is not a RAGAS metric; inject it into the per-run metrics
+            # so aggregation + summary.json + the comparison table pick it up for
+            # free (works in mode="none", where `metrics` is otherwise empty).
+            metrics["latency_mean_s"] = _mean_latency(samples)
             per_run_metrics.append(metrics)
 
             scored = [
@@ -182,7 +204,9 @@ class Evaluator:
         total = len(dataset)
         for i, item in enumerate(dataset, start=1):
             try:
+                t0 = time.perf_counter()
                 result = pipeline.query(item["query"])
+                latency_s = time.perf_counter() - t0
                 contexts = [rc.chunk.content for rc in result.retrieved_chunks]
                 samples.append(
                     EvalSample(
@@ -191,7 +215,7 @@ class Evaluator:
                         response=result.answer,
                         retrieved_contexts=contexts,
                         reference=item["reference"],
-                        metadata=result.metadata,
+                        metadata={**result.metadata, "latency_s": latency_s},
                     )
                 )
             except Exception:

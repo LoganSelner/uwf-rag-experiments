@@ -24,9 +24,17 @@ description: "Local baseline: text-embedding-3-small (EdenAI) + Chroma + EdenAI 
 pipeline_mode: "linear"
 
 indexing:
+  # Two-source corpus: the operational knowledge base + the student handbook.
+  # Every experiment inherits this, so each chunk carries a `source_name`
+  # metadata tag ("knowledge_base" / "student_handbook") that multi-agent
+  # specialists (Phase D2) and per-source RAG tools filter on.
   sources:
     - name: "knowledge_base"
       path: "data/sources/knowledge_base.pdf"
+      ingest:
+        type: "pdf"
+    - name: "student_handbook"
+      path: "data/sources/student_handbook.pdf"
       ingest:
         type: "pdf"
 
@@ -83,7 +91,9 @@ query:
     citation_style: "none"
 
 evaluation:
-  dataset: "data/datasets/25qKB_dataset.jsonl"
+  # Spans both domains (handbook + knowledge base), so it exercises retrieval
+  # across the two-source corpus and, in agent mode, the supervisor's routing.
+  dataset: "data/datasets/50q_dataset.jsonl"
   mode: "full"
   metrics:
     - "answer_correctness"

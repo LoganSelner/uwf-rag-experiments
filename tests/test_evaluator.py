@@ -10,7 +10,7 @@ import pytest
 
 from ragbench.core.config import SUPPORTED_EVALUATOR_LLM_PROVIDERS, EvaluationConfig
 from ragbench.core.types import EvalSample, GenerationResult
-from ragbench.evaluation.evaluator import Evaluator, _load_dataset
+from ragbench.evaluation.evaluator import Evaluator, _load_dataset, _mean_latency
 
 
 class TestJudgeProviderSourceOfTruth:
@@ -311,11 +311,36 @@ class TestRunOnceMetadata:
             pipeline, [{"id": "1", "query": "Q", "reference": "R"}]
         )
         assert len(samples) == 1
-        assert samples[0].metadata == {
-            "mode": "agent",
-            "iterations": 3,
-            "num_tool_calls": 2,
-        }
+        meta = samples[0].metadata
+        # Pipeline metadata is carried through unchanged...
+        assert meta["mode"] == "agent"
+        assert meta["iterations"] == 3
+        assert meta["num_tool_calls"] == 2
+        # ...and the evaluator adds a per-query wall-clock latency.
+        assert isinstance(meta["latency_s"], float)
+        assert meta["latency_s"] >= 0.0
+
+
+class TestMeanLatency:
+    @staticmethod
+    def _sample(latency: float | None) -> EvalSample:
+        meta = {} if latency is None else {"latency_s": latency}
+        return EvalSample(
+            id="1",
+            query="q",
+            response="a",
+            retrieved_contexts=[],
+            reference="r",
+            metadata=meta,
+        )
+
+    def test_mean_of_present_latencies(self) -> None:
+        samples = [self._sample(0.2), self._sample(0.4), self._sample(0.6)]
+        assert _mean_latency(samples) == pytest.approx(0.4)
+
+    def test_empty_or_missing_is_zero(self) -> None:
+        assert _mean_latency([]) == 0.0
+        assert _mean_latency([self._sample(None)]) == 0.0
 
 
 # -----------------------------------------------------------------------
@@ -566,7 +591,8 @@ class TestEvaluateNoneMode:
         mock_compute.assert_not_called()
         mock_registry.get.assert_not_called()
         assert evaluator._embedder_adapter is None
-        assert result.metrics == {}
+        # mode="none" skips RAGAS scoring but still reports run latency.
+        assert set(result.metrics) == {"latency_mean_s", "latency_mean_s_std"}
         assert len(result.per_run_samples) == 1
         assert len(result.per_run_samples[0]) == 2
         for scored in result.per_run_samples[0]:

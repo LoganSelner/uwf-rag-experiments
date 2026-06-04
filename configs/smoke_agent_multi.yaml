@@ -1,0 +1,46 @@
+# Smoke: multi-agent supervisor over per-source specialists — all-local, keyless.
+#
+# Extends smoke.yaml (HuggingFace embeddings + Ollama qwen3:14b, 1-question
+# dataset, evaluation.mode: "none"). Verifies the supervisor invokes a specialist
+# SubAgentTool end-to-end and the specialist's chunks aggregate upward.
+#
+# IMPORTANT: the supervisor + specialists all run a tool-calling Ollama model
+# (qwen3:14b supports it). Each supervisor step runs a full specialist loop, so
+# this is the slowest smoke — keep max_iterations low.
+#
+# Usage: python scripts/run_experiment.py configs/smoke_agent_multi.yaml -v
+# Inspect results/<name>/run_1.jsonl — metadata.steps shows sub-agent calls and
+# retrieved_chunk_count confirms specialist chunks aggregated up.
+
+extends: smoke.yaml
+
+name: "smoke_agent_multi"
+description: "Local smoke: supervisor over handbook + KB specialists (Ollama)"
+
+pipeline_mode: "agent"
+
+agent:
+  mode: "multi"
+  max_iterations: 3
+  system_prompt: |
+    You supervise two advising specialists exposed as tools: `handbook` (conduct,
+    honor code, policies) and `knowledge_base` (registration, deadlines,
+    services). Route each question to the right specialist(s) and synthesize a
+    final answer only from what they return.
+  llm:
+    provider: "ollama"
+    model_name: "qwen3:14b"
+    temperature: 0.0
+  memory:
+    type: "none"
+  agents:
+    - name: "handbook"
+      description: "Student conduct, the honor code, and academic policies (student handbook)."
+      filters:
+        source_name: "student_handbook"
+      system_prompt: "Answer only from retrieved handbook passages."
+    - name: "knowledge_base"
+      description: "Registration, deadlines, IT, and campus services (knowledge base)."
+      filters:
+        source_name: "knowledge_base"
+      system_prompt: "Answer only from retrieved knowledge-base passages."

@@ -16,6 +16,7 @@ import faiss
 import numpy as np
 
 from ragbench.components.base import BaseVectorStore, ComponentParams
+from ragbench.core.filtering import metadata_matches
 from ragbench.core.registry import registry
 from ragbench.core.types import Chunk, EmbeddedChunk, RetrievedChunk
 
@@ -154,11 +155,13 @@ class FAISSVectorStore(BaseVectorStore):
 
     @staticmethod
     def _matches_filters(chunk: Chunk, filters: dict[str, Any]) -> bool:
-        """Check if a chunk's metadata matches all filter criteria."""
-        for key, value in filters.items():
-            if chunk.metadata.get(key) != value:
-                return False
-        return True
+        """Check if a chunk's metadata matches all filter criteria.
+
+        Delegates to the shared :func:`metadata_matches` so dense (FAISS) and
+        sparse (BM25) post-filtering interpret a filter dict identically —
+        scalar = equality, list/tuple/set = ``$in`` membership.
+        """
+        return metadata_matches(chunk.metadata, filters)
 
     def save(self, directory: str) -> None:
         path = Path(directory)
@@ -244,13 +247,25 @@ class ChromaVectorStore(BaseVectorStore):
 
     @staticmethod
     def _build_where(filters: dict[str, Any]) -> dict[str, Any] | None:
-        """Translate a simple ``{key: value}`` filter dict to ChromaDB's
-        ``where`` syntax.  Returns ``None`` when *filters* is empty."""
+        """Translate a ``{key: value}`` filter dict to ChromaDB ``where`` syntax.
+
+        A scalar value becomes an equality match; a list/tuple/set value becomes
+        an ``$in`` membership match (scoping to a group of values — e.g. several
+        sources). Returns ``None`` when *filters* is empty.
+        """
         if not filters:
             return None
-        if len(filters) == 1:
-            return filters
-        return {"$and": [{k: {"$eq": v}} for k, v in filters.items()]}
+
+        def clause(value: Any) -> dict[str, Any]:
+            if isinstance(value, (list, tuple, set)):
+                return {"$in": list(value)}
+            return {"$eq": value}
+
+        clauses: list[dict[str, Any]] = [{k: clause(v)} for k, v in filters.items()]
+        if len(clauses) == 1:
+            return clauses[0]
+        conjunction: dict[str, Any] = {"$and": clauses}
+        return conjunction
 
     # ------------------------------------------------------------------
     # BaseVectorStore interface

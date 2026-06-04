@@ -24,7 +24,7 @@ from ragbench.core.config.loading import (
 )
 from ragbench.core.config.models import (
     AgentConfig,
-    AgentDefinitionConfig,
+    AgentSpecConfig,
     ComponentConfig,
     ConfigModel,
     EvalRunConfig,
@@ -38,6 +38,7 @@ from ragbench.core.config.models import (
     QueryTransformConfig,
     RetrievalConfig,
     SourceConfig,
+    ToolConfig,
     ValidateContext,
 )
 from ragbench.core.config.validation import (
@@ -48,7 +49,7 @@ from ragbench.core.config.validation import (
 __all__ = [
     "SUPPORTED_EVALUATOR_LLM_PROVIDERS",
     "AgentConfig",
-    "AgentDefinitionConfig",
+    "AgentSpecConfig",
     "ComponentConfig",
     "ConfigModel",
     "ConfigValidationError",
@@ -63,6 +64,7 @@ __all__ = [
     "QueryTransformConfig",
     "RetrievalConfig",
     "SourceConfig",
+    "ToolConfig",
     "ValidateContext",
     "_deep_merge",
     "_selects_different_impl",

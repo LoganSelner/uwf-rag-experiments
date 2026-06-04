@@ -81,7 +81,10 @@ class OllamaGenerator(_SDKGenerator):
             tool_calls,
             finish_reason="tool_calls" if tool_calls else "stop",
             total_duration=response.get("total_duration"),
-            eval_count=response.get("eval_count"),
+            # Normalize Ollama's native counters to the cross-provider keys
+            # (prompt_eval_count = prompt tokens, eval_count = completion tokens).
+            prompt_tokens=response.get("prompt_eval_count"),
+            completion_tokens=response.get("eval_count"),
         )
 
     @staticmethod

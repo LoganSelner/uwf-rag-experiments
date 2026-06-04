@@ -1,0 +1,75 @@
+# Multi-agent supervisor (Phase D2) — agents-as-tools over per-source specialists.
+#
+# A supervisor LLM routes each query to specialist sub-agents, each a single
+# ReAct agent scoped to one source with its own instructions:
+#   - handbook       → student conduct, the honor code, academic policies
+#   - knowledge_base → registration, deadlines, IT, campus services
+# Each specialist is exposed to the supervisor as a tool (its `description` is
+# the routing basis); the supervisor calls one or both, then synthesizes. Their
+# retrieved chunks ride up so retrieval metrics stay comparable to linear.
+#
+# Shares base.yaml's two-source cached index, so linear (base) vs agent_single
+# vs agent_multitool vs agent_multi isolate, in turn: agentic control flow,
+# tool/scope granularity, and per-specialist reasoning + supervision.
+#
+# COST NOTE: each supervisor step runs a full specialist sub-agent loop, so the
+# LLM-call cost is multiplicative — max_iterations is kept low (3).
+#
+# MEASUREMENT CAVEATS (report, don't treat as bugs): the supervisor sees
+# specialist ANSWERS (not raw chunks), so it differs from agent_multitool on
+# more than "one loop vs two"; cross-source chunk scores aren't perfectly
+# comparable in the union; faithfulness is scored against chunks the supervisor
+# didn't directly read.
+
+extends: base.yaml
+
+name: "agent_multi"
+description: "Multi-agent supervisor over per-source specialists (handbook + KB)"
+
+pipeline_mode: "agent"
+
+agent:
+  mode: "multi"
+  max_iterations: 3
+  system_prompt: |
+    You are the supervisor of a University of West Florida advising assistant.
+    You coordinate two specialists, each exposed as a tool: `handbook` answers
+    questions about student conduct, the honor code, academic policies, and
+    student rights; `knowledge_base` answers questions about registration,
+    deadlines, IT, campus services, and the academic calendar. Route each
+    question to the specialist(s) that fit, using more than one when a question
+    spans both. Synthesize a final answer ONLY from what the specialists return;
+    if neither can answer, say so concisely.
+  llm:
+    provider: "edenai"
+    model_name: "gpt-4.1"
+    temperature: 0.0
+    max_tokens: 1024
+    params:
+      sub_provider: "openai"
+  memory:
+    type: "none"
+  # Specialists omit `llm` (inherit the supervisor's) and `tools` (default to a
+  # single rag tool over their source-scoped stack). `filters` is the scope.
+  agents:
+    - name: "handbook"
+      description: >-
+        Student conduct, the honor code, academic policies, disciplinary
+        procedures, and student rights and responsibilities (the UWF student
+        handbook).
+      filters:
+        source_name: "student_handbook"
+      system_prompt: |
+        You are a UWF student-handbook specialist. Search your knowledge base
+        and answer ONLY from the retrieved handbook passages, quoting policy
+        wording where it helps. If the handbook does not cover it, say so.
+    - name: "knowledge_base"
+      description: >-
+        Registration, deadlines, financial aid, IT help, campus services, and
+        the academic calendar (the UWF operational knowledge base).
+      filters:
+        source_name: "knowledge_base"
+      system_prompt: |
+        You are a UWF operations specialist. Search your knowledge base and
+        answer ONLY from the retrieved passages, giving concrete dates, links,
+        and steps where available. If it isn't covered, say so.

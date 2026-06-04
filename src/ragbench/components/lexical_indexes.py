@@ -15,6 +15,7 @@ from typing import Any
 import bm25s
 
 from ragbench.components.base import BaseLexicalIndex, ComponentParams
+from ragbench.core.filtering import metadata_matches
 from ragbench.core.registry import registry
 from ragbench.core.types import Chunk, RetrievedChunk
 
@@ -207,10 +208,15 @@ class BM25LexicalIndex(BaseLexicalIndex):
 
     @staticmethod
     def _matches_filters(chunk: Chunk, filters: dict[str, Any]) -> bool:
-        for key, value in filters.items():
-            if chunk.metadata.get(key) != value:
-                return False
-        return True
+        """Check if a chunk's metadata matches all filter criteria.
+
+        Delegates to the shared :func:`metadata_matches` so sparse (BM25) and
+        dense (FAISS) post-filtering interpret a filter dict identically —
+        scalar = equality, list/tuple/set = ``$in`` membership. Keeping this in
+        lockstep with FAISS is why a ``{source_name: [a, b]}`` filter scopes the
+        BM25 branch of a hybrid retriever instead of silently dropping it.
+        """
+        return metadata_matches(chunk.metadata, filters)
 
     def save(self, directory: str) -> None:
         if self._retriever is None:

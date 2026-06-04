@@ -184,32 +184,72 @@ class QueryConfig(ConfigModel):
 # ---------------------------------------------------------------------------
 
 
-class AgentDefinitionConfig(ConfigModel):
-    """One entry in the agent's tool roster.
+class ToolConfig(ConfigModel):
+    """One entry in an agent's tool roster.
 
-    ``type`` is the registry name in category ``tool`` (e.g. ``rag``), ``name``
-    is the agent-facing tool name the LLM sees, and ``description`` overrides the
-    tool's default description.
-
-    Phase D2 (multi-agent supervisor) will reintroduce per-agent fields
-    (retrieval / prompt / sub-tools) here or on a dedicated agent-roster model;
-    they are intentionally omitted until that lands so the config surface only
-    advertises what is wired today.
+    ``type`` is the registry name in category ``tool`` (e.g. ``rag``,
+    ``web_search``), ``name`` is the agent-facing tool name the LLM sees,
+    ``description`` overrides the tool's default description, and ``params``
+    carries tool-specific configuration — a ``rag`` tool's per-tool
+    retrieval-filter/top_k override (the ``agent_multitool`` rung), or a
+    ``web_search`` tool's provider/result count. ``params`` is validated into
+    each tool's nested ``Params`` model (or read directly) at construction.
     """
 
     name: str = ""
     type: str = "rag"
     description: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentSpecConfig(ConfigModel):
+    """One specialist agent in a multi-agent supervisor's roster (Phase D2).
+
+    The supervisor advertises each specialist to its reasoning LLM as a tool
+    whose name/description come from ``name``/``description`` — so ``description``
+    is the supervisor's entire basis for routing and must be distinct and
+    informative (the validator enforces non-empty, unique descriptions). Each
+    specialist is itself a single-agent ReAct pipeline with its own
+    ``system_prompt``, source scope (``filters``), and ``tools`` roster.
+
+    ``filters`` is the specialist's retrieval scope — a metadata filter (e.g.
+    ``{source_name: student_handbook}``) merged over the base query stack's
+    filters. The retrieval *method* and top_k budget are inherited from the base
+    stack, so the budget stays equal across specialists and the linear/single
+    baselines (the comparability requirement). ``llm`` is optional: an empty
+    ``provider`` means inherit the supervisor's reasoning LLM (mirrors the
+    "empty provider ⇒ inherit/skip" convention used for query transformers).
+    ``tools`` defaults to a single ``rag`` tool over the scoped stack.
+
+    Kept deliberately flat (no nested ``agents``/``mode``) so recursion is capped
+    at one supervisor level; per-specialist retrieval method / top_k budget are
+    omitted until an experiment needs them (YAGNI).
+    """
+
+    name: str = ""
+    description: str = ""
+    system_prompt: str = ""
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    tools: list[ToolConfig] = Field(default_factory=list)
 
 
 class AgentConfig(ConfigModel):
     """Config for agent-based pipelines.
 
-    ``max_iterations`` bounds the single-agent ReAct loop (reason→act→observe);
-    ``system_prompt`` is the agent's standing instruction; ``tools`` is the
-    roster the single agent reasons over. ``mode`` is the seam for the Phase D2
-    multi-agent supervisor (``multi`` is rejected by the validator until D2
-    lands, at which point the supervisor + agent-roster config is added here).
+    ``max_iterations`` bounds the ReAct loop (reason→act→observe);
+    ``system_prompt`` is the agent's standing instruction. ``mode`` selects the
+    topology:
+
+    - ``single`` (Phase D1): one agent reasons over the ``tools`` roster.
+    - ``multi`` (Phase D2): a supervisor reasons over the ``agents`` roster of
+      specialists, each exposed to it as a tool (agents-as-tools). The supervisor
+      runs the *same* ReAct loop; ``llm`` / ``system_prompt`` / ``max_iterations``
+      are the supervisor's.
+
+    The two rosters are mutually exclusive per mode — the validator rejects an
+    ``agents`` roster under ``single`` and a ``tools`` roster under ``multi`` so a
+    misplaced roster fails loudly rather than being silently ignored.
     """
 
     mode: str = "single"
@@ -217,7 +257,8 @@ class AgentConfig(ConfigModel):
     system_prompt: str = ""
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    tools: list[AgentDefinitionConfig] = Field(default_factory=list)
+    tools: list[ToolConfig] = Field(default_factory=list)
+    agents: list[AgentSpecConfig] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

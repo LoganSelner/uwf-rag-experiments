@@ -28,6 +28,9 @@ DEFAULT_METRICS = [
     "faithfulness",
     "context_entity_recall",
     "answer_relevancy",
+    # Cost side of the agentic comparison (appended so the established quality
+    # columns keep their order). Present in every run, including mode="none".
+    "latency_mean_s",
 ]
 
 # Short display names for table headers (used by format_comparison_table
@@ -38,6 +41,7 @@ METRIC_SHORT_NAMES: dict[str, str] = {
     "faithfulness": "Faith.",
     "context_entity_recall": "CER",
     "answer_relevancy": "Ans.Rel",
+    "latency_mean_s": "Lat(s)",
     # Opt-in metrics (not in DEFAULT_METRICS)
     "answer_similarity": "Ans.Sim",
     "context_recall": "Ctx.Rec",

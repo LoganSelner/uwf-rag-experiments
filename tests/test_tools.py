@@ -1,12 +1,20 @@
-"""Tests for src/components/tools.py — agent tools (RAG search)."""
+"""Tests for src/components/tools.py — agent tools (RAG search + web search)."""
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ragbench.components.build import BuildContext
-from ragbench.components.tools import RAGSearchTool, tool_to_spec
-from ragbench.core.config import AgentDefinitionConfig, ExperimentConfig
+from ragbench.components.tools import (
+    RAGSearchTool,
+    SubAgentTool,
+    WebSearchTool,
+    tool_to_spec,
+)
+from ragbench.core.config import ExperimentConfig, ToolConfig, ValidateContext
 from ragbench.core.registry import registry
 from ragbench.core.types import Chunk, GenerationResult, RetrievedChunk, ToolResult
 
@@ -86,7 +94,7 @@ class TestRAGSearchTool:
                 }
             }
         )
-        entry = AgentDefinitionConfig(name="knowledge_base", type="rag")
+        entry = ToolConfig(name="knowledge_base", type="rag")
         ctx = BuildContext(
             registry=registry, index=MagicMock(), query=experiment_config.query
         )
@@ -105,10 +113,51 @@ class TestRAGSearchTool:
     @patch(
         "ragbench.pipeline.query.QueryPipeline.from_config", return_value=MagicMock()
     )
+    def test_build_applies_param_retrieval_scope(
+        self, mock_from_config: MagicMock
+    ) -> None:
+        """cfg.params filters/top_k scope the tool's retrieval (multitool rung)."""
+        experiment_config = ExperimentConfig.from_dict(
+            {
+                "query": {
+                    "retrieval": {
+                        "type": "dense",
+                        "top_k_retrieve": 10,
+                        "top_k_final": 5,
+                        "filters": {"lang": "en"},
+                    }
+                }
+            }
+        )
+        entry = ToolConfig(
+            name="handbook",
+            type="rag",
+            params={
+                "filters": {"source_name": "student_handbook"},
+                "top_k_final": 3,
+            },
+        )
+        ctx = BuildContext(
+            registry=registry, index=MagicMock(), query=experiment_config.query
+        )
+        RAGSearchTool.build(entry, ctx)
+
+        passed = mock_from_config.call_args[0][0]
+        # Per-tool filters merge over the stack's defaults; top_k overrides.
+        assert passed.retrieval.filters == {
+            "lang": "en",
+            "source_name": "student_handbook",
+        }
+        assert passed.retrieval.top_k_final == 3
+        assert passed.retrieval.top_k_retrieve == 10  # untouched
+
+    @patch(
+        "ragbench.pipeline.query.QueryPipeline.from_config", return_value=MagicMock()
+    )
     def test_build_default_name_and_description(
         self, _mock_from_config: MagicMock
     ) -> None:
-        entry = AgentDefinitionConfig(type="rag")  # no name / description
+        entry = ToolConfig(type="rag")  # no name / description
         ctx = BuildContext(
             registry=registry,
             index=MagicMock(),
@@ -117,3 +166,112 @@ class TestRAGSearchTool:
         tool = RAGSearchTool.build(entry, ctx)
         assert tool.name == "knowledge_base"
         assert "knowledge base" in tool.description.lower()
+
+
+class TestWebSearchTool:
+    @staticmethod
+    def _vctx() -> ValidateContext:
+        return ValidateContext(registry=registry)
+
+    def test_validate_params_rejects_unknown_provider(self) -> None:
+        errs = WebSearchTool.validate_params({"provider": "bing"}, self._vctx())
+        assert any("provider" in e for e in errs)
+
+    def test_validate_params_rejects_bad_max_results(self) -> None:
+        errs = WebSearchTool.validate_params({"max_results": 0}, self._vctx())
+        assert any("max_results" in e for e in errs)
+
+    def test_validate_params_accepts_defaults(self) -> None:
+        assert WebSearchTool.validate_params({}, self._vctx()) == []
+
+    def test_validate_params_rejects_unknown_key(self) -> None:
+        # ComponentParams is extra="forbid": a typo'd param fails loudly.
+        errs = WebSearchTool.validate_params({"provder": "tavily"}, self._vctx())
+        assert errs and "invalid" in errs[0].lower()
+
+    def test_build_reads_params(self) -> None:
+        entry = ToolConfig(
+            type="web_search",
+            name="web",
+            params={"provider": "duckduckgo", "max_results": 3},
+        )
+        tool = WebSearchTool.build(entry, BuildContext(registry=registry))
+        assert tool.name == "web"
+        assert tool._p.provider == "duckduckgo"
+        assert tool._p.max_results == 3
+
+    def test_execute_missing_tavily_key_is_recoverable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        tool = WebSearchTool(WebSearchTool.Params(provider="tavily"))
+        result = tool.execute("q")
+        assert result.success is False
+        assert result.retrieved_chunks == []
+        assert "failed" in result.content.lower()
+
+    @patch("ragbench.components.tools.urlopen")
+    def test_execute_tavily_formats_and_keeps_chunks_empty(
+        self, mock_urlopen: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TAVILY_API_KEY", "k")
+        body = json.dumps(
+            {"results": [{"title": "T1", "url": "http://a", "content": "snippet"}]}
+        ).encode()
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = body
+        tool = WebSearchTool(WebSearchTool.Params(provider="tavily"))
+        result = tool.execute("q")
+        assert result.success is True
+        # Web hits are not corpus chunks → never enter the eval denominator.
+        assert result.retrieved_chunks == []
+        assert "snippet" in result.content
+        assert result.metadata == {"provider": "tavily", "num_results": 1}
+
+
+class TestSubAgentTool:
+    def test_execute_surfaces_answer_and_chunks(self) -> None:
+        specialist = MagicMock()
+        chunks = [_rc("c1", "handbook passage")]
+        specialist.run.return_value = GenerationResult(
+            query="q",
+            answer="The honor code says ...",
+            retrieved_chunks=chunks,
+            metadata={"iterations": 2},
+        )
+        tool = SubAgentTool(
+            agent=specialist, name="handbook", description="Handbook specialist."
+        )
+        result = tool.execute("honor code?")
+
+        assert result.success is True
+        assert result.tool_name == "handbook"
+        # Supervisor sees the specialist's synthesized answer as the observation.
+        assert result.content == "The honor code says ..."
+        # ...and the specialist's chunks ride upward for aggregation/eval.
+        assert result.retrieved_chunks == chunks
+        assert result.metadata["sub_agent"] == "handbook"
+        assert result.metadata["retrieved_chunk_count"] == 1
+        specialist.run.assert_called_once_with("honor code?")
+
+    def test_execute_failure_is_recoverable(self) -> None:
+        specialist = MagicMock()
+        specialist.run.side_effect = RuntimeError("sub-agent boom")
+        result = SubAgentTool(
+            agent=specialist, name="kb", description="KB specialist."
+        ).execute("q")
+        assert result.success is False
+        assert result.retrieved_chunks == []
+        assert "failed" in result.content.lower()
+
+    def test_advertised_via_tool_to_spec(self) -> None:
+        tool = SubAgentTool(
+            agent=MagicMock(), name="deadlines", description="Deadlines specialist."
+        )
+        spec = tool_to_spec(tool)
+        assert spec.name == "deadlines"
+        assert spec.description == "Deadlines specialist."
+        assert spec.parameters["required"] == ["query"]
+
+    def test_build_is_unsupported(self) -> None:
+        with pytest.raises(NotImplementedError, match="programmatically"):
+            SubAgentTool.build(ToolConfig(type="rag"), BuildContext(registry=registry))

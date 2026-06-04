@@ -135,6 +135,7 @@ class TestOllamaGenerator:
         mock_api.return_value = {
             "message": {"content": "ans"},
             "total_duration": 5000,
+            "prompt_eval_count": 12,
             "eval_count": 20,
         }
         gen = self._make_generator()
@@ -142,7 +143,9 @@ class TestOllamaGenerator:
         assert result.metadata["model"] == "qwen2.5:32b"
         assert result.metadata["provider"] == "ollama"
         assert result.metadata["total_duration"] == 5000
-        assert result.metadata["eval_count"] == 20
+        # Ollama's native counters are normalized to the cross-provider keys.
+        assert result.metadata["prompt_tokens"] == 12
+        assert result.metadata["completion_tokens"] == 20
 
     @patch.object(OllamaGenerator, "_call_api")
     def test_api_error_raises_runtime(self, mock_api: MagicMock) -> None:

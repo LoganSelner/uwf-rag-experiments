@@ -51,7 +51,7 @@ inside its own `build` (a retriever pulls the index; a tool pulls the query
 stack), so the pipeline calls `registry.get(category, type).build(...)` and
 **never branches on a concrete implementation name** — the previous
 `if retrieval_type == "bm25"` dispatch is gone. Components that compose others
-(the hybrid retriever; the planned multi-agent supervisor) recurse through the
+(the hybrid retriever; the multi-agent supervisor) recurse through the
 same seam. Validation is symmetric: a `ValidateContext` carries the cross-config
 values a component needs to check its own params.
 
@@ -167,7 +167,7 @@ src/ragbench/
 ├── pipeline/
 │   ├── indexing.py        IndexArtifact + IndexingPipeline (vector + auxiliary stores)
 │   ├── query.py           QueryPipeline (linear RAG)
-│   ├── agent.py           AgentPipeline (single-agent ReAct, native tool calling)
+│   ├── agent.py           AgentPipeline (single-agent ReAct + multi-agent supervisor)
 │   └── rag.py             RAGPipeline (top-level dispatcher)
 │
 ├── evaluation/
@@ -397,10 +397,12 @@ ExperimentConfig
 │   ├── reranking: ComponentConfig
 │   ├── generator: LLMConfig           provider (= registry name), model, temperature, params
 │   └── prompt: PromptConfig           system_template, CoT, citation style
-├── AgentConfig                        (agent pipeline — single-agent ReAct)
-│   ├── mode, max_iterations, system_prompt, llm, memory
-│   └── tools: list[AgentDefinitionConfig]    roster the single agent reasons over
-│       (mode: "multi" + the supervisor/agent-roster config arrive with Phase D2)
+├── AgentConfig                        (agent pipeline)
+│   ├── mode ("single" | "multi"), max_iterations, system_prompt, llm, memory
+│   ├── tools: list[ToolConfig]        single-mode roster (type + name + description + params)
+│   └── agents: list[AgentSpecConfig]  multi-mode specialist roster (each: name +
+│       description + system_prompt + optional llm + filters + tools). The two
+│       rosters are mutually exclusive per mode (the validator enforces it).
 └── EvaluationConfig
     ├── dataset, mode, num_runs
     ├── metrics, retrieval_only_metrics
@@ -665,6 +667,7 @@ metadata, and truncates.
 | `memory` | `none` | `NoMemory` | `defaults.py` |
 | `memory` | `buffer_window` | `BufferWindowMemory` | `defaults.py` |
 | `tool` | `rag` | `RAGSearchTool` | `tools.py` |
+| `tool` | `web_search` | `WebSearchTool` | `tools.py` |
 
 ### Reserved / not-yet-active
 
@@ -758,14 +761,25 @@ comparable) remains the hybrid retriever's job via `core.fusion`.
 
 ### AgentPipeline (`pipeline/agent.py`)
 
-Single-agent ReAct (Phase D1). One reasoning LLM drives a
-reason→act(tool)→observe loop via **native tool calling**:
+ReAct agent via **native tool calling**, in two modes selected by `agent.mode`.
 `from_config(config, index_artifact)` assembles a `BuildContext` (the index,
-`config.query` as the query stack, the generator factory, the registry), then
-builds the reasoning generator (`ctx.make_generator(agent.llm)`), the tool
-roster (each `agent.tools` entry → `registry.get("tool", …).build(entry,
-ctx)`), and the loop budget (`agent.max_iterations`, `top_k_final`). That same
-context is the recursion point multi-agent (D2) will build its sub-agents on.
+`config.query` as the query stack, the generator factory, the registry) and the
+loop budget (`agent.max_iterations`, `config.query.retrieval.top_k_final`), then
+branches:
+
+- **`single`** (Phase D1) → `_build_single`: builds the reasoning generator
+  (`ctx.make_generator(agent.llm)`) and the tool roster (each `agent.tools`
+  entry → `registry.get("tool", …).build(entry, ctx)`).
+- **`multi`** (Phase D2) → `_build_supervisor`: an **agents-as-tools**
+  supervisor. For each `agent.agents` specialist, `_build_specialist` patches
+  `ctx.query.retrieval.filters` with the specialist's `filters` (scoping it to a
+  source; top_k/method inherited so the budget stays equal across rungs), builds
+  the specialist as a single agent over that scoped context (recursing through
+  the same seam), and wraps it in a `SubAgentTool`. Specialists inherit the
+  supervisor's `llm` (empty provider) and iteration budget, and default to a
+  single `rag` tool. The supervisor then runs the **same** loop over those
+  sub-agent tools. The mode only affects construction; `run` never branches on
+  it.
 
 `run(query)` seeds `[system?, user]` and loops up to `max_iterations`:
 `generate(messages, tools=specs)`; if the result has `tool_calls`, each is
@@ -776,9 +790,12 @@ answer. If the budget is exhausted, a final answer is forced with
 max score, cap at `top_k_final`) into the returned `GenerationResult`, so the
 evaluator scores retrieval in agent mode on the same metrics as linear; an
 `AgentStep` trace + counters land in `metadata`. A missing tool or a tool
-failure becomes a recoverable observation, not a crash. `query()` delegates to
+failure becomes a recoverable observation, not a crash. A `SubAgentTool` runs
+its specialist and returns the specialist's synthesized answer as the
+observation while surfacing the specialist's chunks upward, so the union/cap
+keeps multi-agent retrieval metrics comparable too. `query()` delegates to
 `run()`, satisfying `Queryable`. The loop is monolithic by design (one
-mechanism today); multi-agent supervisor mode is Phase D2.
+mechanism for both modes).
 
 ### RAGPipeline (`pipeline/rag.py`)
 
@@ -875,6 +892,23 @@ Two properties of the harness shape how results should be read:
   superset of chunks the agent's own LLM actually saw across iterations. So a
   linear-vs-agent retrieval-metric delta isolates control flow on a common
   budget; it is not a claim about how much context the agent reasoned over.
+
+- **Multi-agent caveats (report, not bugs).** In `agent_multi`, (1) the
+  supervisor reasons over each specialist's *synthesized answer*, not its raw
+  chunks, so it differs from `agent_multitool` (which sees raw passages) on more
+  than "one loop vs. two" — the rung comparison should note this; (2) the
+  unioned chunks are score-sorted across *different* specialist retrievals whose
+  scores aren't perfectly comparable, so a skewed `agent_multi` context-precision
+  is the first thing to suspect there; (3) faithfulness scores the supervisor's
+  answer against chunks it never directly read (it read specialist answers), so
+  it is a stricter test by construction. `top_k_final` is held equal across
+  linear / specialist / supervisor so the denominators line up.
+
+- **Latency is reported per run.** The evaluator times each `pipeline.query()`
+  (`latency_s` per sample in the JSONL) and aggregates `latency_mean_s` into
+  `summary.json` + the comparison table — the cost side of "does agentic control
+  flow improve quality *or just add latency*". A `multi` supervisor runs a full
+  specialist loop per step, so its latency is expected to be the highest rung.
 
 ### Results (`evaluation/results.py`)
 

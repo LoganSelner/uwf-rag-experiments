@@ -30,7 +30,7 @@ from ragbench.core.types import (
 
 if TYPE_CHECKING:
     from ragbench.components.build import BuildContext
-    from ragbench.core.config import AgentDefinitionConfig, ValidateContext
+    from ragbench.core.config import ToolConfig, ValidateContext
 
 
 class ComponentParams(BaseModel):
@@ -467,8 +467,19 @@ class BaseTool(ABC):
 
     @classmethod
     @abstractmethod
-    def build(cls, cfg: AgentDefinitionConfig, ctx: BuildContext) -> BaseTool:
+    def build(cls, cfg: ToolConfig, ctx: BuildContext) -> BaseTool:
         """Construct this tool from its roster entry + the build context."""
+
+    @classmethod
+    def validate_params(cls, params: dict[str, Any], ctx: ValidateContext) -> list[str]:
+        """Return config-validation error strings for this tool's params.
+
+        Default: no tool-specific checks. Overridden by tools whose ``params``
+        have structure to validate (e.g. ``web_search`` provider/result count),
+        mirroring :meth:`BaseRetriever.validate_params` — keeping that knowledge
+        in the component rather than in ``core.validate_config``.
+        """
+        return []
 
     @property
     @abstractmethod
