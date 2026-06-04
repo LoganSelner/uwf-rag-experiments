@@ -97,6 +97,23 @@ class TestBM25LexicalIndex:
         results = idx.search("anything", top_k=5, filters={"source_name": "missing"})
         assert results == []
 
+    def test_filtered_search_list_is_membership(self) -> None:
+        # Regression: a list filter must scope BM25 by membership ($in), not be
+        # compared as a scalar — otherwise hybrid silently drops the BM25 branch
+        # for a multi-source filter like {source_name: [a, b]}.
+        idx = BM25LexicalIndex()
+        idx.add(_make_chunks())
+        results = idx.search(
+            "students grade", top_k=5, filters={"source_name": ["handbook", "policies"]}
+        )
+        assert results
+        assert {r.chunk.metadata["source_name"] for r in results} <= {
+            "handbook",
+            "policies",
+        }
+        # A list excluding every chunk's source matches nothing.
+        assert idx.search("students", top_k=5, filters={"source_name": ["nope"]}) == []
+
     def test_add_empty_list_noop(self) -> None:
         idx = BM25LexicalIndex()
         idx.add([])  # should not crash

@@ -16,6 +16,7 @@ import faiss
 import numpy as np
 
 from ragbench.components.base import BaseVectorStore, ComponentParams
+from ragbench.core.filtering import metadata_matches
 from ragbench.core.registry import registry
 from ragbench.core.types import Chunk, EmbeddedChunk, RetrievedChunk
 
@@ -156,19 +157,11 @@ class FAISSVectorStore(BaseVectorStore):
     def _matches_filters(chunk: Chunk, filters: dict[str, Any]) -> bool:
         """Check if a chunk's metadata matches all filter criteria.
 
-        A scalar value requires equality; a list/tuple/set value matches if the
-        chunk's metadata value is a member (``$in`` semantics), so a filter can
-        scope to a *group* of values — e.g. ``{"source_name": ["a", "b"]}`` for a
-        specialist that spans several sources.
+        Delegates to the shared :func:`metadata_matches` so dense (FAISS) and
+        sparse (BM25) post-filtering interpret a filter dict identically —
+        scalar = equality, list/tuple/set = ``$in`` membership.
         """
-        for key, value in filters.items():
-            actual = chunk.metadata.get(key)
-            if isinstance(value, (list, tuple, set)):
-                if actual not in value:
-                    return False
-            elif actual != value:
-                return False
-        return True
+        return metadata_matches(chunk.metadata, filters)
 
     def save(self, directory: str) -> None:
         path = Path(directory)
