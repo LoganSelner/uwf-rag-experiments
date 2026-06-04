@@ -665,6 +665,7 @@ metadata, and truncates.
 | `memory` | `none` | `NoMemory` | `defaults.py` |
 | `memory` | `buffer_window` | `BufferWindowMemory` | `defaults.py` |
 | `tool` | `rag` | `RAGSearchTool` | `tools.py` |
+| `tool` | `web_search` | `WebSearchTool` | `tools.py` |
 
 ### Reserved / not-yet-active
 

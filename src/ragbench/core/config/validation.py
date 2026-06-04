@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ragbench.core.config.errors import ConfigValidationError
-from ragbench.core.config.models import ExperimentConfig, ValidateContext
+from ragbench.core.config.models import ExperimentConfig, ToolConfig, ValidateContext
 from ragbench.core.registry import RegistryLike
 
 # Single source of truth for which providers the RAGAS evaluator judge LLM
@@ -263,6 +263,27 @@ def _check_registered(
         )
 
 
+def _validate_tool_roster(
+    errors: list[str],
+    tools: list[ToolConfig],
+    registry: RegistryLike,
+    path: str,
+) -> None:
+    """Validate a tool roster: each entry registered + its params self-checked.
+
+    Resolves each tool class from the registry and folds its ``validate_params``
+    errors in, so a tool owns its own param schema (mirrors the retriever
+    pattern). Used for the single-agent ``agent.tools`` roster and each
+    specialist's ``tools`` roster under multi-agent mode.
+    """
+    vctx = ValidateContext(registry=registry)
+    for i, tool in enumerate(tools):
+        _check_registered(errors, registry, tool.type, "tool", f"{path}[{i}].type")
+        if registry.is_registered("tool", tool.type):
+            tool_cls = registry.get("tool", tool.type)
+            errors.extend(tool_cls.validate_params(tool.params or {}, vctx))
+
+
 def _validate_query_retrieval(
     errors: list[str],
     config: ExperimentConfig,
@@ -346,13 +367,12 @@ def _validate_agent(
     )
 
     # Tool roster.
-    for i, tool in enumerate(agent.tools):
-        _check_registered(errors, registry, tool.type, "tool", f"agent.tools[{i}].type")
     if not agent.tools:
         errors.append(
             "pipeline_mode is 'agent' but agent.tools is empty — a single agent "
             "needs at least one tool"
         )
+    _validate_tool_roster(errors, agent.tools, registry, "agent.tools")
 
     # The RAG tool reuses the query retrieval + rerank stack, so validate it.
     _validate_query_retrieval(errors, config, registry)

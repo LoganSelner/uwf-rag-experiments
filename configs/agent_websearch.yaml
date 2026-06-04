@@ -1,0 +1,48 @@
+# Web-search agent (Phase D1) — FENCED ablation arm, NOT in the core matrix.
+#
+# Single-agent ReAct with a two-tool roster: the `knowledge_base` RAG tool over
+# the indexed corpus AND a `web` search tool (Tavily). Measures tool-selection
+# behavior — does the agent reach for the web only when the KB can't answer?
+#
+# WHY FENCED: live web results vary run-to-run and inject open-web knowledge
+# into a closed-domain UWF evaluation with fixed ground truth. That breaks the
+# harness's "isolate one variable" + reproducibility guarantees, so this config
+# is run on its own and is kept OUT of run_matrix.py's reproducible matrix.
+#
+# Requires TAVILY_API_KEY for the web tool (see .env.example). For a keyless,
+# free verification use configs/smoke_agent_websearch.yaml (DuckDuckGo).
+
+extends: base.yaml
+
+name: "agent_websearch"
+description: "Single-agent ReAct with a KB + Tavily web-search roster (fenced arm)"
+
+pipeline_mode: "agent"
+
+agent:
+  mode: "single"
+  max_iterations: 5
+  system_prompt: |
+    You are an academic advising assistant for the University of West Florida.
+    Prefer the `knowledge_base` tool for questions about UWF policies, deadlines,
+    requirements, and procedures — search it before answering. Use the `web`
+    search tool only when the answer is clearly outside the indexed advising
+    documents. Answer only from the evidence you gather; if neither tool yields
+    an answer, say so concisely. Do not invent policies, dates, or requirements.
+  llm:
+    provider: "edenai"
+    model_name: "gpt-4.1"
+    temperature: 0.0
+    max_tokens: 1024
+    params:
+      sub_provider: "openai"
+  memory:
+    type: "none"
+  tools:
+    - name: "knowledge_base"
+      type: "rag"
+    - name: "web"
+      type: "web_search"
+      params:
+        provider: "tavily"
+        max_results: 5

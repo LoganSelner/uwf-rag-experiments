@@ -1,0 +1,46 @@
+# Web-search agent smoke — verify the web_search tool fires end-to-end, keyless.
+#
+# Extends smoke.yaml (all-local: HuggingFace embeddings + Ollama qwen3:14b,
+# 1-question dataset, evaluation.mode: "none" so no judge spend). Flips to the
+# agent pipeline with a TWO-tool roster: the `knowledge_base` RAG tool over the
+# local index AND a keyless `web` search tool (DuckDuckGo Instant Answer API —
+# no API key, no dependency). The agent chooses which to call.
+#
+# FENCED: web-search configs are NOT part of the reproducible matrix — live web
+# results vary and inject open-web knowledge into a closed-domain eval. Run this
+# directly to verify plumbing, not for comparison tables.
+#
+# Usage:
+#   python scripts/run_experiment.py configs/smoke_agent_websearch.yaml -v
+#
+# Inspect results/<name>/run_1.jsonl — metadata.steps shows which tools fired.
+
+extends: smoke.yaml
+
+name: "smoke_agent_websearch"
+description: "Local web-search agent smoke (Ollama tool calling, keyless DuckDuckGo)"
+
+pipeline_mode: "agent"
+
+agent:
+  mode: "single"
+  max_iterations: 4
+  system_prompt: |
+    You are an advising assistant. Prefer the `knowledge_base` tool for
+    questions about UWF policies, deadlines, and procedures. Use the `web`
+    search tool only for information clearly outside the indexed advising
+    documents (e.g. current external facts). Answer from the results you gather.
+  llm:
+    provider: "ollama"
+    model_name: "qwen3:14b"
+    temperature: 0.0
+  memory:
+    type: "none"
+  tools:
+    - name: "knowledge_base"
+      type: "rag"
+    - name: "web"
+      type: "web_search"
+      params:
+        provider: "duckduckgo"
+        max_results: 3

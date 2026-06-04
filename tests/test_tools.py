@@ -1,12 +1,15 @@
-"""Tests for src/components/tools.py — agent tools (RAG search)."""
+"""Tests for src/components/tools.py — agent tools (RAG search + web search)."""
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ragbench.components.build import BuildContext
-from ragbench.components.tools import RAGSearchTool, tool_to_spec
-from ragbench.core.config import ExperimentConfig, ToolConfig
+from ragbench.components.tools import RAGSearchTool, WebSearchTool, tool_to_spec
+from ragbench.core.config import ExperimentConfig, ToolConfig, ValidateContext
 from ragbench.core.registry import registry
 from ragbench.core.types import Chunk, GenerationResult, RetrievedChunk, ToolResult
 
@@ -158,3 +161,63 @@ class TestRAGSearchTool:
         tool = RAGSearchTool.build(entry, ctx)
         assert tool.name == "knowledge_base"
         assert "knowledge base" in tool.description.lower()
+
+
+class TestWebSearchTool:
+    @staticmethod
+    def _vctx() -> ValidateContext:
+        return ValidateContext(registry=registry)
+
+    def test_validate_params_rejects_unknown_provider(self) -> None:
+        errs = WebSearchTool.validate_params({"provider": "bing"}, self._vctx())
+        assert any("provider" in e for e in errs)
+
+    def test_validate_params_rejects_bad_max_results(self) -> None:
+        errs = WebSearchTool.validate_params({"max_results": 0}, self._vctx())
+        assert any("max_results" in e for e in errs)
+
+    def test_validate_params_accepts_defaults(self) -> None:
+        assert WebSearchTool.validate_params({}, self._vctx()) == []
+
+    def test_validate_params_rejects_unknown_key(self) -> None:
+        # ComponentParams is extra="forbid": a typo'd param fails loudly.
+        errs = WebSearchTool.validate_params({"provder": "tavily"}, self._vctx())
+        assert errs and "invalid" in errs[0].lower()
+
+    def test_build_reads_params(self) -> None:
+        entry = ToolConfig(
+            type="web_search",
+            name="web",
+            params={"provider": "duckduckgo", "max_results": 3},
+        )
+        tool = WebSearchTool.build(entry, BuildContext(registry=registry))
+        assert tool.name == "web"
+        assert tool._p.provider == "duckduckgo"
+        assert tool._p.max_results == 3
+
+    def test_execute_missing_tavily_key_is_recoverable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        tool = WebSearchTool(WebSearchTool.Params(provider="tavily"))
+        result = tool.execute("q")
+        assert result.success is False
+        assert result.retrieved_chunks == []
+        assert "failed" in result.content.lower()
+
+    @patch("ragbench.components.tools.urlopen")
+    def test_execute_tavily_formats_and_keeps_chunks_empty(
+        self, mock_urlopen: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TAVILY_API_KEY", "k")
+        body = json.dumps(
+            {"results": [{"title": "T1", "url": "http://a", "content": "snippet"}]}
+        ).encode()
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = body
+        tool = WebSearchTool(WebSearchTool.Params(provider="tavily"))
+        result = tool.execute("q")
+        assert result.success is True
+        # Web hits are not corpus chunks → never enter the eval denominator.
+        assert result.retrieved_chunks == []
+        assert "snippet" in result.content
+        assert result.metadata == {"provider": "tavily", "num_results": 1}

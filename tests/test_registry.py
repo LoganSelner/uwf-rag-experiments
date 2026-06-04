@@ -183,6 +183,9 @@ class TestRegistrationInventory:
     def test_tool_rag(self) -> None:
         assert registry.is_registered("tool", "rag")
 
+    def test_tool_web_search(self) -> None:
+        assert registry.is_registered("tool", "web_search")
+
     def test_memory_none(self) -> None:
         assert registry.is_registered("memory", "none")
 
