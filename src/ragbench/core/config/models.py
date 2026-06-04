@@ -210,21 +210,27 @@ class AgentSpecConfig(ConfigModel):
     is the supervisor's entire basis for routing and must be distinct and
     informative (the validator enforces non-empty, unique descriptions). Each
     specialist is itself a single-agent ReAct pipeline with its own
-    ``system_prompt``, retrieval scope (``retrieval`` — typically a
-    ``source_name`` filter), and ``tools`` roster. ``llm`` is optional: an empty
+    ``system_prompt``, source scope (``filters``), and ``tools`` roster.
+
+    ``filters`` is the specialist's retrieval scope — a metadata filter (e.g.
+    ``{source_name: student_handbook}``) merged over the base query stack's
+    filters. The retrieval *method* and top_k budget are inherited from the base
+    stack, so the budget stays equal across specialists and the linear/single
+    baselines (the comparability requirement). ``llm`` is optional: an empty
     ``provider`` means inherit the supervisor's reasoning LLM (mirrors the
     "empty provider ⇒ inherit/skip" convention used for query transformers).
+    ``tools`` defaults to a single ``rag`` tool over the scoped stack.
 
     Kept deliberately flat (no nested ``agents``/``mode``) so recursion is capped
-    at one supervisor level; a per-specialist iteration budget is omitted (the
-    supervisor's ``max_iterations`` is inherited) until an experiment needs it.
+    at one supervisor level; per-specialist retrieval method / top_k budget are
+    omitted until an experiment needs them (YAGNI).
     """
 
     name: str = ""
     description: str = ""
     system_prompt: str = ""
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    filters: dict[str, Any] = Field(default_factory=dict)
     tools: list[ToolConfig] = Field(default_factory=list)
 
 

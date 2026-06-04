@@ -8,7 +8,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ragbench.components.build import BuildContext
-from ragbench.components.tools import RAGSearchTool, WebSearchTool, tool_to_spec
+from ragbench.components.tools import (
+    RAGSearchTool,
+    SubAgentTool,
+    WebSearchTool,
+    tool_to_spec,
+)
 from ragbench.core.config import ExperimentConfig, ToolConfig, ValidateContext
 from ragbench.core.registry import registry
 from ragbench.core.types import Chunk, GenerationResult, RetrievedChunk, ToolResult
@@ -221,3 +226,52 @@ class TestWebSearchTool:
         assert result.retrieved_chunks == []
         assert "snippet" in result.content
         assert result.metadata == {"provider": "tavily", "num_results": 1}
+
+
+class TestSubAgentTool:
+    def test_execute_surfaces_answer_and_chunks(self) -> None:
+        specialist = MagicMock()
+        chunks = [_rc("c1", "handbook passage")]
+        specialist.run.return_value = GenerationResult(
+            query="q",
+            answer="The honor code says ...",
+            retrieved_chunks=chunks,
+            metadata={"iterations": 2},
+        )
+        tool = SubAgentTool(
+            agent=specialist, name="handbook", description="Handbook specialist."
+        )
+        result = tool.execute("honor code?")
+
+        assert result.success is True
+        assert result.tool_name == "handbook"
+        # Supervisor sees the specialist's synthesized answer as the observation.
+        assert result.content == "The honor code says ..."
+        # ...and the specialist's chunks ride upward for aggregation/eval.
+        assert result.retrieved_chunks == chunks
+        assert result.metadata["sub_agent"] == "handbook"
+        assert result.metadata["retrieved_chunk_count"] == 1
+        specialist.run.assert_called_once_with("honor code?")
+
+    def test_execute_failure_is_recoverable(self) -> None:
+        specialist = MagicMock()
+        specialist.run.side_effect = RuntimeError("sub-agent boom")
+        result = SubAgentTool(
+            agent=specialist, name="kb", description="KB specialist."
+        ).execute("q")
+        assert result.success is False
+        assert result.retrieved_chunks == []
+        assert "failed" in result.content.lower()
+
+    def test_advertised_via_tool_to_spec(self) -> None:
+        tool = SubAgentTool(
+            agent=MagicMock(), name="deadlines", description="Deadlines specialist."
+        )
+        spec = tool_to_spec(tool)
+        assert spec.name == "deadlines"
+        assert spec.description == "Deadlines specialist."
+        assert spec.parameters["required"] == ["query"]
+
+    def test_build_is_unsupported(self) -> None:
+        with pytest.raises(NotImplementedError, match="programmatically"):
+            SubAgentTool.build(ToolConfig(type="rag"), BuildContext(registry=registry))

@@ -12,7 +12,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from ragbench.core.config.errors import ConfigValidationError
-from ragbench.core.config.models import ExperimentConfig, ToolConfig, ValidateContext
+from ragbench.core.config.models import (
+    AgentSpecConfig,
+    ExperimentConfig,
+    ToolConfig,
+    ValidateContext,
+)
 from ragbench.core.registry import RegistryLike
 
 # Single source of truth for which providers the RAGAS evaluator judge LLM
@@ -326,12 +331,14 @@ def _validate_agent(
     config: ExperimentConfig,
     registry: RegistryLike,
 ) -> None:
-    """Validate agent-pipeline config (Phase D1: single-agent ReAct).
+    """Validate agent-pipeline config (single-agent ReAct or multi-agent supervisor).
 
-    The single agent reasons over a roster of ``agent.tools`` using ``agent.llm``
-    as its tool-calling reasoning model, and its RAG tool reuses the query
-    retrieval + rerank stack. Multi-agent (``mode: multi``) is Phase D2 and is
-    rejected here for now.
+    ``mode='single'`` (Phase D1): one agent reasons over ``agent.tools``.
+    ``mode='multi'`` (Phase D2): a supervisor reasons over ``agent.agents`` of
+    specialists, each exposed to it as a tool. Both reuse ``agent.llm`` as the
+    reasoning model and ``config.query`` as the base retrieval/rerank stack
+    (specialists scope it by ``filters``). The two rosters are mutually exclusive
+    per mode — a misplaced roster fails loudly rather than being silently ignored.
     """
     agent = config.agent
 
@@ -341,13 +348,9 @@ def _validate_agent(
             f"agent.mode: '{agent.mode}' is not supported. "
             f"Supported: {sorted(_SUPPORTED_AGENT_MODES)}"
         )
-    elif agent.mode == "multi":
-        errors.append(
-            "agent.mode 'multi' (multi-agent supervisor) is not implemented yet "
-            "(Phase D2). Use 'single'."
-        )
 
-    # Reasoning LLM — must be a registered generator with a model name.
+    # Reasoning LLM — must be a registered generator with a model name. For a
+    # supervisor this is the supervisor's LLM (specialists may inherit it).
     _check_registered(
         errors, registry, agent.llm.provider, "generation", "agent.llm.provider"
     )
@@ -366,15 +369,30 @@ def _validate_agent(
         errors, registry, agent.memory.type, "memory", "agent.memory.type"
     )
 
-    # Tool roster.
-    if not agent.tools:
-        errors.append(
-            "pipeline_mode is 'agent' but agent.tools is empty — a single agent "
-            "needs at least one tool"
-        )
-    _validate_tool_roster(errors, agent.tools, registry, "agent.tools")
+    # Roster — single uses agent.tools, multi uses agent.agents. Mixing the two
+    # is almost certainly a mistake, so reject it loudly.
+    if agent.mode == "multi":
+        if agent.tools:
+            errors.append(
+                "agent.mode is 'multi' but agent.tools is set — specialists live "
+                "in agent.agents; the supervisor's roster is built from them"
+            )
+        sources = {s.name for s in config.indexing.sources}
+        _validate_agent_roster(errors, agent.agents, registry, sources)
+    elif agent.mode == "single":
+        if agent.agents:
+            errors.append(
+                "agent.mode is 'single' but agent.agents is set — did you mean "
+                "mode: 'multi'? A single agent uses agent.tools"
+            )
+        if not agent.tools:
+            errors.append(
+                "pipeline_mode is 'agent' but agent.tools is empty — a single "
+                "agent needs at least one tool"
+            )
+        _validate_tool_roster(errors, agent.tools, registry, "agent.tools")
 
-    # The RAG tool reuses the query retrieval + rerank stack, so validate it.
+    # The RAG tool(s) reuse the query retrieval + rerank stack, so validate it.
     _validate_query_retrieval(errors, config, registry)
     rerank_type = config.query.reranking.type or "none"
     _check_registered(
@@ -389,6 +407,81 @@ def _validate_agent(
             "pipeline_mode 'agent' — the agent produces an answer via tool use; "
             "use 'full' or 'none'"
         )
+
+
+def _validate_agent_roster(
+    errors: list[str],
+    agents: list[AgentSpecConfig],
+    registry: RegistryLike,
+    sources: set[str],
+) -> None:
+    """Validate a multi-agent supervisor's specialist roster.
+
+    Each specialist becomes a tool the supervisor routes on, so names and
+    descriptions must be present and distinct. A specialist's ``llm`` is optional
+    (empty provider inherits the supervisor's); its tool roster and source-filter
+    scope are checked too.
+    """
+    if not agents:
+        errors.append(
+            "agent.mode is 'multi' but agent.agents is empty — a supervisor needs "
+            "at least one specialist"
+        )
+        return
+
+    seen_names: set[str] = set()
+    seen_descriptions: set[str] = set()
+    for i, spec in enumerate(agents):
+        path = f"agent.agents[{i}]"
+
+        name = spec.name.strip()
+        if not name:
+            errors.append(f"{path}.name is empty — each specialist needs a name")
+        elif name in seen_names:
+            errors.append(f"{path}.name: '{name}' is duplicated across specialists")
+        else:
+            seen_names.add(name)
+
+        desc = spec.description.strip()
+        if not desc:
+            errors.append(
+                f"{path}.description is empty — the supervisor routes on it, so "
+                "each specialist needs a distinct, informative description"
+            )
+        elif desc in seen_descriptions:
+            errors.append(
+                f"{path}.description duplicates another specialist's — the "
+                "supervisor can't distinguish them"
+            )
+        else:
+            seen_descriptions.add(desc)
+
+        # Per-specialist llm is optional: validated only when a provider is set
+        # (empty provider ⇒ inherit the supervisor's reasoning LLM).
+        if spec.llm.provider:
+            _check_registered(
+                errors,
+                registry,
+                spec.llm.provider,
+                "generation",
+                f"{path}.llm.provider",
+            )
+            if not spec.llm.model_name:
+                errors.append(
+                    f"{path}.llm.model_name is empty — set it, or leave "
+                    "llm.provider empty to inherit the supervisor's LLM"
+                )
+
+        # Tool roster (empty ⇒ a default rag tool is synthesized at build time).
+        _validate_tool_roster(errors, spec.tools, registry, f"{path}.tools")
+
+        # Courtesy: a source_name filter should reference a real source.
+        src = spec.filters.get("source_name")
+        if isinstance(src, str) and src and sources and src not in sources:
+            errors.append(
+                f"{path}.filters.source_name: '{src}' matches no "
+                f"indexing.sources name. Known: {sorted(sources)}"
+            )
 
 
 def _validate_retrieval_dependencies(

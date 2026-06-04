@@ -499,6 +499,63 @@ class TestAgentPipeline:
         mock_build_generator.assert_called_once()  # reasoning generator built
         tool_cls.build.assert_called_once()  # tool built from its entry
 
+    @patch("ragbench.pipeline.agent.build_generator")
+    @patch("ragbench.pipeline.agent.tool_to_spec")
+    @patch("ragbench.pipeline.agent.registry")
+    def test_from_config_multi_wires_supervisor_over_subagents(
+        self,
+        mock_registry: MagicMock,
+        mock_tool_to_spec: MagicMock,
+        mock_build_generator: MagicMock,
+    ) -> None:
+        from ragbench.components.tools import SubAgentTool
+        from ragbench.core.config import ExperimentConfig
+
+        tool_cls = MagicMock()
+        mem_cls = MagicMock()
+        mock_registry.get.side_effect = lambda category, name: {
+            "tool": tool_cls,
+            "memory": mem_cls,
+        }[category]
+
+        config = ExperimentConfig.from_dict(
+            {
+                "pipeline_mode": "agent",
+                "agent": {
+                    "mode": "multi",
+                    "max_iterations": 3,
+                    "llm": {"provider": "ollama", "model_name": "qwen2.5"},
+                    "memory": {"type": "none"},
+                    "agents": [
+                        {
+                            "name": "handbook",
+                            "description": "Handbook specialist.",
+                            "filters": {"source_name": "student_handbook"},
+                        },
+                        {
+                            "name": "kb",
+                            "description": "KB specialist.",
+                            "filters": {"source_name": "knowledge_base"},
+                        },
+                    ],
+                },
+                "query": {"retrieval": {"top_k_retrieve": 10, "top_k_final": 4}},
+            }
+        )
+
+        pipeline = AgentPipeline.from_config(config, MagicMock())
+
+        # The supervisor's roster is one SubAgentTool per specialist.
+        assert len(pipeline._tools) == 2
+        assert all(isinstance(t, SubAgentTool) for t in pipeline._tools)
+        assert {t.name for t in pipeline._tools} == {"handbook", "kb"}
+        assert pipeline._max_iterations == 3
+        assert pipeline._top_k_final == 4
+        # supervisor + 2 specialists each build a reasoning generator...
+        assert mock_build_generator.call_count == 3
+        # ...and each specialist builds its (default) rag tool.
+        assert tool_cls.build.call_count == 2
+
 
 # -----------------------------------------------------------------------
 # IndexArtifact

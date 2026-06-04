@@ -381,3 +381,71 @@ class WebSearchTool(BaseTool):
                     }
                 )
         return out
+
+
+class SubAgentTool(BaseTool):
+    """Wraps a specialist agent pipeline as a tool for a multi-agent supervisor.
+
+    The supervisor (an ``AgentPipeline`` running the ordinary ReAct loop) reasons
+    over specialists the same way it would over plain tools: each specialist is
+    advertised via its ``name``/``description`` (so the description IS the
+    supervisor's routing basis) and invoked with a single query string.
+    ``execute`` runs the specialist and returns its synthesized ``answer`` as the
+    observation, while surfacing the specialist's ``retrieved_chunks`` upward so
+    the supervisor's chunk aggregation (union → dedup → cap at ``top_k_final``)
+    keeps agent-mode retrieval metrics comparable to the linear baseline.
+
+    The specialist is **injected** (duck-typed: anything with
+    ``run(query) -> GenerationResult``) and is constructed by the pipeline layer,
+    so this component imports nothing from ``pipeline`` and is never built through
+    the tool registry — hence :meth:`build` is unsupported.
+    """
+
+    def __init__(self, agent: Any, name: str, description: str) -> None:
+        super().__init__()
+        self._agent = agent
+        self._name = name
+        self._description = description
+
+    @classmethod
+    def build(cls, cfg: ToolConfig, ctx: BuildContext) -> SubAgentTool:
+        raise NotImplementedError(
+            "SubAgentTool is constructed programmatically by the multi-agent "
+            "supervisor (AgentPipeline, mode='multi'), not via the tool registry."
+        )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    def execute(self, query: str) -> ToolResult:
+        try:
+            result = self._agent.run(query)
+        except Exception as e:
+            # A specialist failure becomes a recoverable observation: the
+            # supervisor can re-plan rather than the whole query dying.
+            logger.warning(
+                "Sub-agent '%s' failed for query %r: %s", self._name, query, e
+            )
+            return ToolResult(
+                tool_name=self._name,
+                content=f"Specialist '{self._name}' failed: {e}",
+                success=False,
+                retrieved_chunks=[],
+            )
+        chunks = result.retrieved_chunks
+        return ToolResult(
+            tool_name=self._name,
+            content=result.answer or "(the specialist returned no answer)",
+            success=True,
+            retrieved_chunks=chunks,
+            metadata={
+                "sub_agent": self._name,
+                "iterations": result.metadata.get("iterations"),
+                "retrieved_chunk_count": len(chunks),
+            },
+        )

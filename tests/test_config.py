@@ -337,7 +337,7 @@ class TestSpecificConfigs:
                         "name": "handbook",
                         "description": "Student conduct, honor code, policies.",
                         "system_prompt": "Answer from the handbook only.",
-                        "retrieval": {"filters": {"source_name": "student_handbook"}},
+                        "filters": {"source_name": "student_handbook"},
                         "tools": [{"name": "handbook_search", "type": "rag"}],
                     },
                     {
@@ -350,7 +350,7 @@ class TestSpecificConfigs:
         )
         assert cfg.mode == "multi"
         assert len(cfg.agents) == 2
-        assert cfg.agents[0].retrieval.filters == {"source_name": "student_handbook"}
+        assert cfg.agents[0].filters == {"source_name": "student_handbook"}
         assert cfg.agents[0].tools[0].name == "handbook_search"
         # Empty llm.provider ⇒ inherit the supervisor's reasoning LLM.
         assert cfg.agents[0].llm.provider == ""
@@ -1157,9 +1157,65 @@ class TestValidateAgentConfig:
         with pytest.raises(ConfigValidationError, match="max_iterations must be > 0"):
             validate_config(cfg, registry)
 
-    def test_mode_multi_not_implemented(self) -> None:
-        cfg = self._make_valid_agent_config(**{"agent.mode": "multi"})
-        with pytest.raises(ConfigValidationError, match="not implemented yet"):
+    @staticmethod
+    def _multi(**extra: object) -> dict[str, object]:
+        """Overrides turning the valid single config into a valid multi one."""
+        base: dict[str, object] = {
+            "agent.mode": "multi",
+            "agent.tools": [],
+            "agent.agents": [
+                {
+                    "name": "a",
+                    "description": "Handles topic A.",
+                    "tools": [{"name": "a_search", "type": "rag"}],
+                },
+                {"name": "b", "description": "Handles topic B."},
+            ],
+        }
+        base.update(extra)
+        return base
+
+    def test_valid_multi_agent_config_passes(self) -> None:
+        validate_config(self._make_valid_agent_config(**self._multi()), registry)
+
+    def test_multi_mode_rejects_tools_roster(self) -> None:
+        cfg = self._make_valid_agent_config(
+            **self._multi(**{"agent.tools": [{"name": "kb", "type": "rag"}]})
+        )
+        with pytest.raises(ConfigValidationError, match=r"agent\.tools is set"):
+            validate_config(cfg, registry)
+
+    def test_multi_mode_requires_agents(self) -> None:
+        cfg = self._make_valid_agent_config(**self._multi(**{"agent.agents": []}))
+        with pytest.raises(ConfigValidationError, match="at least one specialist"):
+            validate_config(cfg, registry)
+
+    def test_specialist_requires_description(self) -> None:
+        cfg = self._make_valid_agent_config(
+            **self._multi(**{"agent.agents": [{"name": "a", "description": ""}]})
+        )
+        with pytest.raises(ConfigValidationError, match="description is empty"):
+            validate_config(cfg, registry)
+
+    def test_specialist_descriptions_must_be_distinct(self) -> None:
+        cfg = self._make_valid_agent_config(
+            **self._multi(
+                **{
+                    "agent.agents": [
+                        {"name": "a", "description": "Same."},
+                        {"name": "b", "description": "Same."},
+                    ]
+                }
+            )
+        )
+        with pytest.raises(ConfigValidationError, match="duplicates another"):
+            validate_config(cfg, registry)
+
+    def test_single_mode_rejects_agents_roster(self) -> None:
+        cfg = self._make_valid_agent_config(
+            **{"agent.agents": [{"name": "a", "description": "A."}]}
+        )
+        with pytest.raises(ConfigValidationError, match=r"agent\.agents is set"):
             validate_config(cfg, registry)
 
     def test_unknown_mode_rejected(self) -> None:
