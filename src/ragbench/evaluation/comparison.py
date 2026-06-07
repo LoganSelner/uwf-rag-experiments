@@ -12,8 +12,10 @@ Supports three tiers of comparison (following MLflow/W&B patterns):
 
 from __future__ import annotations
 
+from collections import Counter
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -300,3 +302,196 @@ def load_per_sample_scores(
                 rows.append(row)
 
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Retrieval/answer decoupling analysis (Phase E, item 12)
+# ---------------------------------------------------------------------------
+
+# The canonical (retrieval-quality, answer-quality) metric pair the decoupling
+# report contrasts. Module constants so the CLI and tests share one definition.
+DECOUPLING_RETRIEVAL_METRIC = "context_precision"
+DECOUPLING_ANSWER_METRIC = "answer_correctness"
+
+# All quadrant labels classify_decoupling can return, in display order. The two
+# off-diagonal labels are the finding the report exists to surface.
+DECOUPLING_QUADRANTS = (
+    "both_good",
+    "both_poor",
+    "retrieval_good_answer_poor",
+    "retrieval_poor_answer_good",
+    "mixed",
+    "incomplete",
+)
+
+# The decoupled quadrants — better retrieval that did not help the answer, or a
+# correct answer despite weak retrieval (a faithfulness/parametric-knowledge
+# risk). These are the rows a reader should inspect.
+DECOUPLED_QUADRANTS = (
+    "retrieval_good_answer_poor",
+    "retrieval_poor_answer_good",
+)
+
+
+def _is_missing(value: float | None) -> bool:
+    """True if a score is absent (None) or NaN (the judge failed to parse)."""
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def classify_decoupling(
+    retrieval_score: float | None,
+    answer_score: float | None,
+    *,
+    hi: float = 0.7,
+    lo: float = 0.4,
+) -> str:
+    """Bucket one sample into a retrieval/answer decoupling quadrant.
+
+    Returns one of :data:`DECOUPLING_QUADRANTS`. A score is "good" at ``>= hi``
+    and "poor" at ``<= lo``; the ``(lo, hi)`` dead-band is deliberate so a
+    borderline sample lands in ``"mixed"`` rather than masquerading as decoupled.
+    ``None``/``NaN`` on either side yields ``"incomplete"``.
+
+    The two off-diagonal results are the headline:
+    ``retrieval_good_answer_poor`` (retrieval succeeded but the generator failed
+    to use it) and ``retrieval_poor_answer_good`` (answered correctly despite
+    weak retrieval — parametric knowledge or lucky generation, a faithfulness
+    risk).
+    """
+    if _is_missing(retrieval_score) or _is_missing(answer_score):
+        return "incomplete"
+    # Narrow Optional for the type checker — _is_missing already excluded None.
+    assert retrieval_score is not None and answer_score is not None
+    r_good, r_poor = retrieval_score >= hi, retrieval_score <= lo
+    a_good, a_poor = answer_score >= hi, answer_score <= lo
+    if r_good and a_good:
+        return "both_good"
+    if r_poor and a_poor:
+        return "both_poor"
+    if r_good and a_poor:
+        return "retrieval_good_answer_poor"
+    if r_poor and a_good:
+        return "retrieval_poor_answer_good"
+    return "mixed"
+
+
+def decoupling_report(
+    result_dir: str | Path,
+    *,
+    run: int = 1,
+    retrieval_metric: str = DECOUPLING_RETRIEVAL_METRIC,
+    answer_metric: str = DECOUPLING_ANSWER_METRIC,
+    hi: float = 0.7,
+    lo: float = 0.4,
+) -> dict[str, Any]:
+    """Single-experiment retrieval/answer decoupling analysis.
+
+    Reads ``run_N.jsonl`` via :func:`load_per_sample_scores` (no re-parsing),
+    classifies every sample with :func:`classify_decoupling`, and returns a dict
+    with ``experiment``, ``run``, the two metric names, ``counts`` (every
+    quadrant → n, zeros included for stable output), and ``samples`` (one row per
+    question carrying its two scores + ``quadrant``).
+
+    No correlation coefficient is computed: Phase E slices are 6-50 samples,
+    where a Pearson/Spearman r would be noise. Quadrant counts plus the named
+    off-diagonal samples are the honest artifact at this n.
+    """
+    rows = load_per_sample_scores(
+        [result_dir], run=run, metrics=[retrieval_metric, answer_metric]
+    )
+    samples: list[dict[str, Any]] = []
+    counts: Counter[str] = Counter()
+    for r in rows:
+        quadrant = classify_decoupling(
+            r.get(retrieval_metric), r.get(answer_metric), hi=hi, lo=lo
+        )
+        counts[quadrant] += 1
+        samples.append(
+            {
+                "sample_id": r.get("sample_id", ""),
+                "query": r.get("query", ""),
+                retrieval_metric: r.get(retrieval_metric),
+                answer_metric: r.get(answer_metric),
+                "quadrant": quadrant,
+            }
+        )
+    experiment = rows[0]["experiment"] if rows else Path(result_dir).name
+    return {
+        "experiment": experiment,
+        "run": run,
+        "retrieval_metric": retrieval_metric,
+        "answer_metric": answer_metric,
+        "counts": {q: counts.get(q, 0) for q in DECOUPLING_QUADRANTS},
+        "samples": samples,
+    }
+
+
+def _delta(b: float | None, a: float | None) -> float | None:
+    """``b - a``, or ``None`` if either side is missing/NaN."""
+    if _is_missing(a) or _is_missing(b):
+        return None
+    return float(b) - float(a)  # type: ignore[arg-type]
+
+
+def decoupling_pair(
+    dir_a: str | Path,
+    dir_b: str | Path,
+    *,
+    run: int = 1,
+    retrieval_metric: str = DECOUPLING_RETRIEVAL_METRIC,
+    answer_metric: str = DECOUPLING_ANSWER_METRIC,
+) -> list[dict[str, Any]]:
+    """Cross-experiment decoupling: where did A→B move retrieval and the answer
+    in OPPOSITE directions?
+
+    Joins the two experiments' per-sample scores by ``sample_id`` and computes
+    ``delta_retrieval`` / ``delta_answer`` (B minus A). A sample is ``decoupled``
+    when retrieval improved but the answer did not, or retrieval regressed but
+    the answer did not — the roadmap's exact framing ("better retrieval did NOT
+    improve answers, and vice-versa"). Rows are sorted most-decoupled first.
+    Samples present in only one experiment are dropped.
+    """
+    a_rows = load_per_sample_scores(
+        [dir_a], run=run, metrics=[retrieval_metric, answer_metric]
+    )
+    b_by_id = {
+        r["sample_id"]: r
+        for r in load_per_sample_scores(
+            [dir_b], run=run, metrics=[retrieval_metric, answer_metric]
+        )
+    }
+    out: list[dict[str, Any]] = []
+    for ra in a_rows:
+        rb = b_by_id.get(ra["sample_id"])
+        if rb is None:
+            continue
+        d_ret = _delta(rb.get(retrieval_metric), ra.get(retrieval_metric))
+        d_ans = _delta(rb.get(answer_metric), ra.get(answer_metric))
+        decoupled = (
+            d_ret is not None
+            and d_ans is not None
+            and ((d_ret > 0 and d_ans <= 0) or (d_ret < 0 and d_ans >= 0))
+        )
+        out.append(
+            {
+                "sample_id": ra["sample_id"],
+                "query": ra.get("query", ""),
+                f"{retrieval_metric}_a": ra.get(retrieval_metric),
+                f"{retrieval_metric}_b": rb.get(retrieval_metric),
+                f"{answer_metric}_a": ra.get(answer_metric),
+                f"{answer_metric}_b": rb.get(answer_metric),
+                "delta_retrieval": d_ret,
+                "delta_answer": d_ans,
+                "decoupled": decoupled,
+            }
+        )
+
+    def _magnitude(row: dict[str, Any]) -> float:
+        # Decoupled rows first, ordered by how far the two metrics diverged;
+        # coupled rows sink to the bottom.
+        if not row["decoupled"]:
+            return -1.0
+        return abs(row["delta_retrieval"] or 0.0) + abs(row["delta_answer"] or 0.0)
+
+    out.sort(key=_magnitude, reverse=True)
+    return out
