@@ -34,6 +34,16 @@ _SUPPORTED_QT_FUSION_MODES: frozenset[str] = frozenset({"rrf", "max"})
 
 _SUPPORTED_AGENT_MODES: frozenset[str] = frozenset({"single", "multi"})
 
+# Evaluation protocols (Phase E). "standard" is RAGAS-only; the others layer
+# slice-aware metrics and/or a dedicated loader on top. The evaluator dispatches
+# on this; protocol-specific coherence checks (e.g. conflict ⇒ linear) live with
+# each protocol.
+_SUPPORTED_EVAL_PROTOCOLS: frozenset[str] = frozenset(
+    {"standard", "abstention", "conflict", "multi_turn"}
+)
+
+_SUPPORTED_ABSTENTION_CLASSIFIERS: frozenset[str] = frozenset({"llm", "phrase"})
+
 
 def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
     """Validate an ExperimentConfig against the component registry.
@@ -82,6 +92,19 @@ def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
         errors.append(
             f"evaluation.mode: '{config.evaluation.mode}' is not supported. "
             f"Supported: {sorted(_SUPPORTED_EVAL_MODES)}"
+        )
+
+    # --- Evaluation protocol (Phase E) ---
+    if config.evaluation.protocol not in _SUPPORTED_EVAL_PROTOCOLS:
+        errors.append(
+            f"evaluation.protocol: '{config.evaluation.protocol}' is not "
+            f"supported. Supported: {sorted(_SUPPORTED_EVAL_PROTOCOLS)}"
+        )
+    if config.evaluation.abstention.classifier not in _SUPPORTED_ABSTENTION_CLASSIFIERS:
+        errors.append(
+            "evaluation.abstention.classifier: "
+            f"'{config.evaluation.abstention.classifier}' is not supported. "
+            f"Supported: {sorted(_SUPPORTED_ABSTENTION_CLASSIFIERS)}"
         )
 
     # --- Evaluator provider + embedding ---

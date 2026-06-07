@@ -48,6 +48,12 @@ METRIC_SHORT_NAMES: dict[str, str] = {
     "answer_similarity": "Ans.Sim",
     "context_recall": "Ctx.Rec",
     "factual_correctness": "Fact.Corr",
+    # Phase E slice metrics (only meaningful on the Phase E protocol datasets;
+    # surface via --metrics or the dedicated reports, not DEFAULT_METRICS).
+    "false_refusal_rate": "FRR",
+    "missed_refusal_rate": "MRR",
+    "error_detection_rate": "ErrDet",
+    "corpus_preference_rate": "CorpPref",
 }
 
 

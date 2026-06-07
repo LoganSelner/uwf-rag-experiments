@@ -21,7 +21,9 @@ cheap and ragas-version problems surface only when an evaluation actually runs.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import functools
+import math
 from typing import Any
 
 from ragbench.core.types import EvalSample
@@ -184,3 +186,86 @@ def run_eval(
     )
     scores: list[dict[str, Any]] = ragas_result.scores
     return scores
+
+
+@dataclass(frozen=True)
+class AspectCriticSpec:
+    """A binary, free-form LLM-judge metric declared by the evaluator.
+
+    ``name`` is the output column; ``definition`` is the natural-language judge
+    instruction (e.g. "return 1 if the response refuses to answer …"). A plain
+    dataclass with no ragas import, so the evaluator builds specs from strings
+    while every ragas type stays quarantined in this module. Powers the Phase E
+    abstention and knowledge-conflict signals.
+    """
+
+    name: str
+    definition: str
+
+
+def run_aspect_critics(
+    samples: list[EvalSample],
+    specs: list[AspectCriticSpec],
+    *,
+    llm: Any,
+    run_config: Any,
+    references: list[str] | None = None,
+) -> list[dict[str, float | None]]:
+    """Score ``samples`` with AspectCritic metrics via the legacy ``evaluate()``.
+
+    The binary-judge sibling of :func:`run_eval`: builds one ``AspectCritic`` per
+    spec (private import, the same anti-deprecation style as :func:`_metric_map`)
+    and one ``SingleTurnSample`` per sample, runs
+    ``evaluate(llm=…, metrics=[…])``, and returns a per-sample
+    ``{spec.name: 0.0 | 1.0 | None}`` dict (``None`` when the judge produced no
+    parseable verdict). AspectCritic needs no embedder.
+
+    ``llm`` must be ragas-ready (a :func:`wrap_langchain_llm` result), exactly as
+    :func:`run_eval` receives it — so the EdenAI judge path works unchanged.
+    ``references`` optionally overrides each sample's ``reference`` for the judge
+    (the conflict probe compares the response to the authoritative ``corpus_fact``
+    rather than the dataset gold); its length must match ``samples``.
+    """
+    if not specs or not samples:
+        return [{} for _ in samples]
+    if references is not None and len(references) != len(samples):
+        raise ValueError(
+            f"references length {len(references)} != samples length {len(samples)}"
+        )
+
+    from ragas import EvaluationDataset, evaluate
+    from ragas.dataset_schema import SingleTurnSample
+    from ragas.metrics._aspect_critic import AspectCritic
+
+    metrics = [
+        AspectCritic(name=spec.name, definition=spec.definition, llm=llm)
+        for spec in specs
+    ]
+    ragas_samples = [
+        SingleTurnSample(
+            user_input=s.query,
+            response=s.response,
+            retrieved_contexts=s.retrieved_contexts,
+            reference=(references[i] if references is not None else s.reference),
+        )
+        for i, s in enumerate(samples)
+    ]
+
+    ragas_result: Any = evaluate(
+        dataset=EvaluationDataset(samples=ragas_samples),  # type: ignore[arg-type]
+        metrics=metrics,
+        llm=llm,
+        run_config=run_config,
+    )
+
+    out: list[dict[str, float | None]] = []
+    for row in ragas_result.scores:
+        cleaned: dict[str, float | None] = {}
+        for spec in specs:
+            val = row.get(spec.name)
+            if val is None or (isinstance(val, float) and math.isnan(val)):
+                cleaned[spec.name] = None
+            else:
+                cleaned[spec.name] = float(val)
+        out.append(cleaned)
+    return out

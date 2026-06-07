@@ -10,7 +10,12 @@ import pytest
 
 from ragbench.core.config import SUPPORTED_EVALUATOR_LLM_PROVIDERS, EvaluationConfig
 from ragbench.core.types import EvalSample, GenerationResult
-from ragbench.evaluation.evaluator import Evaluator, _load_dataset, _mean_latency
+from ragbench.evaluation.evaluator import (
+    Evaluator,
+    _load_dataset,
+    _mean_latency,
+    _slice_rate,
+)
 
 
 class TestJudgeProviderSourceOfTruth:
@@ -320,6 +325,35 @@ class TestRunOnceMetadata:
         assert isinstance(meta["latency_s"], float)
         assert meta["latency_s"] >= 0.0
 
+    def test_propagates_dataset_label_fields(self) -> None:
+        """Phase E label columns ride from the dataset item into sample metadata;
+        non-allowlisted dataset keys do not."""
+        evaluator = Evaluator(EvaluationConfig.from_dict({"dataset": "d.jsonl"}))
+        pipeline = MagicMock()
+        pipeline.query.return_value = GenerationResult(
+            query="Q", answer="A", retrieved_chunks=[], metadata={}
+        )
+        samples = evaluator._run_once(
+            pipeline,
+            [
+                {
+                    "id": "1",
+                    "query": "Q",
+                    "reference": "R",
+                    "answerable": False,
+                    "abstention_type": "personal_data",
+                    "category": "advising",
+                    "not_a_label": "dropme",
+                }
+            ],
+        )
+        meta = samples[0].metadata
+        assert meta["answerable"] is False
+        assert meta["abstention_type"] == "personal_data"
+        assert meta["category"] == "advising"
+        assert "not_a_label" not in meta
+        assert "latency_s" in meta
+
 
 class TestMeanLatency:
     @staticmethod
@@ -341,6 +375,119 @@ class TestMeanLatency:
     def test_empty_or_missing_is_zero(self) -> None:
         assert _mean_latency([]) == 0.0
         assert _mean_latency([self._sample(None)]) == 0.0
+
+
+class TestSliceRate:
+    """_slice_rate is the FRR/MRR/conflict-rate primitive (Phase E P1c)."""
+
+    @staticmethod
+    def _sample(answerable: bool) -> EvalSample:
+        return EvalSample(
+            id="1",
+            query="q",
+            response="a",
+            retrieved_contexts=[],
+            reference="r",
+            metadata={"answerable": answerable},
+        )
+
+    def test_false_refusal_rate(self) -> None:
+        # FRR = refused (signal 1.0) over the answerable slice.
+        samples = [self._sample(True), self._sample(True), self._sample(True)]
+        signals: list[float | None] = [1.0, 0.0, 0.0]
+        frr = _slice_rate(samples, signals, label_key="answerable", label_value=True)
+        assert frr == pytest.approx(1 / 3)
+
+    def test_missed_refusal_rate(self) -> None:
+        # MRR = did-NOT-abstain (signal 0.0) over the unanswerable slice.
+        samples = [self._sample(False), self._sample(False)]
+        signals: list[float | None] = [0.0, 1.0]
+        mrr = _slice_rate(
+            samples,
+            signals,
+            label_key="answerable",
+            label_value=False,
+            positive_value=0.0,
+        )
+        assert mrr == pytest.approx(0.5)
+
+    def test_empty_slice_is_none(self) -> None:
+        samples = [self._sample(True)]
+        signals: list[float | None] = [1.0]
+        assert (
+            _slice_rate(samples, signals, label_key="answerable", label_value=False)
+            is None
+        )
+
+    def test_all_none_signals_is_none(self) -> None:
+        samples = [self._sample(True), self._sample(True)]
+        signals: list[float | None] = [None, None]
+        assert (
+            _slice_rate(samples, signals, label_key="answerable", label_value=True)
+            is None
+        )
+
+
+class TestRunAspectCritics:
+    """run_aspect_critics: AspectCritic verdicts via the quarantined adapter."""
+
+    def _samples(self, n: int = 2) -> list[EvalSample]:
+        return [
+            EvalSample(
+                id=str(i + 1),
+                query=f"q{i}",
+                response=f"a{i}",
+                retrieved_contexts=[],
+                reference=f"r{i}",
+            )
+            for i in range(n)
+        ]
+
+    def test_returns_per_sample_verdicts_nan_to_none(self) -> None:
+        from ragbench.evaluation import _ragas_adapter
+        from ragbench.evaluation._ragas_adapter import AspectCriticSpec
+
+        fake_result = MagicMock()
+        fake_result.scores = [{"abstained": 1.0}, {"abstained": float("nan")}]
+
+        with (
+            patch("ragas.evaluate", return_value=fake_result) as mock_eval,
+            patch("ragas.EvaluationDataset"),
+            patch("ragas.dataset_schema.SingleTurnSample"),
+            patch("ragas.metrics._aspect_critic.AspectCritic"),
+        ):
+            out = _ragas_adapter.run_aspect_critics(
+                self._samples(2),
+                [AspectCriticSpec(name="abstained", definition="refuses?")],
+                llm=MagicMock(),
+                run_config=MagicMock(),
+            )
+        assert mock_eval.called
+        assert out[0]["abstained"] == 1.0
+        assert out[1]["abstained"] is None  # NaN → None
+
+    def test_empty_specs_returns_empty_dicts(self) -> None:
+        from ragbench.evaluation._ragas_adapter import run_aspect_critics
+
+        out = run_aspect_critics(
+            self._samples(2), [], llm=MagicMock(), run_config=MagicMock()
+        )
+        assert out == [{}, {}]
+
+    def test_references_length_mismatch_raises(self) -> None:
+        from ragbench.evaluation._ragas_adapter import (
+            AspectCriticSpec,
+            run_aspect_critics,
+        )
+
+        with pytest.raises(ValueError, match="references length"):
+            run_aspect_critics(
+                self._samples(1),
+                [AspectCriticSpec(name="x", definition="y")],
+                llm=MagicMock(),
+                run_config=MagicMock(),
+                references=["a", "b"],
+            )
 
 
 # -----------------------------------------------------------------------

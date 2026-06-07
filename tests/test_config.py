@@ -484,6 +484,23 @@ class TestValidateConfig:
         cfg.evaluation.dataset = str(ds)
         validate_config(cfg, registry)  # should not raise
 
+    def test_valid_protocol_passes(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.protocol = "abstention"
+        validate_config(cfg, registry)  # should not raise
+
+    def test_invalid_protocol_rejected(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.protocol = "bogus"
+        with pytest.raises(ConfigValidationError, match="protocol"):
+            validate_config(cfg, registry)
+
+    def test_invalid_abstention_classifier_rejected(self) -> None:
+        cfg = self._make_valid_config()
+        cfg.evaluation.abstention.classifier = "bogus"
+        with pytest.raises(ConfigValidationError, match="classifier"):
+            validate_config(cfg, registry)
+
     def test_multiple_errors_collected(self) -> None:
         cfg = self._make_valid_config()
         cfg.indexing.chunking.type = "bad1"

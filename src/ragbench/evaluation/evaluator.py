@@ -27,14 +27,14 @@ from ragbench.evaluation import _ragas_adapter
 logger = logging.getLogger(__name__)
 
 
-def _load_dataset(path: str) -> list[dict[str, str]]:
+def _load_dataset(path: str) -> list[dict[str, Any]]:
     """Load an evaluation dataset from JSONL.
 
     Expected format: one {query, reference} JSON object per line.
     An optional ``id`` field provides a stable identifier for each
     item.  If absent, sequential 1-based IDs are assigned.
     """
-    data: list[dict[str, str]] = []
+    data: list[dict[str, Any]] = []
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -48,6 +48,26 @@ def _load_dataset(path: str) -> list[dict[str, str]]:
         if "id" not in item:
             item["id"] = str(i + 1)
     return data
+
+
+# Optional per-sample label columns a Phase E dataset may carry. Propagated from
+# the dataset item into EvalSample.metadata so slice-aware metrics (abstention
+# FRR/MRR, conflict rates) and the multi-turn loop can read them; absent keys are
+# simply skipped. An allowlist keeps query/reference/id first-class and stops
+# arbitrary dataset columns from bloating every JSONL row.
+_LABEL_FIELDS: tuple[str, ...] = (
+    "answerable",
+    "abstention_type",
+    "category",
+    "source_name",
+    "injected_context",
+    "corpus_fact",
+    "conflict_type",
+    "expected_behavior",
+    "conversation_id",
+    "turn",
+    "depends_on_prior",
+)
 
 
 def _mean_latency(samples: list[EvalSample]) -> float:
@@ -65,6 +85,36 @@ def _mean_latency(samples: list[EvalSample]) -> float:
         if isinstance(s.metadata.get("latency_s"), (int, float))
     ]
     return statistics.fmean(latencies) if latencies else 0.0
+
+
+def _slice_rate(
+    samples: list[EvalSample],
+    signals: list[float | None],
+    *,
+    label_key: str,
+    label_value: Any,
+    positive_value: float = 1.0,
+) -> float | None:
+    """Fraction of the ``metadata[label_key] == label_value`` slice whose signal
+    equals ``positive_value``.
+
+    The deterministic-reduction primitive behind the Phase E slice metrics — it
+    expresses False Refusal Rate (abstained over the answerable slice) and Missed
+    Refusal Rate (did-not-abstain over the unanswerable slice) by
+    parameterization. Returns ``None`` when the slice is empty or every in-slice
+    signal is ``None`` (the judge gave no verdict), so an absent/unscored slice
+    reads as ``-`` in the comparison table rather than a misleading ``0.0``.
+    Injected into the per-run metrics dict the same way as :func:`_mean_latency`.
+    """
+    in_slice = [
+        sig
+        for s, sig in zip(samples, signals, strict=True)
+        if s.metadata.get(label_key) == label_value and sig is not None
+    ]
+    if not in_slice:
+        return None
+    hits = sum(1 for sig in in_slice if sig == positive_value)
+    return hits / len(in_slice)
 
 
 class Evaluator:
@@ -192,7 +242,7 @@ class Evaluator:
     def _run_once(
         self,
         pipeline: Queryable,
-        dataset: list[dict[str, str]],
+        dataset: list[dict[str, Any]],
     ) -> list[EvalSample]:
         """Run the pipeline on each dataset query, producing EvalSamples.
 
@@ -208,6 +258,11 @@ class Evaluator:
                 result = pipeline.query(item["query"])
                 latency_s = time.perf_counter() - t0
                 contexts = [rc.chunk.content for rc in result.retrieved_chunks]
+                # Carry any Phase E label columns through to the saved sample.
+                # result.metadata first (provenance), then labels (ground truth
+                # wins over a colliding pipeline key), then the authoritative
+                # latency.
+                labels = {k: item[k] for k in _LABEL_FIELDS if k in item}
                 samples.append(
                     EvalSample(
                         id=item["id"],
@@ -215,7 +270,11 @@ class Evaluator:
                         response=result.answer,
                         retrieved_contexts=contexts,
                         reference=item["reference"],
-                        metadata={**result.metadata, "latency_s": latency_s},
+                        metadata={
+                            **result.metadata,
+                            **labels,
+                            "latency_s": latency_s,
+                        },
                     )
                 )
             except Exception:

@@ -23,6 +23,7 @@ from ragbench.core.config.loading import (
     load_yaml_with_inheritance,
 )
 from ragbench.core.config.models import (
+    AbstentionConfig,
     AgentConfig,
     AgentSpecConfig,
     ComponentConfig,
@@ -48,6 +49,7 @@ from ragbench.core.config.validation import (
 
 __all__ = [
     "SUPPORTED_EVALUATOR_LLM_PROVIDERS",
+    "AbstentionConfig",
     "AgentConfig",
     "AgentSpecConfig",
     "ComponentConfig",
