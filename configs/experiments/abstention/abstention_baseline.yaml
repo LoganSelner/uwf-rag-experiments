@@ -1,0 +1,21 @@
+# Abstention probe baseline (Phase E, item 13) — base.yaml's default prompt.
+#
+# Identical to abstention.yaml EXCEPT it keeps base.yaml's weaker abstention
+# instruction ("If you don't know the answer, say so concisely"). Comparing the
+# two isolates the hardened prompt's effect on the FRR/MRR trade-off — i.e.
+# whether a stronger refuse-when-unsupported instruction trades missed refusals
+# for false refusals.
+#
+# Variable changed vs. abstention.yaml: query.prompt.system_template (inherited).
+
+extends: ../../base.yaml
+
+name: "abstention_baseline"
+description: "Abstention probe with base.yaml's default prompt (isolates the hardened prompt's effect)"
+
+evaluation:
+  dataset: "data/datasets/abstention_dataset.jsonl"
+  protocol: "abstention"
+  abstention:
+    classifier: "llm"
+  mode: "full"

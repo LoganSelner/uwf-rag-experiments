@@ -490,6 +490,66 @@ class TestRunAspectCritics:
             )
 
 
+class TestApplyAbstention:
+    """End-to-end FRR/MRR injection via the deterministic phrase classifier."""
+
+    def test_phrase_classifier_confusion_matrix(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {"protocol": "abstention", "abstention": {"classifier": "phrase"}}
+        )
+        evaluator = Evaluator(cfg)
+        samples = [
+            # answerable + answered → correct (not a false refusal)
+            EvalSample(
+                "1",
+                "q",
+                "Grade forgiveness is allowed three times.",
+                [],
+                "r",
+                metadata={"answerable": True},
+            ),
+            # answerable + abstained → FALSE refusal
+            EvalSample(
+                "2",
+                "q",
+                "I don't have that information.",
+                [],
+                "r",
+                metadata={"answerable": True},
+            ),
+            # unanswerable + abstained → correct
+            EvalSample(
+                "3",
+                "q",
+                "I don't have access to your records.",
+                [],
+                "r",
+                metadata={"answerable": False},
+            ),
+            # unanswerable + answered → MISSED refusal
+            EvalSample(
+                "4",
+                "q",
+                "Your balance is 500 dollars.",
+                [],
+                "r",
+                metadata={"answerable": False},
+            ),
+        ]
+        rates = evaluator._apply_abstention(samples)
+        assert rates["false_refusal_rate"] == pytest.approx(0.5)  # 1 of 2 answerable
+        assert rates["missed_refusal_rate"] == pytest.approx(0.5)  # 1 of 2 unanswerable
+        # Per-sample signal is recorded for spot-checking.
+        assert samples[0].metadata["abstained"] == 0.0
+        assert samples[1].metadata["abstained"] == 1.0
+
+    def test_empty_samples_returns_no_rates(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {"protocol": "abstention", "abstention": {"classifier": "phrase"}}
+        )
+        assert Evaluator(cfg)._apply_abstention([]) == {}
+
+
 # -----------------------------------------------------------------------
 # Evaluator._build_evaluator_llm
 # -----------------------------------------------------------------------

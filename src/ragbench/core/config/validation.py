@@ -107,6 +107,25 @@ def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
             f"Supported: {sorted(_SUPPORTED_ABSTENTION_CLASSIFIERS)}"
         )
 
+    # Abstention needs generated answers to classify; its LLM classifier needs a
+    # judge. (Conflict / multi-turn coherence lives with those protocols.)
+    if config.evaluation.protocol == "abstention":
+        if config.evaluation.mode == "retrieval_only":
+            errors.append(
+                "evaluation.protocol 'abstention' needs generated answers to "
+                "classify — evaluation.mode 'retrieval_only' is incompatible "
+                "(use 'full', or 'none' with the phrase classifier)"
+            )
+        if (
+            config.evaluation.abstention.classifier == "llm"
+            and config.evaluation.mode == "none"
+        ):
+            errors.append(
+                "evaluation.abstention.classifier 'llm' needs a judge LLM, but "
+                "evaluation.mode 'none' builds none — use mode 'full' or "
+                "classifier 'phrase'"
+            )
+
     # --- Evaluator provider + embedding ---
     # Mode "none" runs the pipeline against the dataset but skips scoring,
     # so the judge LLM and judge embedder are not needed.

@@ -1,0 +1,24 @@
+# Local abstention smoke (Phase E, item 13) — verifies the FRR/MRR plumbing free.
+#
+# Extends smoke.yaml (HuggingFace embeddings + Ollama qwen3:14b, evaluation.mode
+# "none"). Uses the deterministic PHRASE classifier, which needs no judge, so the
+# abstention confusion matrix (FRR/MRR) is computed at $0 even under mode "none".
+#
+# Usage: python scripts/run_experiment.py configs/smoke_abstention.yaml -v
+# Inspect results/smoke_abstention/run_1.jsonl — each sample's metadata carries an
+# "abstained" signal and its "answerable" label; summary.json reports
+# false_refusal_rate / missed_refusal_rate.
+#
+# To score with a local LLM judge instead, set evaluation.mode: "full" and
+# evaluation.abstention.classifier: "llm" (uses the inherited Ollama judge).
+
+extends: smoke.yaml
+
+name: "smoke_abstention"
+description: "Local abstention smoke: phrase classifier (judge-free), FRR/MRR over the abstention set"
+
+evaluation:
+  dataset: "data/datasets/abstention_dataset.jsonl"
+  protocol: "abstention"
+  abstention:
+    classifier: "phrase"

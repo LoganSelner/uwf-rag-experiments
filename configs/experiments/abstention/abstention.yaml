@@ -1,0 +1,40 @@
+# Abstention probe (Phase E, item 13) — hardened "refuse-when-unsupported" prompt.
+#
+# Measures the abstention confusion matrix on data/datasets/abstention_dataset.jsonl
+# (12 answerable + 12 unanswerable, labeled `answerable`):
+#   - False Refusal Rate (FRR): abstained on an ANSWERABLE question (over-caution)
+#   - Missed Refusal Rate (MRR): answered an UNANSWERABLE one (over-confidence)
+# Both are reported together — never collapsed to one number.
+#
+# Abstention is detected by an AspectCritic LLM judge (classifier: "llm") whose
+# definition counts indirect/hedged refusals (the gold abstentions redirect to
+# MyUWF rather than saying "I refuse"). Compare against abstention_baseline.yaml
+# (same dataset, base.yaml's weaker prompt) to isolate this prompt's effect on
+# the FRR/MRR trade-off.
+
+extends: ../../base.yaml
+
+name: "abstention"
+description: "Abstention probe: hardened refuse-when-unsupported prompt; FRR/MRR confusion matrix"
+
+query:
+  prompt:
+    type: "chat"
+    system_template: |
+      You are an assistant for University of West Florida (UWF) student
+      questions. Use ONLY the retrieved context to answer.
+      If the retrieved context does not contain the answer — or the question
+      asks for personal, real-time, or out-of-scope information you cannot
+      verify from the context — do NOT guess or fabricate. Say you don't have
+      that information and point the user to the appropriate office or system
+      (for example MyUWF, the Registrar, or the relevant UWF department).
+    context_format: "plain"
+    use_chain_of_thought: false
+    citation_style: "none"
+
+evaluation:
+  dataset: "data/datasets/abstention_dataset.jsonl"
+  protocol: "abstention"
+  abstention:
+    classifier: "llm"
+  mode: "full"

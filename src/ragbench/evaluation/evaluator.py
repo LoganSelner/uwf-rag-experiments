@@ -23,6 +23,10 @@ from ragbench.core.config import (
 from ragbench.core.registry import registry
 from ragbench.core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
 from ragbench.evaluation import _ragas_adapter
+from ragbench.evaluation.abstention import (
+    ABSTENTION_METRIC_NAME,
+    build_abstention_classifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +206,9 @@ class Evaluator:
             # so aggregation + summary.json + the comparison table pick it up for
             # free (works in mode="none", where `metrics` is otherwise empty).
             metrics["latency_mean_s"] = _mean_latency(samples)
+            # Phase E slice metrics ride the same injection seam as latency.
+            if self._config.protocol == "abstention":
+                metrics.update(self._apply_abstention(samples))
             per_run_metrics.append(metrics)
 
             scored = [
@@ -366,6 +373,42 @@ class Evaluator:
             max_wait=cfg.max_wait,
             max_workers=cfg.max_workers,
         )
+
+    def _apply_abstention(self, samples: list[EvalSample]) -> dict[str, float]:
+        """Score abstention and return the run's confusion-matrix rates.
+
+        Builds the configured classifier (an AspectCritic judge or the phrase
+        matcher), records each response's abstention signal in metadata for
+        spot-checking, and returns False Refusal Rate (abstained over the
+        answerable slice) + Missed Refusal Rate (answered over the unanswerable
+        slice). A rate whose slice is empty is omitted so it reads as ``-`` in
+        the comparison table rather than a misleading ``0.0``.
+        """
+        if not samples:
+            return {}
+        classifier_name = self._config.abstention.classifier
+        llm = self._build_evaluator_llm() if classifier_name == "llm" else None
+        classifier = build_abstention_classifier(
+            classifier_name, llm=llm, run_config=self._make_run_config()
+        )
+        signals = classifier.classify(samples)
+        for sample, signal in zip(samples, signals, strict=True):
+            sample.metadata[ABSTENTION_METRIC_NAME] = signal
+
+        rates: dict[str, float] = {}
+        frr = _slice_rate(samples, signals, label_key="answerable", label_value=True)
+        if frr is not None:
+            rates["false_refusal_rate"] = frr
+        mrr = _slice_rate(
+            samples,
+            signals,
+            label_key="answerable",
+            label_value=False,
+            positive_value=0.0,
+        )
+        if mrr is not None:
+            rates["missed_refusal_rate"] = mrr
+        return rates
 
     def _build_evaluator_llm(self) -> Any:
         """Build a ragas-compatible judge LLM from config.
