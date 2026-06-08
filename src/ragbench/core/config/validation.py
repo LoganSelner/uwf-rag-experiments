@@ -137,6 +137,22 @@ def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
             "'none')"
         )
 
+    # The knowledge-conflict probe injects a contradicting passage into the
+    # LINEAR generation context (an agent controls its own retrieval) and needs an
+    # LLM judge to score corpus-preference / error-detection.
+    if config.evaluation.protocol == "conflict":
+        if config.pipeline_mode != "linear":
+            errors.append(
+                "evaluation.protocol 'conflict' is linear-only — set pipeline_mode "
+                "'linear' (the injected passage enters the linear generation "
+                "context; an agent controls its own retrieval)"
+            )
+        if config.evaluation.mode != "full":
+            errors.append(
+                "evaluation.protocol 'conflict' needs evaluation.mode 'full' — it "
+                "generates an answer and scores it with an AspectCritic judge"
+            )
+
     # --- Evaluator provider + embedding ---
     # Mode "none" runs the pipeline against the dataset but skips scoring,
     # so the judge LLM and judge embedder are not needed.

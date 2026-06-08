@@ -152,7 +152,10 @@ class Queryable(Protocol):
     """
 
     def query(
-        self, question: str, history: list[Message] | None = None
+        self,
+        question: str,
+        history: list[Message] | None = None,
+        injected_contexts: list[str] | None = None,
     ) -> GenerationResult: ...
 
 

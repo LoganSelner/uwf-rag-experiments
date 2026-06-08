@@ -132,6 +132,23 @@ class TestQueryPipeline:
         pipeline.run("Q?")
         assert retriever.retrieve_multi.call_args.kwargs["fusion"] == "max"
 
+    def test_injected_contexts_in_prompt_not_in_retrieved(self) -> None:
+        # The conflict probe (item 15): an injected passage reaches the prompt but
+        # never enters result.retrieved_chunks.
+        pipeline, _, _, _, _gen = _make_query_pipeline()
+        prompt = pipeline._prompt_template
+        assert isinstance(prompt, MagicMock)
+        result = pipeline.run("Q?", injected_contexts=["FALSE: forgiveness x5."])
+        # The prompt saw the injected passage prepended to the real chunks.
+        format_chunks = prompt.format.call_args.args[1]
+        contents = [rc.chunk.content for rc in format_chunks]
+        assert contents[0] == "FALSE: forgiveness x5."
+        assert "text_c1" in contents and "text_c2" in contents
+        # But the reported retrieval is the REAL set only — no injected id.
+        ids = [rc.chunk.chunk_id for rc in result.retrieved_chunks]
+        assert ids == ["c1", "c2"]
+        assert all(not cid.startswith("__injected__") for cid in ids)
+
 
 # -----------------------------------------------------------------------
 # IndexingPipeline
@@ -275,7 +292,7 @@ class TestRAGPipeline:
         )
         result = rag.query("Q?")
         assert result.answer == "A"
-        mock_pipeline.run.assert_called_once_with("Q?", None)
+        mock_pipeline.run.assert_called_once_with("Q?", None, None)
 
     def test_query_forwards_history(self) -> None:
         mock_pipeline = MagicMock()
@@ -287,7 +304,7 @@ class TestRAGPipeline:
         )
         history: list[Message] = [{"role": "user", "content": "prev"}]
         rag.query("Q?", history)
-        mock_pipeline.run.assert_called_once_with("Q?", history)
+        mock_pipeline.run.assert_called_once_with("Q?", history, None)
 
     def test_unknown_mode_raises(self) -> None:
         mock_config = MagicMock()
@@ -389,6 +406,11 @@ class TestAgentPipeline:
         assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
         assert messages[1]["content"] == "prev q"
         assert messages[3]["content"] == "now q"
+
+    def test_run_rejects_injected_contexts(self) -> None:
+        # The knowledge-conflict probe is linear-only; the agent rejects it.
+        with pytest.raises(ValueError, match="linear-only"):
+            _agent(MagicMock(), [_fake_tool()]).run("q", injected_contexts=["lie"])
 
     def test_budget_exhaustion_forces_final_answer(self) -> None:
         # The model keeps calling tools; after max_iterations a final answer

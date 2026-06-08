@@ -33,6 +33,12 @@ from ragbench.evaluation.abstention import (
     ABSTENTION_METRIC_NAME,
     build_abstention_classifier,
 )
+from ragbench.evaluation.conflict import (
+    CORPUS_PREFERENCE_NAME,
+    ERROR_DETECTION_NAME,
+    conflict_specs,
+    corpus_fact_retrieved,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +169,16 @@ def _slice_rate(
     return hits / len(in_slice)
 
 
+def _mean_signal(signals: list[float | None]) -> float | None:
+    """Mean of the non-None signals; ``None`` when all are None (unknown).
+
+    The unconditional sibling of :func:`_slice_rate` for the conflict probe,
+    where every sample is in-slice (no label condition).
+    """
+    present = [s for s in signals if s is not None]
+    return sum(present) / len(present) if present else None
+
+
 class Evaluator:
     """Runs evaluation against a dataset using RAGAS metrics.
 
@@ -234,11 +250,12 @@ class Evaluator:
 
         for run_idx in range(1, num_runs + 1):
             logger.info("Run %d/%d", run_idx, num_runs)
-            samples = (
-                self._run_once_multi_turn(pipeline, dataset)
-                if is_multi_turn
-                else self._run_once(pipeline, dataset)
-            )
+            if is_multi_turn:
+                samples = self._run_once_multi_turn(pipeline, dataset)
+            elif self._config.protocol == "conflict":
+                samples = self._run_once_conflict(pipeline, dataset)
+            else:
+                samples = self._run_once(pipeline, dataset)
             if not samples:
                 logger.error(
                     "All queries failed in run %d — skipping metrics.",
@@ -260,6 +277,8 @@ class Evaluator:
             # Phase E slice metrics ride the same injection seam as latency.
             if self._config.protocol == "abstention":
                 metrics.update(self._apply_abstention(samples))
+            elif self._config.protocol == "conflict":
+                metrics.update(self._apply_conflict(samples))
             per_run_metrics.append(metrics)
 
             scored = [
@@ -412,6 +431,60 @@ class Evaluator:
             logger.warning("%d/%d turns failed in this run", failed, total)
         return samples
 
+    def _run_once_conflict(
+        self,
+        pipeline: Queryable,
+        dataset: list[dict[str, Any]],
+    ) -> list[EvalSample]:
+        """Run each query with its contradicting passage injected into context.
+
+        Mirrors :meth:`_run_once` but passes ``injected_contexts`` so the
+        generator sees the counterfactual alongside the real retrieval;
+        ``retrieved_contexts`` still reflect the REAL retriever (the injected
+        passage never enters retrieval metrics). Records a ``corpus_fact_retrieved``
+        confound flag so a low corpus-preference can be read correctly.
+        """
+        samples: list[EvalSample] = []
+        failed = 0
+        total = len(dataset)
+        for i, item in enumerate(dataset, start=1):
+            injected = item.get("injected_context")
+            injected_contexts = [injected] if injected else None
+            try:
+                t0 = time.perf_counter()
+                result = pipeline.query(
+                    item["query"], injected_contexts=injected_contexts
+                )
+                latency_s = time.perf_counter() - t0
+            except Exception:
+                failed += 1
+                logger.exception(
+                    "Conflict query %d/%d failed: %s", i, total, item["query"][:80]
+                )
+                continue
+            contexts = [rc.chunk.content for rc in result.retrieved_chunks]
+            labels = {k: item[k] for k in _LABEL_FIELDS if k in item}
+            samples.append(
+                EvalSample(
+                    id=item["id"],
+                    query=item["query"],
+                    response=result.answer,
+                    retrieved_contexts=contexts,
+                    reference=item["reference"],
+                    metadata={
+                        **result.metadata,
+                        **labels,
+                        "corpus_fact_retrieved": corpus_fact_retrieved(
+                            contexts, str(item.get("corpus_fact", ""))
+                        ),
+                        "latency_s": latency_s,
+                    },
+                )
+            )
+        if failed:
+            logger.warning("%d/%d conflict queries failed in this run", failed, total)
+        return samples
+
     def _compute_metrics(
         self, samples: list[EvalSample]
     ) -> tuple[dict[str, float], list[dict[str, float | None]]]:
@@ -520,6 +593,42 @@ class Evaluator:
         )
         if mrr is not None:
             rates["missed_refusal_rate"] = mrr
+        return rates
+
+    def _apply_conflict(self, samples: list[EvalSample]) -> dict[str, float]:
+        """Score the knowledge-conflict probe and return its rates.
+
+        Runs two AspectCritic judges over the conflict slice — ``corpus_preference``
+        (answer asserts the authoritative corpus fact rather than the injected
+        falsehood) and ``error_detection`` (answer flags the contradiction) —
+        comparing the response to ``corpus_fact`` (passed as the per-sample
+        reference override). Records the per-sample verdicts in metadata and
+        returns the two mean rates (omitting one whose verdicts are all unknown).
+        """
+        if not samples:
+            return {}
+        llm = self._build_evaluator_llm()
+        references = [
+            str(s.metadata.get("corpus_fact") or s.reference) for s in samples
+        ]
+        rows = _ragas_adapter.run_aspect_critics(
+            samples,
+            conflict_specs(),
+            llm=llm,
+            run_config=self._make_run_config(),
+            references=references,
+        )
+        for sample, row in zip(samples, rows, strict=True):
+            sample.metadata[CORPUS_PREFERENCE_NAME] = row.get(CORPUS_PREFERENCE_NAME)
+            sample.metadata[ERROR_DETECTION_NAME] = row.get(ERROR_DETECTION_NAME)
+
+        rates: dict[str, float] = {}
+        pref = _mean_signal([row.get(CORPUS_PREFERENCE_NAME) for row in rows])
+        if pref is not None:
+            rates["corpus_preference_rate"] = pref
+        det = _mean_signal([row.get(ERROR_DETECTION_NAME) for row in rows])
+        if det is not None:
+            rates["error_detection_rate"] = det
         return rates
 
     def _build_evaluator_llm(self) -> Any:

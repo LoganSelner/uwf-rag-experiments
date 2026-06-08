@@ -231,13 +231,27 @@ class AgentPipeline:
         mem_cls = registry.get("memory", agent.memory.type or "none")
         return mem_cls(config={"window_size": agent.memory.window_size})
 
-    def run(self, query: str, history: list[Message] | None = None) -> GenerationResult:
+    def run(
+        self,
+        query: str,
+        history: list[Message] | None = None,
+        injected_contexts: list[str] | None = None,
+    ) -> GenerationResult:
         """Run the ReAct loop for a single query.
 
         ``history`` (optional) seeds prior conversation turns between the system
         prompt and the current user turn, for multi-turn evaluation. The
         evaluator supplies it; single-turn callers leave it ``None``.
+        ``injected_contexts`` is rejected: the knowledge-conflict probe is
+        linear-only (an agent controls its own retrieval), and the validator
+        enforces conflict ⇒ ``pipeline_mode 'linear'`` — this guard catches
+        programmatic misuse.
         """
+        if injected_contexts:
+            raise ValueError(
+                "injected_contexts (the knowledge-conflict probe) is linear-only "
+                "and not supported in agent mode."
+            )
         messages: list[Message] = []
         if self._system_prompt:
             messages.append({"role": "system", "content": self._system_prompt})
@@ -302,10 +316,13 @@ class AgentPipeline:
         )
 
     def query(
-        self, question: str, history: list[Message] | None = None
+        self,
+        question: str,
+        history: list[Message] | None = None,
+        injected_contexts: list[str] | None = None,
     ) -> GenerationResult:
         """Satisfy the Queryable protocol — delegates to run()."""
-        return self.run(question, history)
+        return self.run(question, history, injected_contexts)
 
     # --- loop internals ---------------------------------------------------
 

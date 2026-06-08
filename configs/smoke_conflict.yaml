@@ -1,0 +1,22 @@
+# Local knowledge-conflict smoke (Phase E, item 15) — scored with a local judge.
+#
+# Extends smoke.yaml (HuggingFace embeddings + Ollama qwen3:14b) but sets
+# evaluation.mode "full": the conflict probe always needs an LLM judge (the
+# AspectCritic corpus-preference / error-detection metrics), so unlike the other
+# smokes there is no judge-free path. This uses the inherited Ollama judge, so it
+# runs at $0 but is slower than the mode="none" smokes.
+#
+# Usage: python scripts/run_experiment.py configs/smoke_conflict.yaml -v
+# Inspect results/smoke_conflict/run_1.jsonl — each sample's metadata carries
+# corpus_preference / error_detection verdicts + corpus_fact_retrieved;
+# summary.json reports corpus_preference_rate / error_detection_rate.
+
+extends: smoke.yaml
+
+name: "smoke_conflict"
+description: "Local knowledge-conflict smoke: inject a contradiction; score with the Ollama judge"
+
+evaluation:
+  dataset: "data/datasets/knowledge_conflict_dataset.jsonl"
+  protocol: "conflict"
+  mode: "full"

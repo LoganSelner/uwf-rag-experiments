@@ -81,12 +81,18 @@ class RAGPipeline:
         return self._index_artifact
 
     def query(
-        self, question: str, history: list[Message] | None = None
+        self,
+        question: str,
+        history: list[Message] | None = None,
+        injected_contexts: list[str] | None = None,
     ) -> GenerationResult:
         """Run a single query through the pipeline.
 
         ``history`` (optional) threads prior conversation turns for multi-turn
-        evaluation; the evaluator owns and supplies it. Both the linear and
-        agent pipelines accept it (single-turn callers omit it).
+        evaluation; the evaluator owns and supplies it. ``injected_contexts``
+        (optional) is the knowledge-conflict probe's contradicting passage — only
+        valid in linear mode (the agent pipeline rejects it; the validator
+        enforces conflict ⇒ linear). Both default to ``None`` (single-turn,
+        no injection).
         """
-        return self._pipeline.run(question, history)
+        return self._pipeline.run(question, history, injected_contexts)

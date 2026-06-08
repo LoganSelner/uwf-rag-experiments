@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ragbench.core.config import SUPPORTED_EVALUATOR_LLM_PROVIDERS, EvaluationConfig
-from ragbench.core.types import EvalSample, GenerationResult
+from ragbench.core.types import Chunk, EvalSample, GenerationResult, RetrievedChunk
 from ragbench.evaluation.evaluator import (
     Evaluator,
     _load_conversations,
@@ -681,6 +681,86 @@ class TestRunOnceMultiTurn:
         assert [s.id for s in samples] == ["c1::t1", "c1::t3"]
         # Turn 3 sees only turn 1's exchange (the failed turn 2 isn't in history).
         assert [m["content"] for m in calls[2][1]] == ["ok1", "a"]
+
+
+class TestRunOnceConflict:
+    """The conflict loop injects the counterfactual + flags corpus retrieval."""
+
+    def test_passes_injected_context_and_flags_retrieval(self) -> None:
+        evaluator = Evaluator(EvaluationConfig.from_dict({"protocol": "conflict"}))
+        captured: dict = {}
+
+        def fake_query(question, history=None, injected_contexts=None):
+            captured["injected"] = injected_contexts
+            rc = RetrievedChunk(
+                chunk=Chunk(
+                    content="grade forgiveness is allowed three times",
+                    chunk_id="c1",
+                    metadata={},
+                ),
+                score=0.9,
+            )
+            return GenerationResult(query=question, answer="A", retrieved_chunks=[rc])
+
+        pipeline = MagicMock()
+        pipeline.query.side_effect = fake_query
+        dataset = [
+            {
+                "id": "1",
+                "query": "q",
+                "reference": "ref",
+                "injected_context": "grade forgiveness is allowed five times",
+                "corpus_fact": "grade forgiveness is allowed three times",
+            }
+        ]
+        samples = evaluator._run_once_conflict(pipeline, dataset)
+        assert captured["injected"] == ["grade forgiveness is allowed five times"]
+        assert len(samples) == 1
+        assert samples[0].metadata["corpus_fact_retrieved"] is True
+        # The injected lie never enters the reported retrieved contexts.
+        assert "five times" not in " ".join(samples[0].retrieved_contexts)
+
+
+class TestApplyConflict:
+    """Conflict AspectCritic rates via a mocked adapter call."""
+
+    def test_rates_and_per_sample_verdicts(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {
+                "protocol": "conflict",
+                "mode": "full",
+                "evaluator_llm": {"provider": "ollama", "model_name": "m"},
+            }
+        )
+        evaluator = Evaluator(cfg)
+        samples = [
+            EvalSample(
+                "1", "q", "a", [], "ref", metadata={"corpus_fact": "three times"}
+            ),
+            EvalSample("2", "q", "a", [], "ref", metadata={"corpus_fact": "2.50 GPA"}),
+        ]
+        verdicts = [
+            {"corpus_preference": 1.0, "error_detection": 0.0},
+            {"corpus_preference": 0.0, "error_detection": 1.0},
+        ]
+        with (
+            patch.object(evaluator, "_build_evaluator_llm", return_value=MagicMock()),
+            patch(
+                "ragbench.evaluation.evaluator._ragas_adapter.run_aspect_critics",
+                return_value=verdicts,
+            ) as mock_run,
+        ):
+            rates = evaluator._apply_conflict(samples)
+        assert rates["corpus_preference_rate"] == pytest.approx(0.5)
+        assert rates["error_detection_rate"] == pytest.approx(0.5)
+        assert samples[0].metadata["corpus_preference"] == 1.0
+        assert samples[1].metadata["error_detection"] == 1.0
+        # The judge compares the response to corpus_fact (reference override).
+        assert mock_run.call_args.kwargs["references"] == ["three times", "2.50 GPA"]
+
+    def test_empty_samples_returns_no_rates(self) -> None:
+        cfg = EvaluationConfig.from_dict({"protocol": "conflict"})
+        assert Evaluator(cfg)._apply_conflict([]) == {}
 
 
 # -----------------------------------------------------------------------
