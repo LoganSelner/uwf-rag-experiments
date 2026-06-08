@@ -143,9 +143,17 @@ class Queryable(Protocol):
     Satisfied by RAGPipeline, AgentPipeline, and test mocks.
     The evaluator depends on this protocol, not on concrete
     pipeline classes.
+
+    ``history`` is an optional, additive parameter for multi-turn evaluation:
+    the evaluator owns conversation state and threads prior turns in as a
+    ``list[Message]``. Single-turn callers omit it (``None``), so behavior is
+    unchanged. The pipeline is otherwise a pure function of ``(question,
+    history)`` — no internal session state — which keeps runs reproducible.
     """
 
-    def query(self, question: str) -> GenerationResult: ...
+    def query(
+        self, question: str, history: list[Message] | None = None
+    ) -> GenerationResult: ...
 
 
 # ---------------------------------------------------------------------------

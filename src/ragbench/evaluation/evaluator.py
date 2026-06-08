@@ -21,7 +21,13 @@ from ragbench.core.config import (
     LLMConfig,
 )
 from ragbench.core.registry import registry
-from ragbench.core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
+from ragbench.core.types import (
+    EvalSample,
+    ExperimentResult,
+    Message,
+    Queryable,
+    ScoredSample,
+)
 from ragbench.evaluation import _ragas_adapter
 from ragbench.evaluation.abstention import (
     ABSTENTION_METRIC_NAME,
@@ -52,6 +58,42 @@ def _load_dataset(path: str) -> list[dict[str, Any]]:
         if "id" not in item:
             item["id"] = str(i + 1)
     return data
+
+
+def _load_conversations(path: str) -> list[dict[str, Any]]:
+    """Load a multi-turn dataset: one conversation per JSONL line.
+
+    Expected shape per line: ``{conversation_id?, domain?, turns: [{turn?, query,
+    reference, answerable?, depends_on_prior?, category?, abstention_type?},
+    ...]}``. Validates each conversation has non-empty ``turns`` and each turn has
+    ``query`` + ``reference``; assigns a ``conversation_id`` and 1-based ``turn``
+    indices when absent. The evaluator scores each turn as a single-turn sample
+    with a stable id ``"<conversation_id>::t<turn>"`` so per-sample JSONL stays
+    joinable.
+    """
+    conversations: list[dict[str, Any]] = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                conversations.append(json.loads(line))
+    if not conversations:
+        raise ValueError(f"Multi-turn dataset is empty: {path}")
+    for i, conv in enumerate(conversations):
+        if "conversation_id" not in conv:
+            conv["conversation_id"] = f"conv_{i + 1}"
+        turns = conv.get("turns")
+        if not turns:
+            raise ValueError(f"Conversation '{conv['conversation_id']}' has no 'turns'")
+        for j, turn in enumerate(turns):
+            if "query" not in turn or "reference" not in turn:
+                raise ValueError(
+                    f"Conversation '{conv['conversation_id']}' turn {j} is "
+                    f"missing 'query' or 'reference': {turn}"
+                )
+            if "turn" not in turn:
+                turn["turn"] = j + 1
+    return conversations
 
 
 # Optional per-sample label columns a Phase E dataset may carry. Propagated from
@@ -163,7 +205,12 @@ class Evaluator:
         Returns:
             ExperimentResult with aggregated and per-run metrics.
         """
-        dataset = _load_dataset(self._config.dataset)
+        is_multi_turn = self._config.protocol == "multi_turn"
+        dataset = (
+            _load_conversations(self._config.dataset)
+            if is_multi_turn
+            else _load_dataset(self._config.dataset)
+        )
         num_runs = self._config.num_runs
         scoring_enabled = self._config.mode != "none"
 
@@ -187,7 +234,11 @@ class Evaluator:
 
         for run_idx in range(1, num_runs + 1):
             logger.info("Run %d/%d", run_idx, num_runs)
-            samples = self._run_once(pipeline, dataset)
+            samples = (
+                self._run_once_multi_turn(pipeline, dataset)
+                if is_multi_turn
+                else self._run_once(pipeline, dataset)
+            )
             if not samples:
                 logger.error(
                     "All queries failed in run %d — skipping metrics.",
@@ -298,6 +349,67 @@ class Evaluator:
                 failed,
                 total,
             )
+        return samples
+
+    def _run_once_multi_turn(
+        self,
+        pipeline: Queryable,
+        conversations: list[dict[str, Any]],
+    ) -> list[EvalSample]:
+        """Run each conversation in order, threading history between turns.
+
+        History is reset per conversation; each turn calls ``pipeline.query(query,
+        history)`` and is recorded as an ordinary single-turn ``EvalSample`` (so
+        the existing RAGAS metrics score it) tagged by conversation / turn /
+        dependency / answerability. History is then extended with the **model's
+        actual answer** (not the gold reference), so a later turn contextualizes
+        against what was really said — errors propagate, which is the point of
+        multi-turn robustness eval. A failed turn is logged and skipped; the
+        conversation continues.
+        """
+        samples: list[EvalSample] = []
+        failed = 0
+        total = sum(len(c["turns"]) for c in conversations)
+        for conv in conversations:
+            conv_id = conv["conversation_id"]
+            history: list[Message] = []
+            for turn in conv["turns"]:
+                query = turn["query"]
+                try:
+                    t0 = time.perf_counter()
+                    result = pipeline.query(query, history)
+                    latency_s = time.perf_counter() - t0
+                except Exception:
+                    failed += 1
+                    logger.exception(
+                        "Conversation %s turn %s failed: %s",
+                        conv_id,
+                        turn.get("turn"),
+                        query[:80],
+                    )
+                    continue
+                contexts = [rc.chunk.content for rc in result.retrieved_chunks]
+                labels = {k: turn[k] for k in _LABEL_FIELDS if k in turn}
+                samples.append(
+                    EvalSample(
+                        id=f"{conv_id}::t{turn['turn']}",
+                        query=query,
+                        response=result.answer,
+                        retrieved_contexts=contexts,
+                        reference=turn["reference"],
+                        metadata={
+                            **result.metadata,
+                            **labels,
+                            "conversation_id": conv_id,
+                            "domain": conv.get("domain"),
+                            "latency_s": latency_s,
+                        },
+                    )
+                )
+                history.append({"role": "user", "content": query})
+                history.append({"role": "assistant", "content": result.answer})
+        if failed:
+            logger.warning("%d/%d turns failed in this run", failed, total)
         return samples
 
     def _compute_metrics(

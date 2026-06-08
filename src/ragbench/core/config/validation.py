@@ -126,6 +126,17 @@ def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
                 "classifier 'phrase'"
             )
 
+    # Multi-turn evaluation scores a generated answer per turn.
+    if (
+        config.evaluation.protocol == "multi_turn"
+        and config.evaluation.mode == "retrieval_only"
+    ):
+        errors.append(
+            "evaluation.protocol 'multi_turn' scores generated answers per turn "
+            "— evaluation.mode 'retrieval_only' is incompatible (use 'full' or "
+            "'none')"
+        )
+
     # --- Evaluator provider + embedding ---
     # Mode "none" runs the pipeline against the dataset but skips scoring,
     # so the judge LLM and judge embedder are not needed.

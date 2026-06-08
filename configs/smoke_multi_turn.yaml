@@ -1,0 +1,28 @@
+# Local multi-turn smoke (Phase E, item 14) — verifies the session loop free.
+#
+# Extends smoke.yaml (HuggingFace embeddings + Ollama qwen3:14b, evaluation.mode
+# "none"). Runs the contextualizer (Ollama) so follow-ups are rewritten, threads
+# history across each conversation's turns, and writes per-turn samples to JSONL
+# without paying for a judge.
+#
+# Usage: python scripts/run_experiment.py configs/smoke_multi_turn.yaml -v
+# Inspect results/smoke_multi_turn/run_1.jsonl — sample ids are
+# "<conversation_id>::t<turn>" and metadata carries turn / depends_on_prior /
+# answerable. To score per-turn with a local judge, set evaluation.mode: "full".
+
+extends: smoke.yaml
+
+name: "smoke_multi_turn"
+description: "Local multi-turn smoke: contextualizer (Ollama) + per-turn session loop"
+
+query:
+  query_transform:
+    type: "contextualizer"
+    generator:
+      provider: "ollama"
+      model_name: "qwen3:14b"
+      temperature: 0.0
+
+evaluation:
+  dataset: "data/datasets/multi_turn_dataset.jsonl"
+  protocol: "multi_turn"

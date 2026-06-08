@@ -79,8 +79,11 @@ class AgentPipeline:
         self._max_iterations = max_iterations
         self._top_k_final = top_k_final
         self._system_prompt = system_prompt
-        # Reserved for multi-turn evaluation (Phase E); the single-query loop
-        # below does not thread history yet.
+        # Conversation memory is kept as a registered, honest stub. Multi-turn
+        # evaluation threads history through ``run(query, history)`` — the
+        # evaluator owns conversation state as the single source of truth — not
+        # through this object, which would only matter for a stateful serving
+        # surface this harness doesn't have.
         self._memory = memory
 
     @classmethod
@@ -228,11 +231,18 @@ class AgentPipeline:
         mem_cls = registry.get("memory", agent.memory.type or "none")
         return mem_cls(config={"window_size": agent.memory.window_size})
 
-    def run(self, query: str) -> GenerationResult:
-        """Run the ReAct loop for a single query."""
+    def run(self, query: str, history: list[Message] | None = None) -> GenerationResult:
+        """Run the ReAct loop for a single query.
+
+        ``history`` (optional) seeds prior conversation turns between the system
+        prompt and the current user turn, for multi-turn evaluation. The
+        evaluator supplies it; single-turn callers leave it ``None``.
+        """
         messages: list[Message] = []
         if self._system_prompt:
             messages.append({"role": "system", "content": self._system_prompt})
+        if history:
+            messages.extend(history)
         messages.append({"role": "user", "content": query})
 
         steps: list[AgentStep] = []
@@ -291,9 +301,11 @@ class AgentPipeline:
             },
         )
 
-    def query(self, question: str) -> GenerationResult:
+    def query(
+        self, question: str, history: list[Message] | None = None
+    ) -> GenerationResult:
         """Satisfy the Queryable protocol — delegates to run()."""
-        return self.run(question)
+        return self.run(question, history)
 
     # --- loop internals ---------------------------------------------------
 

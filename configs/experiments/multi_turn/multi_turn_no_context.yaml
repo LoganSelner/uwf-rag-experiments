@@ -1,0 +1,20 @@
+# Multi-turn session evaluation (Phase E, item 14) — WITHOUT query contextualization.
+#
+# Identical to multi_turn.yaml except the query transform stays base.yaml's
+# passthrough, so a follow-up turn is retrieved on its literal text (no rewrite
+# into a standalone query). The conversation history is still threaded into the
+# generation prompt in both configs, so the difference is purely retrieval
+# quality on non-standalone turns — isolating the contextualizer's value.
+#
+# Variable changed vs. multi_turn.yaml: query.query_transform (contextualizer →
+# passthrough, inherited from base.yaml).
+
+extends: ../../base.yaml
+
+name: "multi_turn_no_context"
+description: "Multi-turn session eval without query contextualization (passthrough)"
+
+evaluation:
+  dataset: "data/datasets/multi_turn_dataset.jsonl"
+  protocol: "multi_turn"
+  mode: "full"

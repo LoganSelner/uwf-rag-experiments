@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from ragbench.core.config import ExperimentConfig
-from ragbench.core.types import GenerationResult
+from ragbench.core.types import GenerationResult, Message
 from ragbench.pipeline.agent import AgentPipeline
 from ragbench.pipeline.indexing import IndexArtifact, IndexingPipeline
 from ragbench.pipeline.query import QueryPipeline
@@ -80,6 +80,13 @@ class RAGPipeline:
         """The index artifact (vectorstore + embedder)."""
         return self._index_artifact
 
-    def query(self, question: str) -> GenerationResult:
-        """Run a single query through the pipeline."""
-        return self._pipeline.run(question)
+    def query(
+        self, question: str, history: list[Message] | None = None
+    ) -> GenerationResult:
+        """Run a single query through the pipeline.
+
+        ``history`` (optional) threads prior conversation turns for multi-turn
+        evaluation; the evaluator owns and supplies it. Both the linear and
+        agent pipelines accept it (single-turn callers omit it).
+        """
+        return self._pipeline.run(question, history)

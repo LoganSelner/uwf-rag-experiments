@@ -11,6 +11,7 @@ import pytest
 from ragbench.core.types import (
     Chunk,
     GenerationResult,
+    Message,
     RetrievedChunk,
     ToolCall,
     ToolResult,
@@ -274,7 +275,19 @@ class TestRAGPipeline:
         )
         result = rag.query("Q?")
         assert result.answer == "A"
-        mock_pipeline.run.assert_called_once_with("Q?")
+        mock_pipeline.run.assert_called_once_with("Q?", None)
+
+    def test_query_forwards_history(self) -> None:
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.return_value = GenerationResult(query="Q?", answer="A")
+        rag = RAGPipeline(
+            config=MagicMock(),
+            index_artifact=MagicMock(),
+            pipeline=mock_pipeline,
+        )
+        history: list[Message] = [{"role": "user", "content": "prev"}]
+        rag.query("Q?", history)
+        mock_pipeline.run.assert_called_once_with("Q?", history)
 
     def test_unknown_mode_raises(self) -> None:
         mock_config = MagicMock()
@@ -359,6 +372,23 @@ class TestAgentPipeline:
         assert result.metadata["forced_final"] is False
         # First call advertised tools, and a tool-result turn was fed back.
         assert gen.generate.call_args_list[0].kwargs.get("tools") is not None
+
+    def test_run_seeds_history_between_system_and_user(self) -> None:
+        # Multi-turn: prior turns are seeded between the system prompt and the
+        # current user turn before the first generate call.
+        gen = MagicMock()
+        gen.generate.return_value = GenerationResult(
+            query="", answer="ok", tool_calls=[]
+        )
+        history: list[Message] = [
+            {"role": "user", "content": "prev q"},
+            {"role": "assistant", "content": "prev a"},
+        ]
+        _agent(gen, [_fake_tool()]).run("now q", history=history)
+        messages = gen.generate.call_args_list[0].args[0]
+        assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+        assert messages[1]["content"] == "prev q"
+        assert messages[3]["content"] == "now q"
 
     def test_budget_exhaustion_forces_final_answer(self) -> None:
         # The model keeps calling tools; after max_iterations a final answer

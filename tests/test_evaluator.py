@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,7 @@ from ragbench.core.config import SUPPORTED_EVALUATOR_LLM_PROVIDERS, EvaluationCo
 from ragbench.core.types import EvalSample, GenerationResult
 from ragbench.evaluation.evaluator import (
     Evaluator,
+    _load_conversations,
     _load_dataset,
     _mean_latency,
     _slice_rate,
@@ -548,6 +550,137 @@ class TestApplyAbstention:
             {"protocol": "abstention", "abstention": {"classifier": "phrase"}}
         )
         assert Evaluator(cfg)._apply_abstention([]) == {}
+
+
+class TestLoadConversations:
+    def test_valid(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text(
+            json.dumps(
+                {"conversation_id": "c1", "turns": [{"query": "q", "reference": "r"}]}
+            )
+            + "\n"
+        )
+        convs = _load_conversations(str(f))
+        assert len(convs) == 1
+        assert convs[0]["conversation_id"] == "c1"
+        assert convs[0]["turns"][0]["turn"] == 1  # 1-based index assigned
+
+    def test_assigns_conversation_id_when_absent(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text(json.dumps({"turns": [{"query": "q", "reference": "r"}]}) + "\n")
+        convs = _load_conversations(str(f))
+        assert convs[0]["conversation_id"] == "conv_1"
+
+    def test_empty_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text("")
+        with pytest.raises(ValueError, match="empty"):
+            _load_conversations(str(f))
+
+    def test_no_turns_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text(json.dumps({"conversation_id": "c1", "turns": []}) + "\n")
+        with pytest.raises(ValueError, match="no 'turns'"):
+            _load_conversations(str(f))
+
+    def test_turn_missing_reference_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text(
+            json.dumps({"conversation_id": "c1", "turns": [{"query": "q"}]}) + "\n"
+        )
+        with pytest.raises(ValueError, match="reference"):
+            _load_conversations(str(f))
+
+
+class TestRunOnceMultiTurn:
+    """Per-turn scoring with history threaded + reset per conversation."""
+
+    @staticmethod
+    def _pipeline_recording(calls: list[tuple[str, list]]) -> MagicMock:
+        def fake_query(question: str, history: list | None = None) -> GenerationResult:
+            calls.append((question, list(history or [])))
+            return GenerationResult(
+                query=question, answer=f"ans:{question}", retrieved_chunks=[]
+            )
+
+        pipeline = MagicMock()
+        pipeline.query.side_effect = fake_query
+        return pipeline
+
+    def test_threads_history_and_resets_per_conversation(self) -> None:
+        evaluator = Evaluator(EvaluationConfig.from_dict({"protocol": "multi_turn"}))
+        calls: list[tuple[str, list]] = []
+        pipeline = self._pipeline_recording(calls)
+        conversations = [
+            {
+                "conversation_id": "c1",
+                "domain": "d",
+                "turns": [
+                    {
+                        "turn": 1,
+                        "query": "q1",
+                        "reference": "r1",
+                        "answerable": True,
+                        "depends_on_prior": False,
+                    },
+                    {
+                        "turn": 2,
+                        "query": "q2",
+                        "reference": "r2",
+                        "answerable": False,
+                        "abstention_type": "personal_data",
+                        "depends_on_prior": True,
+                    },
+                ],
+            },
+            {
+                "conversation_id": "c2",
+                "turns": [{"turn": 1, "query": "q3", "reference": "r3"}],
+            },
+        ]
+        samples = evaluator._run_once_multi_turn(pipeline, conversations)
+
+        assert len(samples) == 3
+        # Turn 1 sees empty history; turn 2 sees the turn-1 exchange (2 messages).
+        assert calls[0] == ("q1", [])
+        assert [m["content"] for m in calls[1][1]] == ["q1", "ans:q1"]
+        # Conversation c2 resets history.
+        assert calls[2] == ("q3", [])
+        # Stable per-turn ids + label/conv metadata.
+        assert [s.id for s in samples] == ["c1::t1", "c1::t2", "c2::t1"]
+        assert samples[1].metadata["answerable"] is False
+        assert samples[1].metadata["abstention_type"] == "personal_data"
+        assert samples[1].metadata["depends_on_prior"] is True
+        assert samples[0].metadata["conversation_id"] == "c1"
+        assert samples[0].metadata["domain"] == "d"
+
+    def test_failed_turn_skipped_and_excluded_from_history(self) -> None:
+        evaluator = Evaluator(EvaluationConfig.from_dict({"protocol": "multi_turn"}))
+        calls: list[tuple[str, list]] = []
+
+        def fake_query(question: str, history: list | None = None) -> GenerationResult:
+            calls.append((question, list(history or [])))
+            if question == "boom":
+                raise RuntimeError("nope")
+            return GenerationResult(query=question, answer="a", retrieved_chunks=[])
+
+        pipeline = MagicMock()
+        pipeline.query.side_effect = fake_query
+        conversations = [
+            {
+                "conversation_id": "c1",
+                "turns": [
+                    {"turn": 1, "query": "ok1", "reference": "r"},
+                    {"turn": 2, "query": "boom", "reference": "r"},
+                    {"turn": 3, "query": "ok2", "reference": "r"},
+                ],
+            }
+        ]
+        samples = evaluator._run_once_multi_turn(pipeline, conversations)
+        assert [s.id for s in samples] == ["c1::t1", "c1::t3"]
+        # Turn 3 sees only turn 1's exchange (the failed turn 2 isn't in history).
+        assert [m["content"] for m in calls[2][1]] == ["ok1", "a"]
 
 
 # -----------------------------------------------------------------------

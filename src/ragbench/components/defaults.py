@@ -79,7 +79,14 @@ class NoMemory(BaseMemory):
 
 @registry.register("memory", "buffer_window")
 class BufferWindowMemory(BaseMemory):
-    """Keeps the last N turns of conversation history."""
+    """Keeps the last N turns of conversation history.
+
+    Registered and functional, but **not used by the evaluation loop**:
+    multi-turn evaluation threads conversation history through
+    ``Queryable.query(question, history)`` (the evaluator owns it as the single
+    source of truth), so this remains an honest stub for a future stateful
+    serving surface rather than a parallel state path inside the pipeline.
+    """
 
     class Params(ComponentParams):
         window_size: int = 5
