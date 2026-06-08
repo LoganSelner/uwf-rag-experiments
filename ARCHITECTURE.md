@@ -676,8 +676,11 @@ phase — kept (rather than removed) because the seam is cheap and the harness
 values stable config keys:
 
 - **Agent memory** (`agent.memory`, `BufferWindowMemory`): registered and
-  constructed, but the single-turn ReAct loop does not thread history yet.
-  Activated by Phase E multi-turn evaluation.
+  constructed, but **not used by the evaluation loop** — Phase E multi-turn
+  evaluation threads conversation history through `Queryable.query(question,
+  history)` (the evaluator owns it as the single source of truth), so memory
+  stays an honest stub for a future stateful serving surface rather than a
+  parallel state path inside the pipeline.
 - **`query.prompt.max_context_tokens`**: carried through to the prompt template
   but not enforced (no context-budget trimming today). A research harness
   prefers a precise, opt-in token budget over an approximate one, so enforcement
@@ -909,6 +912,44 @@ Two properties of the harness shape how results should be read:
   `summary.json` + the comparison table — the cost side of "does agentic control
   flow improve quality *or just add latency*". A `multi` supervisor runs a full
   specialist loop per step, so its latency is expected to be the highest rung.
+
+### Evaluation Protocols (Phase E)
+
+`evaluation.protocol` selects what the evaluator computes beyond the standard
+RAGAS metrics. All protocols are judge-agnostic and reuse the quarantined ragas
+adapter (no `ragas<0.5` pin break, no EdenAI dependency — a local Ollama judge
+scores them identically):
+
+- **`standard`** (default): RAGAS metrics only. Behavior unchanged.
+- **`abstention`** (item 13): scores whether each response abstained — via an
+  `AbstentionClassifier` (an `AspectCritic` judge instructed to count *indirect*
+  refusals, or a deterministic phrase matcher for free CI) — and reports the
+  confusion matrix **False Refusal Rate** (abstained on an answerable item) +
+  **Missed Refusal Rate** (answered an unanswerable one), never collapsed to one
+  number.
+- **`conflict`** (item 15): injects a contradicting passage into the *linear*
+  generation context (`QueryPipeline.run(injected_contexts=...)`) and scores
+  **corpus_preference_rate** + **error_detection_rate** with two AspectCritic
+  judges. The injected passage reaches the prompt but never `retrieved_chunks`,
+  so it can't pollute context metrics (mirrors `web_search`). Linear-only.
+- **`multi_turn`** (item 14): loads conversations (one per JSONL line) and scores
+  each turn in order, threading history through `query(question, history)`, reset
+  per conversation. Each turn is an ordinary single-turn sample tagged by `turn`
+  / `depends_on_prior` / `answerable`, so RAGAS (and the abstention slice metrics)
+  apply per turn. Activates the dormant `contextualizer` transformer.
+
+Slice metrics (FRR/MRR, conflict rates) are deterministic reductions
+(`_slice_rate` / `_mean_signal`) injected into the per-run metrics dict via the
+same seam as `latency_mean_s`, so they aggregate (mean ± std) and surface in the
+comparison table. Every per-sample judge verdict is written to `run_N.jsonl`, and
+`summary.json` carries a `methodology` block (LLM-judge position/verbosity/
+self-enhancement bias) so a held-out slice can be human spot-checked.
+
+The **retrieval/answer decoupling report** (item 12) is post-hoc analysis over
+`run_N.jsonl`, not a protocol: `scripts/compare.py --decoupling` buckets each
+sample into quadrants (e.g. *retrieval succeeded but the answer failed*, or
+*answered despite weak retrieval*) — surfacing where retrieval and answer quality
+decouple, without a correlation coefficient at these slice sizes.
 
 ### Results (`evaluation/results.py`)
 

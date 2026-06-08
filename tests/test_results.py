@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ragbench.core.config import ExperimentConfig
 from ragbench.core.types import ExperimentResult, ScoredSample
-from ragbench.evaluation.results import save_experiment
+from ragbench.evaluation.results import _methodology_note, save_experiment
 
 
 def _make_config() -> ExperimentConfig:
@@ -185,3 +185,23 @@ class TestSaveExperiment:
         summary = json.loads((tmp_path / "test_exp" / "summary.json").read_text())
         assert summary["git_sha"] == "unknown"
         assert summary["git_dirty"] is False
+
+
+class TestMethodologyNote:
+    def _config(self, protocol: str) -> ExperimentConfig:
+        cfg = _make_config()
+        cfg.evaluation.protocol = protocol
+        return cfg
+
+    def test_standard_has_only_judge_bias(self) -> None:
+        note = _methodology_note(self._config("standard"))
+        assert set(note) == {"judge_bias"}
+
+    def test_abstention_adds_note(self) -> None:
+        assert "abstention" in _methodology_note(self._config("abstention"))
+
+    def test_conflict_adds_note(self) -> None:
+        assert "conflict" in _methodology_note(self._config("conflict"))
+
+    def test_multi_turn_adds_note(self) -> None:
+        assert "multi_turn" in _methodology_note(self._config("multi_turn"))
