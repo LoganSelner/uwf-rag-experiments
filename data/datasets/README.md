@@ -18,7 +18,7 @@ Each line is a JSON object:
 | `query`          | Yes      | The evaluation question |
 | `reference`      | Yes      | Ground-truth answer. For an unanswerable item this is the *ideal abstention* (a refusal plus a helpful redirect). |
 | `id`             | No       | Stable identifier (auto-assigned if absent) |
-| `answerable`     | No       | `true` if the corpus can answer it; `false` if the system *should* abstain or correct. Defaults to `true`. Drives the abstention confusion matrix. |
+| `answerable`     | No       | `true` if the corpus can answer it; `false` if the system *should* abstain or correct. **Absent ⇒ `true`** (mark only the unanswerable exceptions; the abstention scorer records the default so the row counts toward FRR rather than being dropped). Drives the abstention confusion matrix (FRR over answerable, MRR over unanswerable). |
 | `abstention_type`| No       | When `answerable=false`, why: `personal_data`, `real_time`, `out_of_domain`, `subjective`, `false_premise`, `future_unknowable`. |
 | `category`       | No       | Topic tag (e.g. `conduct`, `advising`) for slicing. |
 | `source_name`    | No       | Which corpus source grounds the answer (`student_handbook`, `knowledge_base`, or `""` for out-of-corpus). |

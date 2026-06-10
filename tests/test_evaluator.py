@@ -551,6 +551,32 @@ class TestApplyAbstention:
         )
         assert Evaluator(cfg)._apply_abstention([]) == {}
 
+    def test_missing_answerable_defaults_to_answerable(self) -> None:
+        # An abstention dataset marks only the unanswerable exceptions; a row with
+        # no `answerable` label is treated as answerable and counts toward FRR
+        # (not silently dropped) — the documented default the scorer now honors.
+        cfg = EvaluationConfig.from_dict(
+            {"protocol": "abstention", "abstention": {"classifier": "phrase"}}
+        )
+        evaluator = Evaluator(cfg)
+        samples = [
+            EvalSample(
+                "1", "q", "I don't have that information.", [], "r", metadata={}
+            ),
+            EvalSample(
+                "2",
+                "q",
+                "Grade forgiveness is allowed three times.",
+                [],
+                "r",
+                metadata={},
+            ),
+        ]
+        rates = evaluator._apply_abstention(samples)
+        assert rates["false_refusal_rate"] == pytest.approx(0.5)  # 1 of 2 answerable
+        assert "missed_refusal_rate" not in rates  # no unanswerable rows
+        assert samples[0].metadata["answerable"] is True  # default recorded for JSONL
+
 
 class TestLoadConversations:
     def test_valid(self, tmp_path: Path) -> None:

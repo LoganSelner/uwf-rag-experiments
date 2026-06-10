@@ -579,6 +579,14 @@ class Evaluator:
         signals = classifier.classify(samples)
         for sample, signal in zip(samples, signals, strict=True):
             sample.metadata[ABSTENTION_METRIC_NAME] = signal
+            # An abstention dataset marks the unanswerable exceptions; a row with
+            # no explicit `answerable` label is treated as answerable (the
+            # documented default), so it counts toward the FRR denominator and is
+            # recorded as such, rather than being silently dropped from both
+            # slices. Done here (not in the shared loader) so the standard/conflict
+            # protocols — whose datasets legitimately lack `answerable` — are
+            # untouched.
+            sample.metadata.setdefault("answerable", True)
 
         rates: dict[str, float] = {}
         frr = _slice_rate(samples, signals, label_key="answerable", label_value=True)
