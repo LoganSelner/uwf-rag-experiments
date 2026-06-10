@@ -22,7 +22,7 @@ from ragbench.components.build import BuildContext, IndexHandle
 from ragbench.components.generators import build_generator
 from ragbench.core.config import QueryConfig
 from ragbench.core.registry import registry
-from ragbench.core.types import GenerationResult, Message
+from ragbench.core.types import Chunk, GenerationResult, Message, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -139,12 +139,18 @@ class QueryPipeline:
         self,
         query: str,
         history: list[Message] | None = None,
+        injected_contexts: list[str] | None = None,
     ) -> GenerationResult:
         """Run the query pipeline end-to-end.
 
         Args:
             query: The user's question.
             history: Optional conversation history for context-aware transforms.
+            injected_contexts: Optional passages placed into the generation
+                context *alongside* the retrieved chunks (the knowledge-conflict
+                probe, item 15). They reach the generator's prompt but never enter
+                ``result.retrieved_chunks``, so they cannot pollute retrieval
+                metrics. Inert (None) on the normal path.
 
         Returns:
             GenerationResult with retrieved chunks and (if not
@@ -178,7 +184,13 @@ class QueryPipeline:
                 metadata={"retrieval_only": True},
             )
 
-        # 5. Format prompt and generate
+        # 5. Format prompt and generate. The conflict probe (item 15) may inject
+        #    a contradicting passage into the prompt context — prepended (the
+        #    position most likely to bias a position-sensitive model, the stronger
+        #    test) so it sits alongside the real chunks the generator sees. Crucial:
+        #    result.retrieved_chunks stays the REAL reranked set, so the injected
+        #    passage never enters context-precision/recall (mirrors how web_search
+        #    keeps retrieved_chunks empty).
         if self._prompt_template is None or self._generator is None:
             raise RuntimeError(
                 "Generator and prompt template are required "
@@ -186,7 +198,23 @@ class QueryPipeline:
                 "retrieval_only=True or configure generation."
             )
 
-        prompt = self._prompt_template.format(query, reranked, history)
+        context_chunks = reranked
+        if injected_contexts:
+            injected = [
+                RetrievedChunk(
+                    chunk=Chunk(
+                        content=text,
+                        chunk_id=f"__injected__{i}",
+                        metadata={"source_name": "__injected__"},
+                    ),
+                    score=1.0,
+                    retrieval_method="injected",
+                )
+                for i, text in enumerate(injected_contexts)
+            ]
+            context_chunks = injected + reranked
+
+        prompt = self._prompt_template.format(query, context_chunks, history)
         result = self._generator.generate(prompt)
         result.query = query
         result.retrieved_chunks = reranked

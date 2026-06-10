@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -9,8 +10,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ragbench.core.config import SUPPORTED_EVALUATOR_LLM_PROVIDERS, EvaluationConfig
-from ragbench.core.types import EvalSample, GenerationResult
-from ragbench.evaluation.evaluator import Evaluator, _load_dataset, _mean_latency
+from ragbench.core.types import Chunk, EvalSample, GenerationResult, RetrievedChunk
+from ragbench.evaluation.evaluator import (
+    Evaluator,
+    _load_conversations,
+    _load_dataset,
+    _mean_latency,
+    _slice_rate,
+)
 
 
 class TestJudgeProviderSourceOfTruth:
@@ -320,6 +327,35 @@ class TestRunOnceMetadata:
         assert isinstance(meta["latency_s"], float)
         assert meta["latency_s"] >= 0.0
 
+    def test_propagates_dataset_label_fields(self) -> None:
+        """Phase E label columns ride from the dataset item into sample metadata;
+        non-allowlisted dataset keys do not."""
+        evaluator = Evaluator(EvaluationConfig.from_dict({"dataset": "d.jsonl"}))
+        pipeline = MagicMock()
+        pipeline.query.return_value = GenerationResult(
+            query="Q", answer="A", retrieved_chunks=[], metadata={}
+        )
+        samples = evaluator._run_once(
+            pipeline,
+            [
+                {
+                    "id": "1",
+                    "query": "Q",
+                    "reference": "R",
+                    "answerable": False,
+                    "abstention_type": "personal_data",
+                    "category": "advising",
+                    "not_a_label": "dropme",
+                }
+            ],
+        )
+        meta = samples[0].metadata
+        assert meta["answerable"] is False
+        assert meta["abstention_type"] == "personal_data"
+        assert meta["category"] == "advising"
+        assert "not_a_label" not in meta
+        assert "latency_s" in meta
+
 
 class TestMeanLatency:
     @staticmethod
@@ -341,6 +377,416 @@ class TestMeanLatency:
     def test_empty_or_missing_is_zero(self) -> None:
         assert _mean_latency([]) == 0.0
         assert _mean_latency([self._sample(None)]) == 0.0
+
+
+class TestSliceRate:
+    """_slice_rate is the FRR/MRR/conflict-rate primitive (Phase E P1c)."""
+
+    @staticmethod
+    def _sample(answerable: bool) -> EvalSample:
+        return EvalSample(
+            id="1",
+            query="q",
+            response="a",
+            retrieved_contexts=[],
+            reference="r",
+            metadata={"answerable": answerable},
+        )
+
+    def test_false_refusal_rate(self) -> None:
+        # FRR = refused (signal 1.0) over the answerable slice.
+        samples = [self._sample(True), self._sample(True), self._sample(True)]
+        signals: list[float | None] = [1.0, 0.0, 0.0]
+        frr = _slice_rate(samples, signals, label_key="answerable", label_value=True)
+        assert frr == pytest.approx(1 / 3)
+
+    def test_missed_refusal_rate(self) -> None:
+        # MRR = did-NOT-abstain (signal 0.0) over the unanswerable slice.
+        samples = [self._sample(False), self._sample(False)]
+        signals: list[float | None] = [0.0, 1.0]
+        mrr = _slice_rate(
+            samples,
+            signals,
+            label_key="answerable",
+            label_value=False,
+            positive_value=0.0,
+        )
+        assert mrr == pytest.approx(0.5)
+
+    def test_empty_slice_is_none(self) -> None:
+        samples = [self._sample(True)]
+        signals: list[float | None] = [1.0]
+        assert (
+            _slice_rate(samples, signals, label_key="answerable", label_value=False)
+            is None
+        )
+
+    def test_all_none_signals_is_none(self) -> None:
+        samples = [self._sample(True), self._sample(True)]
+        signals: list[float | None] = [None, None]
+        assert (
+            _slice_rate(samples, signals, label_key="answerable", label_value=True)
+            is None
+        )
+
+
+class TestRunAspectCritics:
+    """run_aspect_critics: AspectCritic verdicts via the quarantined adapter."""
+
+    def _samples(self, n: int = 2) -> list[EvalSample]:
+        return [
+            EvalSample(
+                id=str(i + 1),
+                query=f"q{i}",
+                response=f"a{i}",
+                retrieved_contexts=[],
+                reference=f"r{i}",
+            )
+            for i in range(n)
+        ]
+
+    def test_returns_per_sample_verdicts_nan_to_none(self) -> None:
+        from ragbench.evaluation import _ragas_adapter
+        from ragbench.evaluation._ragas_adapter import AspectCriticSpec
+
+        fake_result = MagicMock()
+        fake_result.scores = [{"abstained": 1.0}, {"abstained": float("nan")}]
+
+        with (
+            patch("ragas.evaluate", return_value=fake_result) as mock_eval,
+            patch("ragas.EvaluationDataset"),
+            patch("ragas.dataset_schema.SingleTurnSample"),
+            patch("ragas.metrics._aspect_critic.AspectCritic"),
+        ):
+            out = _ragas_adapter.run_aspect_critics(
+                self._samples(2),
+                [AspectCriticSpec(name="abstained", definition="refuses?")],
+                llm=MagicMock(),
+                run_config=MagicMock(),
+            )
+        assert mock_eval.called
+        assert out[0]["abstained"] == 1.0
+        assert out[1]["abstained"] is None  # NaN → None
+
+    def test_empty_specs_returns_empty_dicts(self) -> None:
+        from ragbench.evaluation._ragas_adapter import run_aspect_critics
+
+        out = run_aspect_critics(
+            self._samples(2), [], llm=MagicMock(), run_config=MagicMock()
+        )
+        assert out == [{}, {}]
+
+    def test_references_length_mismatch_raises(self) -> None:
+        from ragbench.evaluation._ragas_adapter import (
+            AspectCriticSpec,
+            run_aspect_critics,
+        )
+
+        with pytest.raises(ValueError, match="references length"):
+            run_aspect_critics(
+                self._samples(1),
+                [AspectCriticSpec(name="x", definition="y")],
+                llm=MagicMock(),
+                run_config=MagicMock(),
+                references=["a", "b"],
+            )
+
+
+class TestApplyAbstention:
+    """End-to-end FRR/MRR injection via the deterministic phrase classifier."""
+
+    def test_phrase_classifier_confusion_matrix(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {"protocol": "abstention", "abstention": {"classifier": "phrase"}}
+        )
+        evaluator = Evaluator(cfg)
+        samples = [
+            # answerable + answered → correct (not a false refusal)
+            EvalSample(
+                "1",
+                "q",
+                "Grade forgiveness is allowed three times.",
+                [],
+                "r",
+                metadata={"answerable": True},
+            ),
+            # answerable + abstained → FALSE refusal
+            EvalSample(
+                "2",
+                "q",
+                "I don't have that information.",
+                [],
+                "r",
+                metadata={"answerable": True},
+            ),
+            # unanswerable + abstained → correct
+            EvalSample(
+                "3",
+                "q",
+                "I don't have access to your records.",
+                [],
+                "r",
+                metadata={"answerable": False},
+            ),
+            # unanswerable + answered → MISSED refusal
+            EvalSample(
+                "4",
+                "q",
+                "Your balance is 500 dollars.",
+                [],
+                "r",
+                metadata={"answerable": False},
+            ),
+        ]
+        rates = evaluator._apply_abstention(samples)
+        assert rates["false_refusal_rate"] == pytest.approx(0.5)  # 1 of 2 answerable
+        assert rates["missed_refusal_rate"] == pytest.approx(0.5)  # 1 of 2 unanswerable
+        # Per-sample signal is recorded for spot-checking.
+        assert samples[0].metadata["abstained"] == 0.0
+        assert samples[1].metadata["abstained"] == 1.0
+
+    def test_empty_samples_returns_no_rates(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {"protocol": "abstention", "abstention": {"classifier": "phrase"}}
+        )
+        assert Evaluator(cfg)._apply_abstention([]) == {}
+
+    def test_missing_answerable_defaults_to_answerable(self) -> None:
+        # An abstention dataset marks only the unanswerable exceptions; a row with
+        # no `answerable` label is treated as answerable and counts toward FRR
+        # (not silently dropped) — the documented default the scorer now honors.
+        cfg = EvaluationConfig.from_dict(
+            {"protocol": "abstention", "abstention": {"classifier": "phrase"}}
+        )
+        evaluator = Evaluator(cfg)
+        samples = [
+            EvalSample(
+                "1", "q", "I don't have that information.", [], "r", metadata={}
+            ),
+            EvalSample(
+                "2",
+                "q",
+                "Grade forgiveness is allowed three times.",
+                [],
+                "r",
+                metadata={},
+            ),
+        ]
+        rates = evaluator._apply_abstention(samples)
+        assert rates["false_refusal_rate"] == pytest.approx(0.5)  # 1 of 2 answerable
+        assert "missed_refusal_rate" not in rates  # no unanswerable rows
+        assert samples[0].metadata["answerable"] is True  # default recorded for JSONL
+
+
+class TestLoadConversations:
+    def test_valid(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text(
+            json.dumps(
+                {"conversation_id": "c1", "turns": [{"query": "q", "reference": "r"}]}
+            )
+            + "\n"
+        )
+        convs = _load_conversations(str(f))
+        assert len(convs) == 1
+        assert convs[0]["conversation_id"] == "c1"
+        assert convs[0]["turns"][0]["turn"] == 1  # 1-based index assigned
+
+    def test_assigns_conversation_id_when_absent(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text(json.dumps({"turns": [{"query": "q", "reference": "r"}]}) + "\n")
+        convs = _load_conversations(str(f))
+        assert convs[0]["conversation_id"] == "conv_1"
+
+    def test_empty_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text("")
+        with pytest.raises(ValueError, match="empty"):
+            _load_conversations(str(f))
+
+    def test_no_turns_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text(json.dumps({"conversation_id": "c1", "turns": []}) + "\n")
+        with pytest.raises(ValueError, match="no 'turns'"):
+            _load_conversations(str(f))
+
+    def test_turn_missing_reference_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "mt.jsonl"
+        f.write_text(
+            json.dumps({"conversation_id": "c1", "turns": [{"query": "q"}]}) + "\n"
+        )
+        with pytest.raises(ValueError, match="reference"):
+            _load_conversations(str(f))
+
+
+class TestRunOnceMultiTurn:
+    """Per-turn scoring with history threaded + reset per conversation."""
+
+    @staticmethod
+    def _pipeline_recording(calls: list[tuple[str, list]]) -> MagicMock:
+        def fake_query(question: str, history: list | None = None) -> GenerationResult:
+            calls.append((question, list(history or [])))
+            return GenerationResult(
+                query=question, answer=f"ans:{question}", retrieved_chunks=[]
+            )
+
+        pipeline = MagicMock()
+        pipeline.query.side_effect = fake_query
+        return pipeline
+
+    def test_threads_history_and_resets_per_conversation(self) -> None:
+        evaluator = Evaluator(EvaluationConfig.from_dict({"protocol": "multi_turn"}))
+        calls: list[tuple[str, list]] = []
+        pipeline = self._pipeline_recording(calls)
+        conversations = [
+            {
+                "conversation_id": "c1",
+                "domain": "d",
+                "turns": [
+                    {
+                        "turn": 1,
+                        "query": "q1",
+                        "reference": "r1",
+                        "answerable": True,
+                        "depends_on_prior": False,
+                    },
+                    {
+                        "turn": 2,
+                        "query": "q2",
+                        "reference": "r2",
+                        "answerable": False,
+                        "abstention_type": "personal_data",
+                        "depends_on_prior": True,
+                    },
+                ],
+            },
+            {
+                "conversation_id": "c2",
+                "turns": [{"turn": 1, "query": "q3", "reference": "r3"}],
+            },
+        ]
+        samples = evaluator._run_once_multi_turn(pipeline, conversations)
+
+        assert len(samples) == 3
+        # Turn 1 sees empty history; turn 2 sees the turn-1 exchange (2 messages).
+        assert calls[0] == ("q1", [])
+        assert [m["content"] for m in calls[1][1]] == ["q1", "ans:q1"]
+        # Conversation c2 resets history.
+        assert calls[2] == ("q3", [])
+        # Stable per-turn ids + label/conv metadata.
+        assert [s.id for s in samples] == ["c1::t1", "c1::t2", "c2::t1"]
+        assert samples[1].metadata["answerable"] is False
+        assert samples[1].metadata["abstention_type"] == "personal_data"
+        assert samples[1].metadata["depends_on_prior"] is True
+        assert samples[0].metadata["conversation_id"] == "c1"
+        assert samples[0].metadata["domain"] == "d"
+
+    def test_failed_turn_skipped_and_excluded_from_history(self) -> None:
+        evaluator = Evaluator(EvaluationConfig.from_dict({"protocol": "multi_turn"}))
+        calls: list[tuple[str, list]] = []
+
+        def fake_query(question: str, history: list | None = None) -> GenerationResult:
+            calls.append((question, list(history or [])))
+            if question == "boom":
+                raise RuntimeError("nope")
+            return GenerationResult(query=question, answer="a", retrieved_chunks=[])
+
+        pipeline = MagicMock()
+        pipeline.query.side_effect = fake_query
+        conversations = [
+            {
+                "conversation_id": "c1",
+                "turns": [
+                    {"turn": 1, "query": "ok1", "reference": "r"},
+                    {"turn": 2, "query": "boom", "reference": "r"},
+                    {"turn": 3, "query": "ok2", "reference": "r"},
+                ],
+            }
+        ]
+        samples = evaluator._run_once_multi_turn(pipeline, conversations)
+        assert [s.id for s in samples] == ["c1::t1", "c1::t3"]
+        # Turn 3 sees only turn 1's exchange (the failed turn 2 isn't in history).
+        assert [m["content"] for m in calls[2][1]] == ["ok1", "a"]
+
+
+class TestRunOnceConflict:
+    """The conflict loop injects the counterfactual + flags corpus retrieval."""
+
+    def test_passes_injected_context_and_flags_retrieval(self) -> None:
+        evaluator = Evaluator(EvaluationConfig.from_dict({"protocol": "conflict"}))
+        captured: dict = {}
+
+        def fake_query(question, history=None, injected_contexts=None):
+            captured["injected"] = injected_contexts
+            rc = RetrievedChunk(
+                chunk=Chunk(
+                    content="grade forgiveness is allowed three times",
+                    chunk_id="c1",
+                    metadata={},
+                ),
+                score=0.9,
+            )
+            return GenerationResult(query=question, answer="A", retrieved_chunks=[rc])
+
+        pipeline = MagicMock()
+        pipeline.query.side_effect = fake_query
+        dataset = [
+            {
+                "id": "1",
+                "query": "q",
+                "reference": "ref",
+                "injected_context": "grade forgiveness is allowed five times",
+                "corpus_fact": "grade forgiveness is allowed three times",
+            }
+        ]
+        samples = evaluator._run_once_conflict(pipeline, dataset)
+        assert captured["injected"] == ["grade forgiveness is allowed five times"]
+        assert len(samples) == 1
+        assert samples[0].metadata["corpus_fact_retrieved"] is True
+        # The injected lie never enters the reported retrieved contexts.
+        assert "five times" not in " ".join(samples[0].retrieved_contexts)
+
+
+class TestApplyConflict:
+    """Conflict AspectCritic rates via a mocked adapter call."""
+
+    def test_rates_and_per_sample_verdicts(self) -> None:
+        cfg = EvaluationConfig.from_dict(
+            {
+                "protocol": "conflict",
+                "mode": "full",
+                "evaluator_llm": {"provider": "ollama", "model_name": "m"},
+            }
+        )
+        evaluator = Evaluator(cfg)
+        samples = [
+            EvalSample(
+                "1", "q", "a", [], "ref", metadata={"corpus_fact": "three times"}
+            ),
+            EvalSample("2", "q", "a", [], "ref", metadata={"corpus_fact": "2.50 GPA"}),
+        ]
+        verdicts = [
+            {"corpus_preference": 1.0, "error_detection": 0.0},
+            {"corpus_preference": 0.0, "error_detection": 1.0},
+        ]
+        with (
+            patch.object(evaluator, "_build_evaluator_llm", return_value=MagicMock()),
+            patch(
+                "ragbench.evaluation.evaluator._ragas_adapter.run_aspect_critics",
+                return_value=verdicts,
+            ) as mock_run,
+        ):
+            rates = evaluator._apply_conflict(samples)
+        assert rates["corpus_preference_rate"] == pytest.approx(0.5)
+        assert rates["error_detection_rate"] == pytest.approx(0.5)
+        assert samples[0].metadata["corpus_preference"] == 1.0
+        assert samples[1].metadata["error_detection"] == 1.0
+        # The judge compares the response to corpus_fact (reference override).
+        assert mock_run.call_args.kwargs["references"] == ["three times", "2.50 GPA"]
+
+    def test_empty_samples_returns_no_rates(self) -> None:
+        cfg = EvaluationConfig.from_dict({"protocol": "conflict"})
+        assert Evaluator(cfg)._apply_conflict([]) == {}
 
 
 # -----------------------------------------------------------------------

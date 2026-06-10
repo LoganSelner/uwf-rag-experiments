@@ -1,0 +1,32 @@
+# Multi-turn session evaluation (Phase E, item 14) — with query contextualization.
+#
+# Scores each turn of data/datasets/multi_turn_dataset.jsonl in order, threading
+# the conversation history (the evaluator owns it). The `contextualizer`
+# transform rewrites a follow-up ("What's the minimum GPA again?") into a
+# standalone query before retrieval, so dependent turns retrieve correctly —
+# MTRAG's "passages change across the conversation, causing repeated retrieval".
+#
+# Each turn is scored as an ordinary single-turn sample (RAGAS metrics), tagged
+# by conversation_id / turn / depends_on_prior / answerable. Compare against
+# multi_turn_no_context.yaml (passthrough) to isolate the contextualizer's value
+# on the non-standalone turns — the headline multi-turn finding.
+
+extends: ../../base.yaml
+
+name: "multi_turn"
+description: "Multi-turn session eval with query contextualization; per-turn scoring"
+
+query:
+  query_transform:
+    type: "contextualizer"
+    generator:
+      provider: "edenai"
+      model_name: "gpt-4.1"
+      temperature: 0.0
+      params:
+        sub_provider: "openai"
+
+evaluation:
+  dataset: "data/datasets/multi_turn_dataset.jsonl"
+  protocol: "multi_turn"
+  mode: "full"

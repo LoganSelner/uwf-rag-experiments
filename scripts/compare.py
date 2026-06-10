@@ -24,9 +24,14 @@ from rich.table import Table
 from rich.text import Text
 
 from ragbench.evaluation.comparison import (
+    DECOUPLED_QUADRANTS,
+    DECOUPLING_ANSWER_METRIC,
+    DECOUPLING_RETRIEVAL_METRIC,
     DEFAULT_METRICS,
     METRIC_SHORT_NAMES,
     compare_experiments,
+    decoupling_pair,
+    decoupling_report,
     diff_configs,
     format_comparison_table,
     load_per_sample_scores,
@@ -57,6 +62,14 @@ def _metric_cell(value: float | None, std: float | None) -> Text:
         text = f"{value:.3f}"
 
     return Text(text, style=style)
+
+
+def _delta_cell(delta: float | None) -> Text:
+    """Format a signed A→B delta: green for a gain, red for a regression."""
+    if delta is None:
+        return Text("---", style="dim")
+    style = "green" if delta > 0 else "red" if delta < 0 else "dim"
+    return Text(f"{delta:+.3f}", style=style)
 
 
 def render_rich_table(
@@ -210,6 +223,113 @@ def render_per_sample_table(
     return table
 
 
+def render_decoupling_table(
+    result_dirs: list[str],
+    retrieval_metric: str,
+    answer_metric: str,
+    run: int = 1,
+    console: Console | None = None,
+) -> None:
+    """Render the retrieval/answer decoupling analysis (Phase E, item 12).
+
+    One dir → a quadrant-count summary plus the off-diagonal samples (retrieval
+    helped but the answer didn't, and vice-versa). Two+ dirs → a per-sample A→B
+    delta table for the first two, most-decoupled first.
+    """
+    console = console or Console()
+    ret_short = METRIC_SHORT_NAMES.get(retrieval_metric, retrieval_metric)
+    ans_short = METRIC_SHORT_NAMES.get(answer_metric, answer_metric)
+
+    if len(result_dirs) == 1:
+        report = decoupling_report(
+            result_dirs[0],
+            run=run,
+            retrieval_metric=retrieval_metric,
+            answer_metric=answer_metric,
+        )
+        counts = Table(
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold",
+            title=(
+                f"Decoupling quadrants — {report['experiment']} "
+                f"({ret_short} vs {ans_short}, run {run})"
+            ),
+        )
+        counts.add_column("Quadrant", style="cyan")
+        counts.add_column("Count", justify="right")
+        for quadrant, n in report["counts"].items():
+            highlight = quadrant in DECOUPLED_QUADRANTS and n
+            label = Text(quadrant, style="yellow") if highlight else Text(quadrant)
+            counts.add_row(label, str(n))
+        console.print(counts)
+
+        off = [s for s in report["samples"] if s["quadrant"] in DECOUPLED_QUADRANTS]
+        if not off:
+            console.print(
+                "[green]No decoupled samples at the current thresholds.[/green]"
+            )
+            return
+        detail = Table(
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold",
+            title="Decoupled samples",
+        )
+        detail.add_column("ID", style="dim", no_wrap=True)
+        detail.add_column("Query", max_width=50)
+        detail.add_column(ret_short, justify="right")
+        detail.add_column(ans_short, justify="right")
+        detail.add_column("Quadrant", style="cyan")
+        for s in off:
+            detail.add_row(
+                str(s["sample_id"]),
+                str(s["query"])[:50],
+                _metric_cell(s.get(retrieval_metric), None),
+                _metric_cell(s.get(answer_metric), None),
+                s["quadrant"],
+            )
+        console.print(detail)
+        return
+
+    rows = decoupling_pair(
+        result_dirs[0],
+        result_dirs[1],
+        run=run,
+        retrieval_metric=retrieval_metric,
+        answer_metric=answer_metric,
+    )
+    if not rows:
+        console.print("[yellow]No samples shared between the two experiments.[/yellow]")
+        return
+    exp_a, exp_b = Path(result_dirs[0]).name, Path(result_dirs[1]).name
+    table = Table(
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold",
+        title=f"Decoupling {exp_a} → {exp_b}  ({ret_short} vs {ans_short}, run {run})",
+    )
+    table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("Query", max_width=44)
+    table.add_column(f"Δ {ret_short}", justify="right")
+    table.add_column(f"Δ {ans_short}", justify="right")
+    table.add_column("Decoupled", justify="center")
+    for r in rows:
+        flag = (
+            Text("yes", style="bold yellow")
+            if r["decoupled"]
+            else Text("-", style="dim")
+        )
+        table.add_row(
+            str(r["sample_id"]),
+            str(r["query"])[:44],
+            _delta_cell(r["delta_retrieval"]),
+            _delta_cell(r["delta_answer"]),
+            flag,
+        )
+    console.print(table)
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
@@ -274,7 +394,22 @@ def main() -> None:
         metavar="N",
         type=int,
         default=1,
-        help="Which run to use for --per-sample (default: 1).",
+        help="Which run to use for --per-sample / --decoupling (default: 1).",
+    )
+    parser.add_argument(
+        "--decoupling",
+        action="store_true",
+        default=False,
+        help="Retrieval/answer decoupling analysis: 1 dir → quadrant counts + "
+        "off-diagonal samples; 2 dirs → A→B per-sample deltas.",
+    )
+    parser.add_argument(
+        "--decoupling-metrics",
+        nargs=2,
+        metavar=("RETRIEVAL", "ANSWER"),
+        default=None,
+        help="Override the (retrieval, answer) metric pair for --decoupling "
+        f"(default: {DECOUPLING_RETRIEVAL_METRIC} {DECOUPLING_ANSWER_METRIC}).",
     )
     args = parser.parse_args()
 
@@ -291,6 +426,15 @@ def main() -> None:
 
     if args.per_sample:
         render_per_sample_table(result_dirs, metrics, run=args.run)
+        return
+
+    if args.decoupling:
+        ret_m, ans_m = (
+            (args.decoupling_metrics[0], args.decoupling_metrics[1])
+            if args.decoupling_metrics
+            else (DECOUPLING_RETRIEVAL_METRIC, DECOUPLING_ANSWER_METRIC)
+        )
+        render_decoupling_table(result_dirs, ret_m, ans_m, run=args.run)
         return
 
     # Default: aggregate comparison table

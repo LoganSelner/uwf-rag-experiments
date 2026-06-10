@@ -266,11 +266,28 @@ class AgentConfig(ConfigModel):
 # ---------------------------------------------------------------------------
 
 
+class AbstentionConfig(ConfigModel):
+    """Abstention-scoring config (used when ``evaluation.protocol == 'abstention'``).
+
+    ``classifier`` selects how a response is judged to be an abstention:
+    ``"llm"`` (an AspectCritic judge instructed to count indirect/hedged
+    refusals — the formal default) or ``"phrase"`` (a deterministic phrase
+    matcher — a free CI/smoke floor). See :mod:`ragbench.evaluation.abstention`.
+    """
+
+    classifier: str = "llm"
+
+
 class EvaluationConfig(ConfigModel):
     """Config for the evaluation system."""
 
     dataset: str = ""
     mode: str = "full"
+    # Evaluation protocol selecting which loader + slice metrics run: "standard"
+    # (RAGAS only), "abstention" (FRR/MRR), "conflict" (knowledge-conflict probe),
+    # or "multi_turn" (per-turn session eval). Default leaves behavior unchanged.
+    protocol: str = "standard"
+    abstention: AbstentionConfig = Field(default_factory=AbstentionConfig)
     metrics: list[str] = Field(
         default_factory=lambda: [
             "answer_correctness",

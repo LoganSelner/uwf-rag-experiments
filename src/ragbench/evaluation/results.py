@@ -71,6 +71,45 @@ def _build_config_snapshot(config: ExperimentConfig) -> dict[str, Any]:
     }
 
 
+def _methodology_note(config: ExperimentConfig) -> dict[str, str]:
+    """LLM-as-judge caveats recorded into summary.json (pure documentation).
+
+    A standing reminder, written beside every result, that scored metrics depend
+    on a biased judge and how to read the Phase E slice metrics. The per-sample
+    judge verdicts are in the run JSONL, so a held-out slice can be human
+    spot-checked against these notes.
+    """
+    notes = {
+        "judge_bias": (
+            "LLM-as-judge carries position, verbosity, and self-enhancement bias. "
+            "Cross-run std is mostly judge variance (generation is temperature=0), "
+            "not answer-sampling spread. Spot-check a held-out slice of the "
+            "per-sample verdicts in run_N.jsonl against human judgment."
+        ),
+    }
+    protocol = config.evaluation.protocol
+    if protocol == "abstention":
+        notes["abstention"] = (
+            "False/Missed Refusal Rate are reported together, never as one number. "
+            "Per-sample 'abstained' verdicts are in run_N.jsonl; context-grounding "
+            "metrics are not meaningful on the unanswerable slice."
+        )
+    elif protocol == "conflict":
+        notes["conflict"] = (
+            "The injected passage is prepended (a position-robustness test) and "
+            "never enters retrieval metrics. A binary AspectCritic limits verbosity "
+            "bias; read corpus_fact_retrieved before treating a low "
+            "corpus_preference_rate as trust in the injected falsehood."
+        )
+    elif protocol == "multi_turn":
+        notes["multi_turn"] = (
+            "Per-turn scoring; history threads the model's actual answers, so "
+            "errors propagate. Slice by depends_on_prior and turn index — the "
+            "later, non-standalone turns are the hard cases."
+        )
+    return notes
+
+
 def save_experiment(
     config: ExperimentConfig,
     result: ExperimentResult,
@@ -109,6 +148,7 @@ def save_experiment(
         "metrics": result.metrics,
         "num_runs": result.num_runs,
         "config_snapshot": _build_config_snapshot(config),
+        "methodology": _methodology_note(config),
         "git_sha": git_info.get("sha", "unknown"),
         "git_dirty": git_info.get("dirty", False),
     }

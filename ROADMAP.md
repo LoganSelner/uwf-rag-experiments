@@ -393,23 +393,36 @@ answerable.
 indexing, measuring whether agentic control flow actually improves
 answer quality on advising queries or just adds latency.
 
-### Phase E — Evaluation Depth & Robustness
+### Phase E — Evaluation Depth & Robustness ✅ Done
 
 Goal: address the review's recurring caution that retrieval metrics and
 answer metrics are only loosely coupled, and that automated judges
 carry biases.
 
-| # | Item | Notes |
-|---|------|-------|
-| 12 | Retrieval/answer decoupling report | Surface where better retrieval did NOT improve answers (and vice-versa) |
-| 13 | Abstention handling | Prompt + metric for "I don't know" when evidence is absent |
-| 14 | Multi-turn session evaluation | Exercises memory across ordered turns (resolves GAP 3) |
-| 15 | Knowledge-conflict probe (optional) | Inject contradicting context; measure whether the model defers appropriately |
+| # | Item | Status |
+|---|------|--------|
+| 12 | Retrieval/answer decoupling report | ✅ Done — `comparison.py` quadrant analysis + `compare.py --decoupling` |
+| 13 | Abstention handling | ✅ Done — hardened prompt + FRR/MRR confusion matrix via an `AbstentionClassifier` seam |
+| 14 | Multi-turn session evaluation | ✅ Done — `Queryable.query(history)` + session loader/loop; activates the contextualizer |
+| 15 | Knowledge-conflict probe | ✅ Done — `injected_contexts` seam + corpus-preference / error-detection AspectCritic metrics |
 
-LLM-as-judge biases (position, verbosity, self-enhancement) should be
-documented in evaluation outputs and periodically spot-checked against
-human judgment on a held-out slice. This is a methodology note as much
-as a feature.
+All four ride one foundation: an `evaluation.protocol` enum
+(`standard | abstention | conflict | multi_turn`) plus a slice-aware aggregation
+seam (`_slice_rate` / `_mean_signal`, injected like `latency_mean_s`) and an
+AspectCritic custom-metric path in the quarantined ragas adapter — so the
+`ragas<0.5` pin and the EdenAI judge architecture are untouched, and every new
+metric is judge-agnostic (a local Ollama judge scores them identically). Research
+framing: items 13 and 15 map onto two of the four RGB-benchmark abilities
+(negative rejection, counterfactual robustness); item 14 follows MTRAG
+(per-turn-first). Datasets: `data/datasets/{abstention,knowledge_conflict,
+multi_turn}_dataset.jsonl` (corpus-grounded; git-ignored per the data policy).
+
+LLM-as-judge biases (position, verbosity, self-enhancement) are documented in
+each `summary.json` `methodology` block, and every per-sample judge verdict lands
+in `run_N.jsonl` for periodic human spot-checking on a held-out slice. The
+optional ragas `MultiTurnSample` session-level metrics (goal accuracy, topic
+adherence) are a deliberate future layer that attaches to the same seam without
+rework.
 
 ### Phase F — Advanced / Optional
 

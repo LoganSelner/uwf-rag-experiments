@@ -1,0 +1,24 @@
+# Knowledge-conflict probe (Phase E, item 15) — RGB counterfactual robustness.
+#
+# For each item in data/datasets/knowledge_conflict_dataset.jsonl, a plausible
+# but FALSE passage (injected_context) is placed into the generation context
+# alongside the real retrieved chunks. Two AspectCritic judges score the answer:
+#   - corpus_preference_rate: did the answer assert the authoritative corpus fact
+#     rather than repeat the injected falsehood?
+#   - error_detection_rate: did the answer flag the contradiction?
+# A per-sample corpus_fact_retrieved confound flag records whether the truth was
+# actually retrieved (so a low corpus-preference isn't misread).
+#
+# The injected passage enters the PROMPT only — it never enters retrieved_chunks,
+# so it cannot pollute context-precision/recall. Linear-only (an agent controls
+# its own retrieval), mode "full" (needs a generated answer + judge).
+
+extends: ../../base.yaml
+
+name: "knowledge_conflict"
+description: "Knowledge-conflict probe: inject a contradicting passage; corpus-preference + error-detection"
+
+evaluation:
+  dataset: "data/datasets/knowledge_conflict_dataset.jsonl"
+  protocol: "conflict"
+  mode: "full"

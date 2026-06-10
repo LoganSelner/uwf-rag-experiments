@@ -21,20 +21,36 @@ from ragbench.core.config import (
     LLMConfig,
 )
 from ragbench.core.registry import registry
-from ragbench.core.types import EvalSample, ExperimentResult, Queryable, ScoredSample
+from ragbench.core.types import (
+    EvalSample,
+    ExperimentResult,
+    Message,
+    Queryable,
+    ScoredSample,
+)
 from ragbench.evaluation import _ragas_adapter
+from ragbench.evaluation.abstention import (
+    ABSTENTION_METRIC_NAME,
+    build_abstention_classifier,
+)
+from ragbench.evaluation.conflict import (
+    CORPUS_PREFERENCE_NAME,
+    ERROR_DETECTION_NAME,
+    conflict_specs,
+    corpus_fact_retrieved,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _load_dataset(path: str) -> list[dict[str, str]]:
+def _load_dataset(path: str) -> list[dict[str, Any]]:
     """Load an evaluation dataset from JSONL.
 
     Expected format: one {query, reference} JSON object per line.
     An optional ``id`` field provides a stable identifier for each
     item.  If absent, sequential 1-based IDs are assigned.
     """
-    data: list[dict[str, str]] = []
+    data: list[dict[str, Any]] = []
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -48,6 +64,62 @@ def _load_dataset(path: str) -> list[dict[str, str]]:
         if "id" not in item:
             item["id"] = str(i + 1)
     return data
+
+
+def _load_conversations(path: str) -> list[dict[str, Any]]:
+    """Load a multi-turn dataset: one conversation per JSONL line.
+
+    Expected shape per line: ``{conversation_id?, domain?, turns: [{turn?, query,
+    reference, answerable?, depends_on_prior?, category?, abstention_type?},
+    ...]}``. Validates each conversation has non-empty ``turns`` and each turn has
+    ``query`` + ``reference``; assigns a ``conversation_id`` and 1-based ``turn``
+    indices when absent. The evaluator scores each turn as a single-turn sample
+    with a stable id ``"<conversation_id>::t<turn>"`` so per-sample JSONL stays
+    joinable.
+    """
+    conversations: list[dict[str, Any]] = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                conversations.append(json.loads(line))
+    if not conversations:
+        raise ValueError(f"Multi-turn dataset is empty: {path}")
+    for i, conv in enumerate(conversations):
+        if "conversation_id" not in conv:
+            conv["conversation_id"] = f"conv_{i + 1}"
+        turns = conv.get("turns")
+        if not turns:
+            raise ValueError(f"Conversation '{conv['conversation_id']}' has no 'turns'")
+        for j, turn in enumerate(turns):
+            if "query" not in turn or "reference" not in turn:
+                raise ValueError(
+                    f"Conversation '{conv['conversation_id']}' turn {j} is "
+                    f"missing 'query' or 'reference': {turn}"
+                )
+            if "turn" not in turn:
+                turn["turn"] = j + 1
+    return conversations
+
+
+# Optional per-sample label columns a Phase E dataset may carry. Propagated from
+# the dataset item into EvalSample.metadata so slice-aware metrics (abstention
+# FRR/MRR, conflict rates) and the multi-turn loop can read them; absent keys are
+# simply skipped. An allowlist keeps query/reference/id first-class and stops
+# arbitrary dataset columns from bloating every JSONL row.
+_LABEL_FIELDS: tuple[str, ...] = (
+    "answerable",
+    "abstention_type",
+    "category",
+    "source_name",
+    "injected_context",
+    "corpus_fact",
+    "conflict_type",
+    "expected_behavior",
+    "conversation_id",
+    "turn",
+    "depends_on_prior",
+)
 
 
 def _mean_latency(samples: list[EvalSample]) -> float:
@@ -65,6 +137,46 @@ def _mean_latency(samples: list[EvalSample]) -> float:
         if isinstance(s.metadata.get("latency_s"), (int, float))
     ]
     return statistics.fmean(latencies) if latencies else 0.0
+
+
+def _slice_rate(
+    samples: list[EvalSample],
+    signals: list[float | None],
+    *,
+    label_key: str,
+    label_value: Any,
+    positive_value: float = 1.0,
+) -> float | None:
+    """Fraction of the ``metadata[label_key] == label_value`` slice whose signal
+    equals ``positive_value``.
+
+    The deterministic-reduction primitive behind the Phase E slice metrics — it
+    expresses False Refusal Rate (abstained over the answerable slice) and Missed
+    Refusal Rate (did-not-abstain over the unanswerable slice) by
+    parameterization. Returns ``None`` when the slice is empty or every in-slice
+    signal is ``None`` (the judge gave no verdict), so an absent/unscored slice
+    reads as ``-`` in the comparison table rather than a misleading ``0.0``.
+    Injected into the per-run metrics dict the same way as :func:`_mean_latency`.
+    """
+    in_slice = [
+        sig
+        for s, sig in zip(samples, signals, strict=True)
+        if s.metadata.get(label_key) == label_value and sig is not None
+    ]
+    if not in_slice:
+        return None
+    hits = sum(1 for sig in in_slice if sig == positive_value)
+    return hits / len(in_slice)
+
+
+def _mean_signal(signals: list[float | None]) -> float | None:
+    """Mean of the non-None signals; ``None`` when all are None (unknown).
+
+    The unconditional sibling of :func:`_slice_rate` for the conflict probe,
+    where every sample is in-slice (no label condition).
+    """
+    present = [s for s in signals if s is not None]
+    return sum(present) / len(present) if present else None
 
 
 class Evaluator:
@@ -109,7 +221,12 @@ class Evaluator:
         Returns:
             ExperimentResult with aggregated and per-run metrics.
         """
-        dataset = _load_dataset(self._config.dataset)
+        is_multi_turn = self._config.protocol == "multi_turn"
+        dataset = (
+            _load_conversations(self._config.dataset)
+            if is_multi_turn
+            else _load_dataset(self._config.dataset)
+        )
         num_runs = self._config.num_runs
         scoring_enabled = self._config.mode != "none"
 
@@ -133,7 +250,12 @@ class Evaluator:
 
         for run_idx in range(1, num_runs + 1):
             logger.info("Run %d/%d", run_idx, num_runs)
-            samples = self._run_once(pipeline, dataset)
+            if is_multi_turn:
+                samples = self._run_once_multi_turn(pipeline, dataset)
+            elif self._config.protocol == "conflict":
+                samples = self._run_once_conflict(pipeline, dataset)
+            else:
+                samples = self._run_once(pipeline, dataset)
             if not samples:
                 logger.error(
                     "All queries failed in run %d — skipping metrics.",
@@ -152,6 +274,11 @@ class Evaluator:
             # so aggregation + summary.json + the comparison table pick it up for
             # free (works in mode="none", where `metrics` is otherwise empty).
             metrics["latency_mean_s"] = _mean_latency(samples)
+            # Phase E slice metrics ride the same injection seam as latency.
+            if self._config.protocol == "abstention":
+                metrics.update(self._apply_abstention(samples))
+            elif self._config.protocol == "conflict":
+                metrics.update(self._apply_conflict(samples))
             per_run_metrics.append(metrics)
 
             scored = [
@@ -192,7 +319,7 @@ class Evaluator:
     def _run_once(
         self,
         pipeline: Queryable,
-        dataset: list[dict[str, str]],
+        dataset: list[dict[str, Any]],
     ) -> list[EvalSample]:
         """Run the pipeline on each dataset query, producing EvalSamples.
 
@@ -208,6 +335,11 @@ class Evaluator:
                 result = pipeline.query(item["query"])
                 latency_s = time.perf_counter() - t0
                 contexts = [rc.chunk.content for rc in result.retrieved_chunks]
+                # Carry any Phase E label columns through to the saved sample.
+                # result.metadata first (provenance), then labels (ground truth
+                # wins over a colliding pipeline key), then the authoritative
+                # latency.
+                labels = {k: item[k] for k in _LABEL_FIELDS if k in item}
                 samples.append(
                     EvalSample(
                         id=item["id"],
@@ -215,7 +347,11 @@ class Evaluator:
                         response=result.answer,
                         retrieved_contexts=contexts,
                         reference=item["reference"],
-                        metadata={**result.metadata, "latency_s": latency_s},
+                        metadata={
+                            **result.metadata,
+                            **labels,
+                            "latency_s": latency_s,
+                        },
                     )
                 )
             except Exception:
@@ -232,6 +368,121 @@ class Evaluator:
                 failed,
                 total,
             )
+        return samples
+
+    def _run_once_multi_turn(
+        self,
+        pipeline: Queryable,
+        conversations: list[dict[str, Any]],
+    ) -> list[EvalSample]:
+        """Run each conversation in order, threading history between turns.
+
+        History is reset per conversation; each turn calls ``pipeline.query(query,
+        history)`` and is recorded as an ordinary single-turn ``EvalSample`` (so
+        the existing RAGAS metrics score it) tagged by conversation / turn /
+        dependency / answerability. History is then extended with the **model's
+        actual answer** (not the gold reference), so a later turn contextualizes
+        against what was really said — errors propagate, which is the point of
+        multi-turn robustness eval. A failed turn is logged and skipped; the
+        conversation continues.
+        """
+        samples: list[EvalSample] = []
+        failed = 0
+        total = sum(len(c["turns"]) for c in conversations)
+        for conv in conversations:
+            conv_id = conv["conversation_id"]
+            history: list[Message] = []
+            for turn in conv["turns"]:
+                query = turn["query"]
+                try:
+                    t0 = time.perf_counter()
+                    result = pipeline.query(query, history)
+                    latency_s = time.perf_counter() - t0
+                except Exception:
+                    failed += 1
+                    logger.exception(
+                        "Conversation %s turn %s failed: %s",
+                        conv_id,
+                        turn.get("turn"),
+                        query[:80],
+                    )
+                    continue
+                contexts = [rc.chunk.content for rc in result.retrieved_chunks]
+                labels = {k: turn[k] for k in _LABEL_FIELDS if k in turn}
+                samples.append(
+                    EvalSample(
+                        id=f"{conv_id}::t{turn['turn']}",
+                        query=query,
+                        response=result.answer,
+                        retrieved_contexts=contexts,
+                        reference=turn["reference"],
+                        metadata={
+                            **result.metadata,
+                            **labels,
+                            "conversation_id": conv_id,
+                            "domain": conv.get("domain"),
+                            "latency_s": latency_s,
+                        },
+                    )
+                )
+                history.append({"role": "user", "content": query})
+                history.append({"role": "assistant", "content": result.answer})
+        if failed:
+            logger.warning("%d/%d turns failed in this run", failed, total)
+        return samples
+
+    def _run_once_conflict(
+        self,
+        pipeline: Queryable,
+        dataset: list[dict[str, Any]],
+    ) -> list[EvalSample]:
+        """Run each query with its contradicting passage injected into context.
+
+        Mirrors :meth:`_run_once` but passes ``injected_contexts`` so the
+        generator sees the counterfactual alongside the real retrieval;
+        ``retrieved_contexts`` still reflect the REAL retriever (the injected
+        passage never enters retrieval metrics). Records a ``corpus_fact_retrieved``
+        confound flag so a low corpus-preference can be read correctly.
+        """
+        samples: list[EvalSample] = []
+        failed = 0
+        total = len(dataset)
+        for i, item in enumerate(dataset, start=1):
+            injected = item.get("injected_context")
+            injected_contexts = [injected] if injected else None
+            try:
+                t0 = time.perf_counter()
+                result = pipeline.query(
+                    item["query"], injected_contexts=injected_contexts
+                )
+                latency_s = time.perf_counter() - t0
+            except Exception:
+                failed += 1
+                logger.exception(
+                    "Conflict query %d/%d failed: %s", i, total, item["query"][:80]
+                )
+                continue
+            contexts = [rc.chunk.content for rc in result.retrieved_chunks]
+            labels = {k: item[k] for k in _LABEL_FIELDS if k in item}
+            samples.append(
+                EvalSample(
+                    id=item["id"],
+                    query=item["query"],
+                    response=result.answer,
+                    retrieved_contexts=contexts,
+                    reference=item["reference"],
+                    metadata={
+                        **result.metadata,
+                        **labels,
+                        "corpus_fact_retrieved": corpus_fact_retrieved(
+                            contexts, str(item.get("corpus_fact", ""))
+                        ),
+                        "latency_s": latency_s,
+                    },
+                )
+            )
+        if failed:
+            logger.warning("%d/%d conflict queries failed in this run", failed, total)
         return samples
 
     def _compute_metrics(
@@ -307,6 +558,86 @@ class Evaluator:
             max_wait=cfg.max_wait,
             max_workers=cfg.max_workers,
         )
+
+    def _apply_abstention(self, samples: list[EvalSample]) -> dict[str, float]:
+        """Score abstention and return the run's confusion-matrix rates.
+
+        Builds the configured classifier (an AspectCritic judge or the phrase
+        matcher), records each response's abstention signal in metadata for
+        spot-checking, and returns False Refusal Rate (abstained over the
+        answerable slice) + Missed Refusal Rate (answered over the unanswerable
+        slice). A rate whose slice is empty is omitted so it reads as ``-`` in
+        the comparison table rather than a misleading ``0.0``.
+        """
+        if not samples:
+            return {}
+        classifier_name = self._config.abstention.classifier
+        llm = self._build_evaluator_llm() if classifier_name == "llm" else None
+        classifier = build_abstention_classifier(
+            classifier_name, llm=llm, run_config=self._make_run_config()
+        )
+        signals = classifier.classify(samples)
+        for sample, signal in zip(samples, signals, strict=True):
+            sample.metadata[ABSTENTION_METRIC_NAME] = signal
+            # An abstention dataset marks the unanswerable exceptions; a row with
+            # no explicit `answerable` label is treated as answerable (the
+            # documented default), so it counts toward the FRR denominator and is
+            # recorded as such, rather than being silently dropped from both
+            # slices. Done here (not in the shared loader) so the standard/conflict
+            # protocols — whose datasets legitimately lack `answerable` — are
+            # untouched.
+            sample.metadata.setdefault("answerable", True)
+
+        rates: dict[str, float] = {}
+        frr = _slice_rate(samples, signals, label_key="answerable", label_value=True)
+        if frr is not None:
+            rates["false_refusal_rate"] = frr
+        mrr = _slice_rate(
+            samples,
+            signals,
+            label_key="answerable",
+            label_value=False,
+            positive_value=0.0,
+        )
+        if mrr is not None:
+            rates["missed_refusal_rate"] = mrr
+        return rates
+
+    def _apply_conflict(self, samples: list[EvalSample]) -> dict[str, float]:
+        """Score the knowledge-conflict probe and return its rates.
+
+        Runs two AspectCritic judges over the conflict slice — ``corpus_preference``
+        (answer asserts the authoritative corpus fact rather than the injected
+        falsehood) and ``error_detection`` (answer flags the contradiction) —
+        comparing the response to ``corpus_fact`` (passed as the per-sample
+        reference override). Records the per-sample verdicts in metadata and
+        returns the two mean rates (omitting one whose verdicts are all unknown).
+        """
+        if not samples:
+            return {}
+        llm = self._build_evaluator_llm()
+        references = [
+            str(s.metadata.get("corpus_fact") or s.reference) for s in samples
+        ]
+        rows = _ragas_adapter.run_aspect_critics(
+            samples,
+            conflict_specs(),
+            llm=llm,
+            run_config=self._make_run_config(),
+            references=references,
+        )
+        for sample, row in zip(samples, rows, strict=True):
+            sample.metadata[CORPUS_PREFERENCE_NAME] = row.get(CORPUS_PREFERENCE_NAME)
+            sample.metadata[ERROR_DETECTION_NAME] = row.get(ERROR_DETECTION_NAME)
+
+        rates: dict[str, float] = {}
+        pref = _mean_signal([row.get(CORPUS_PREFERENCE_NAME) for row in rows])
+        if pref is not None:
+            rates["corpus_preference_rate"] = pref
+        det = _mean_signal([row.get(ERROR_DETECTION_NAME) for row in rows])
+        if det is not None:
+            rates["error_detection_rate"] = det
+        return rates
 
     def _build_evaluator_llm(self) -> Any:
         """Build a ragas-compatible judge LLM from config.

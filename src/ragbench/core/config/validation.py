@@ -34,6 +34,16 @@ _SUPPORTED_QT_FUSION_MODES: frozenset[str] = frozenset({"rrf", "max"})
 
 _SUPPORTED_AGENT_MODES: frozenset[str] = frozenset({"single", "multi"})
 
+# Evaluation protocols (Phase E). "standard" is RAGAS-only; the others layer
+# slice-aware metrics and/or a dedicated loader on top. The evaluator dispatches
+# on this; protocol-specific coherence checks (e.g. conflict ⇒ linear) live with
+# each protocol.
+_SUPPORTED_EVAL_PROTOCOLS: frozenset[str] = frozenset(
+    {"standard", "abstention", "conflict", "multi_turn"}
+)
+
+_SUPPORTED_ABSTENTION_CLASSIFIERS: frozenset[str] = frozenset({"llm", "phrase"})
+
 
 def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
     """Validate an ExperimentConfig against the component registry.
@@ -83,6 +93,65 @@ def validate_config(config: ExperimentConfig, registry: RegistryLike) -> None:
             f"evaluation.mode: '{config.evaluation.mode}' is not supported. "
             f"Supported: {sorted(_SUPPORTED_EVAL_MODES)}"
         )
+
+    # --- Evaluation protocol (Phase E) ---
+    if config.evaluation.protocol not in _SUPPORTED_EVAL_PROTOCOLS:
+        errors.append(
+            f"evaluation.protocol: '{config.evaluation.protocol}' is not "
+            f"supported. Supported: {sorted(_SUPPORTED_EVAL_PROTOCOLS)}"
+        )
+    if config.evaluation.abstention.classifier not in _SUPPORTED_ABSTENTION_CLASSIFIERS:
+        errors.append(
+            "evaluation.abstention.classifier: "
+            f"'{config.evaluation.abstention.classifier}' is not supported. "
+            f"Supported: {sorted(_SUPPORTED_ABSTENTION_CLASSIFIERS)}"
+        )
+
+    # Abstention needs generated answers to classify; its LLM classifier needs a
+    # judge. (Conflict / multi-turn coherence lives with those protocols.)
+    if config.evaluation.protocol == "abstention":
+        if config.evaluation.mode == "retrieval_only":
+            errors.append(
+                "evaluation.protocol 'abstention' needs generated answers to "
+                "classify — evaluation.mode 'retrieval_only' is incompatible "
+                "(use 'full', or 'none' with the phrase classifier)"
+            )
+        if (
+            config.evaluation.abstention.classifier == "llm"
+            and config.evaluation.mode == "none"
+        ):
+            errors.append(
+                "evaluation.abstention.classifier 'llm' needs a judge LLM, but "
+                "evaluation.mode 'none' builds none — use mode 'full' or "
+                "classifier 'phrase'"
+            )
+
+    # Multi-turn evaluation scores a generated answer per turn.
+    if (
+        config.evaluation.protocol == "multi_turn"
+        and config.evaluation.mode == "retrieval_only"
+    ):
+        errors.append(
+            "evaluation.protocol 'multi_turn' scores generated answers per turn "
+            "— evaluation.mode 'retrieval_only' is incompatible (use 'full' or "
+            "'none')"
+        )
+
+    # The knowledge-conflict probe injects a contradicting passage into the
+    # LINEAR generation context (an agent controls its own retrieval) and needs an
+    # LLM judge to score corpus-preference / error-detection.
+    if config.evaluation.protocol == "conflict":
+        if config.pipeline_mode != "linear":
+            errors.append(
+                "evaluation.protocol 'conflict' is linear-only — set pipeline_mode "
+                "'linear' (the injected passage enters the linear generation "
+                "context; an agent controls its own retrieval)"
+            )
+        if config.evaluation.mode != "full":
+            errors.append(
+                "evaluation.protocol 'conflict' needs evaluation.mode 'full' — it "
+                "generates an answer and scores it with an AspectCritic judge"
+            )
 
     # --- Evaluator provider + embedding ---
     # Mode "none" runs the pipeline against the dataset but skips scoring,

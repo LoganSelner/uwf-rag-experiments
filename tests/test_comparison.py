@@ -11,7 +11,10 @@ import yaml
 
 from ragbench.evaluation.comparison import (
     _flatten_dict,
+    classify_decoupling,
     compare_experiments,
+    decoupling_pair,
+    decoupling_report,
     diff_configs,
     format_comparison_table,
     load_config,
@@ -283,3 +286,162 @@ class TestLoadPerSampleScores:
         (d / "run_1.jsonl").write_text(good + "\nNOT VALID JSON\n" + good2 + "\n")
         rows = load_per_sample_scores([d], metrics=["faithfulness"])
         assert len(rows) == 2
+
+
+# -----------------------------------------------------------------------
+# Decoupling analysis (Phase E, item 12)
+# -----------------------------------------------------------------------
+
+
+def _write_run(path: Path, name: str, samples: list[dict[str, Any]]) -> None:
+    """Write summary.json + run_1.jsonl with per-sample scores.
+
+    Each item in *samples* is ``{"id", "query"?, "scores"}``, serialized in the
+    ``to_result_dict`` layout that ``load_per_sample_scores`` reads.
+    """
+    _write_summary(path, name, {})
+    lines = [
+        json.dumps(
+            {
+                "id": s["id"],
+                "input": {"query": s.get("query", ""), "reference": "R"},
+                "output": {"response": "A", "retrieved_contexts": []},
+                "scores": s["scores"],
+            }
+        )
+        for s in samples
+    ]
+    (path / "run_1.jsonl").write_text("\n".join(lines) + "\n")
+
+
+class TestClassifyDecoupling:
+    def test_both_good(self) -> None:
+        assert classify_decoupling(0.9, 0.85) == "both_good"
+
+    def test_both_poor(self) -> None:
+        assert classify_decoupling(0.2, 0.1) == "both_poor"
+
+    def test_retrieval_good_answer_poor(self) -> None:
+        assert classify_decoupling(0.9, 0.2) == "retrieval_good_answer_poor"
+
+    def test_retrieval_poor_answer_good(self) -> None:
+        assert classify_decoupling(0.2, 0.9) == "retrieval_poor_answer_good"
+
+    def test_dead_band_is_mixed(self) -> None:
+        # 0.55 sits in the (0.4, 0.7) dead-band → not called decoupled.
+        assert classify_decoupling(0.55, 0.9) == "mixed"
+
+    def test_none_is_incomplete(self) -> None:
+        assert classify_decoupling(None, 0.9) == "incomplete"
+        assert classify_decoupling(0.9, None) == "incomplete"
+
+    def test_nan_is_incomplete(self) -> None:
+        assert classify_decoupling(float("nan"), 0.9) == "incomplete"
+
+
+class TestDecouplingReport:
+    def test_counts_quadrants(self, tmp_path: Path) -> None:
+        d = tmp_path / "exp"
+        _write_run(
+            d,
+            "exp",
+            [
+                {
+                    "id": "1",
+                    "scores": {"context_precision": 0.9, "answer_correctness": 0.9},
+                },
+                {
+                    "id": "2",
+                    "scores": {"context_precision": 0.9, "answer_correctness": 0.1},
+                },
+                {
+                    "id": "3",
+                    "scores": {"context_precision": 0.1, "answer_correctness": 0.9},
+                },
+                {
+                    "id": "4",
+                    "scores": {"context_precision": 0.1, "answer_correctness": 0.1},
+                },
+            ],
+        )
+        report = decoupling_report(d)
+        assert report["experiment"] == "exp"
+        counts = report["counts"]
+        assert counts["both_good"] == 1
+        assert counts["retrieval_good_answer_poor"] == 1
+        assert counts["retrieval_poor_answer_good"] == 1
+        assert counts["both_poor"] == 1
+        assert len(report["samples"]) == 4
+
+    def test_incomplete_when_answer_metric_absent(self, tmp_path: Path) -> None:
+        d = tmp_path / "exp"
+        _write_run(d, "exp", [{"id": "1", "scores": {"context_precision": 0.9}}])
+        report = decoupling_report(d)
+        assert report["counts"]["incomplete"] == 1
+
+
+class TestDecouplingPair:
+    def test_surfaces_retrieval_up_answer_down(self, tmp_path: Path) -> None:
+        a, b = tmp_path / "a", tmp_path / "b"
+        # Sample 1: retrieval improves (0.4→0.9) but the answer drops (0.8→0.5) →
+        # decoupled. Sample 2: both improve → coupled.
+        _write_run(
+            a,
+            "a",
+            [
+                {
+                    "id": "1",
+                    "scores": {"context_precision": 0.4, "answer_correctness": 0.8},
+                },
+                {
+                    "id": "2",
+                    "scores": {"context_precision": 0.4, "answer_correctness": 0.4},
+                },
+            ],
+        )
+        _write_run(
+            b,
+            "b",
+            [
+                {
+                    "id": "1",
+                    "scores": {"context_precision": 0.9, "answer_correctness": 0.5},
+                },
+                {
+                    "id": "2",
+                    "scores": {"context_precision": 0.9, "answer_correctness": 0.9},
+                },
+            ],
+        )
+        rows = decoupling_pair(a, b)
+        assert len(rows) == 2
+        # Most-decoupled first.
+        assert rows[0]["sample_id"] == "1"
+        assert rows[0]["decoupled"] is True
+        assert rows[0]["delta_retrieval"] == pytest.approx(0.5)
+        assert rows[0]["delta_answer"] == pytest.approx(-0.3)
+        assert rows[1]["decoupled"] is False
+
+    def test_drops_unshared_samples(self, tmp_path: Path) -> None:
+        a, b = tmp_path / "a", tmp_path / "b"
+        _write_run(
+            a,
+            "a",
+            [
+                {
+                    "id": "1",
+                    "scores": {"context_precision": 0.5, "answer_correctness": 0.5},
+                }
+            ],
+        )
+        _write_run(
+            b,
+            "b",
+            [
+                {
+                    "id": "2",
+                    "scores": {"context_precision": 0.5, "answer_correctness": 0.5},
+                }
+            ],
+        )
+        assert decoupling_pair(a, b) == []
